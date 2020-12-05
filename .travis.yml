@@ -31,7 +31,7 @@ script:
   - ./patchinstall.py -d ../../wine -a
   - cd ../../wine
   - ./configure --enable-win64
-  - make
-  - ls build
+  - make -j$(nproc)
+  - ls
   
 
