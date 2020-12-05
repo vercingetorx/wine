@@ -13,6 +13,7 @@ jobs:
       - name: Packages Update
         run: |
           sudo apt-get -qq update
+          sudo apt-get install neofetch
       - name: GCC Setup
         run: |
           if [ "$CXX" = "g++" ]; then export CXX="g++-5" CC="gcc-5"; fi
@@ -22,18 +23,16 @@ jobs:
           git clone https://github.com/wine-staging/wine-staging.git
       - name: Apply Wine Staging
         working-directory: /home/runner/work/wine-staging/staging
-        run: ./patchinstall.py -d /home/runner/work/wine -a
+        run: ./patchinstall.py -d /home/runner/work/wine/wine -a
       - name: Wine Build Configure
-        working-directory: /home/runner/work/wine
-        run: |
-          git clone https://github.com/wine-staging/wine-staging.git
-          ./configure --enable-win64
+        working-directory: /home/runner/work/wine/wine
+        run: ./configure --enable-win64
       - name: Building Wine
-        working-directory: /home/runner/work/wine
+        working-directory: /home/runner/work/wine/wine
         run: make
       - uses: actions/upload-artifact@v2
         with:
           name: Wine
-          path: /home/runner/work/wine/build
+          path: /home/runner/work/wine/wine/build
           
           
