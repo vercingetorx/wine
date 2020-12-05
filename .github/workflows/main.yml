@@ -28,10 +28,12 @@ jobs:
         run: ./configure --enable-win64
       - name: Building Wine
         working-directory: /home/runner/work/wine/wine
-        run: make -j$(nproc)
-      - uses: actions/upload-artifact@v2
-        with:
-          name: Wine
-          path: /home/runner/work/wine/wine/build
+        run: |
+         make -j$(nproc)
+         ls
+      # - uses: actions/upload-artifact@v2
+        # with:
+          # name: Wine
+          # path: /home/runner/work/wine/wine/build
           
           
