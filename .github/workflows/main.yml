@@ -1,0 +1,39 @@
+name: Wine + Wine Staging
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: ubuntu-16.04
+    steps:
+      - uses: actions/checkout@v2
+      - name: Packages Update
+        run: |
+          sudo apt-get -qq update
+      - name: GCC Setup
+        run: |
+          if [ "$CXX" = "g++" ]; then export CXX="g++-5" CC="gcc-5"; fi
+      - name: Wine Staging Setup
+        working-directory: /home/runner/work/
+        run: |
+          git clone https://github.com/wine-staging/wine-staging.git
+      - name: Apply Wine Staging
+        working-directory: /home/runner/work/wine-staging/staging
+        run: ./patchinstall.py -d ../../wine -a
+      - name: Wine Build Configure
+        working-directory: /home/runner/work/wine
+        run: |
+          git clone https://github.com/wine-staging/wine-staging.git
+          ./configure --enable-win64
+      - name: Building Wine
+        working-directory: /home/runner/work/wine
+        run: make
+      - uses: actions/upload-artifact@v2
+        with:
+          name: Wine
+          path: /home/runner/work/wine/build
+          
+          
