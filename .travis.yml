@@ -1,0 +1,27 @@
+os: linux
+dist: xenial
+language: c
+compiler:
+  - gcc
+  - clang
+
+addons:
+  apt:
+    sources:
+    - ubuntu-toolchain-r-test
+    - llvm-toolchain-precise
+    packages:
+    - gcc-5
+    - g++-5
+
+before_install:
+  - sudo apt-get -qq update
+  - sudo apt-get install python2 autotools
+
+install:
+  - if [ "$CXX" = "g++" ]; then export CXX="g++-5" CC="gcc-5"; fi
+
+script:
+  - cd ..
+  - ls
+
