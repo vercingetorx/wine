@@ -30,7 +30,7 @@ script:
   - cd wine-staging/staging
   - ./patchinstall.py -d ../../wine -a
   - cd ../../wine
-  - ./configure --enable-win64 --prefix=build
+  - ./configure --enable-win64 --prefix=/home/travis/wine/build
   - make -j$(nproc)
   
 after_success:
