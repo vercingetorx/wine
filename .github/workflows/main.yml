@@ -22,7 +22,7 @@ jobs:
           git clone https://github.com/wine-staging/wine-staging.git
       - name: Apply Wine Staging
         working-directory: /home/runner/work/wine-staging/staging
-        run: ./patchinstall.py -d ../../wine -a
+        run: ./patchinstall.py -d /home/runner/work/wine -a
       - name: Wine Build Configure
         working-directory: /home/runner/work/wine
         run: |
