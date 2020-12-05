@@ -35,12 +35,12 @@ jobs:
         working-directory: /home/runner/work/wine/wine
         run: |
          mkdir output
-         mv wine /home/runner/work/wine/wine/output
-         mv wine64 /home/runner/work/wine/wine/output
+         mv wine /home/runner/work/wine/wine/output/
+         mv wine64 /home/runner/work/wine/wine/output/
       - uses: actions/upload-artifact@v2
         with:
           name: Wine
-          path: /home/runner/work/wine/wine/output
+          path: /home/runner/work/wine/wine/output/
          
           
           
