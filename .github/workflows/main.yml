@@ -13,13 +13,9 @@ jobs:
       - name: Packages Update
         run: |
           sudo apt-get -qq update
-          sudo apt-get install neofetch
       - name: GCC Setup
         run: |
           if [ "$CXX" = "g++" ]; then export CXX="g++-5" CC="gcc-5"; fi
-      - name: Wine Staging Setup
-        working-directory: /home/runner/work/
-        run: neofetch
       - name: Wine Staging Setup
         working-directory: /home/runner/work/
         run: |
@@ -32,7 +28,7 @@ jobs:
         run: ./configure --enable-win64
       - name: Building Wine
         working-directory: /home/runner/work/wine/wine
-        run: make
+        run: make -j$(nproc)
       - uses: actions/upload-artifact@v2
         with:
           name: Wine
