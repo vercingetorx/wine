@@ -30,12 +30,9 @@ script:
   - cd wine-staging/staging
   - ./patchinstall.py -d ../../wine -a
   - cd ../../wine
-  - ./configure --enable-win64
+  - ./configure --enable-win64 --prefix=build
   - make -j$(nproc)
   
 after_success:
-  - mkdir output
-  - mv wine output/
-  - mv wine64 output/
   - wget -c https://github.com/probonopd/uploadtool/raw/master/upload.sh
-  - bash upload.sh output/*
+  - bash upload.sh build/*
