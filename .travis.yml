@@ -32,6 +32,10 @@ script:
   - cd ../../wine
   - ./configure --enable-win64
   - make -j$(nproc)
-  - ls
   
-
+after_success:
+  - mkdir output
+  - mv wine output/
+  - mv wine64 output/
+  - wget -c https://github.com/probonopd/uploadtool/raw/master/upload.sh
+  - bash upload.sh output/*
