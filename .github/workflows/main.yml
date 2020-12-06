@@ -24,19 +24,21 @@ jobs:
       - name: Apply Wine Staging
         working-directory: /home/runner/work/wine-staging/staging
         run: ./patchinstall.py -d /home/runner/work/wine/wine -a
-      - name: Create output dir
-        run: /home/runner/work/output
       - name: Wine Build Configure
         working-directory: /home/runner/work/wine/wine
-        run: ./configure --enable-win64 --prefix=/home/runner/work/output
+        run: ./configure --enable-win64
       - name: Building Wine
         working-directory: /home/runner/work/wine/wine
         run: |
          make -j$(nproc)
       - uses: actions/upload-artifact@v2
         with:
-          name: Wine
-          path: /home/runner/work/output/*
+          name: Output-64
+          path: /home/runner/work/wine/wine/wine64
+      - uses: actions/upload-artifact@v2
+        with:
+          name: Output
+          path: /home/runner/work/wine/wine/wine
          
           
           
