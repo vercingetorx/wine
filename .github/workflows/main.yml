@@ -33,12 +33,8 @@ jobs:
          make -j$(nproc)
       - uses: actions/upload-artifact@v2
         with:
-          name: Output-64
-          path: /home/runner/work/wine/wine/wine64
-      - uses: actions/upload-artifact@v2
-        with:
           name: Output
-          path: /home/runner/work/wine/wine/wine
+          path: /home/runner/work/wine/wine/*
          
           
           
