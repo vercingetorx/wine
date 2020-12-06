@@ -7,12 +7,13 @@ on:
   workflow_dispatch:
 jobs:
   build:
-    runs-on: ubuntu-16.04
+    runs-on: ubuntu-20.04
     steps:
       - uses: actions/checkout@v2
       - name: Packages Update
         run: |
           sudo apt-get -qq update
+          sudo apt install -y autoconf bison ccache debhelper desktop-file-utils docbook-to-man docbook-utils docbook-xsl flex fontforge gawk gettext libacl1-dev libasound2-dev libcups2-dev libdbus-1-dev libgcrypt-dev libgif-dev libglu1-mesa-dev libgsm1-dev libgtk-3-dev liblcms2-dev libldap2-dev libmpg123-dev libncurses5-dev libopenal-dev libosmesa6-dev libpcap-dev libpulse-dev libssl-dev libtiff5-dev libudev-dev libv4l-dev libva-dev libxslt1-dev libxt-dev ocl-icd-opencl-dev prelink valgrind linux-libc-dev libppl14 libcolord2 libvulkan-dev libgnutls28-dev libgstreamer-plugins-base1.0-dev libgstreamer1.0-dev libpng-dev libsdl2-dev libavcodec-dev libavutil-dev libswresample-dev libavcodec58 libswresample3 libavutil56 libfaudio0 libfaudio-dev libvkd3d1 libvkd3d-dev libvkd3d-utils1 vkd3d-demos libvulkan1 libgstreamer1.0-0 gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-plugins-bad  gstreamer1.0-plugins-ugly gstreamer1.0-libav gstreamer1.0-doc gstreamer1.0-tools gstreamer1.0-x  gstreamer1.0-alsa gstreamer1.0-gl gstreamer1.0-gtk3 gstreamer1.0-qt5 gstreamer1.0-pulseaudio python2
       - name: GCC Setup
         run: |
           if [ "$CXX" = "g++" ]; then export CXX="g++-5" CC="gcc-5"; fi
@@ -23,24 +24,19 @@ jobs:
       - name: Apply Wine Staging
         working-directory: /home/runner/work/wine-staging/staging
         run: ./patchinstall.py -d /home/runner/work/wine/wine -a
+      - name: Create output dir
+        run: /home/runner/work/output
       - name: Wine Build Configure
         working-directory: /home/runner/work/wine/wine
-        run: ./configure --enable-win64
+        run: ./configure --enable-win64 --prefix=/home/runner/work/output
       - name: Building Wine
         working-directory: /home/runner/work/wine/wine
         run: |
          make -j$(nproc)
-         ls
-      - name: Moving Wine
-        working-directory: /home/runner/work/wine/wine
-        run: |
-         mkdir output
-         mv wine /home/runner/work/wine/wine/output/
-         mv wine64 /home/runner/work/wine/wine/output/
       - uses: actions/upload-artifact@v2
         with:
           name: Wine
-          path: /home/runner/work/wine/wine/output/
+          path: /home/runner/work/output/*
          
           
           
