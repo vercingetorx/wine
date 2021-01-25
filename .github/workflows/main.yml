@@ -47,7 +47,7 @@ jobs:
         working-directory: /home/runner/work/wine/wine
         run: |
           mkdir -p /home/runner/work/winebuild
-          ./configure --enable-win64 --prefix=/home/runner/work/winebuild --with-mingw
+          ./configure --enable-win64 --prefix=/home/runner/work/winebuild
       
       - name: Building Wine
         working-directory: /home/runner/work/wine/wine
