@@ -26,15 +26,18 @@ jobs:
         run: ./patchinstall.py -d /home/runner/work/wine/wine -a
       - name: Wine Build Configure
         working-directory: /home/runner/work/wine/wine
-        run: ./configure --enable-win64
+        run: |
+          mkdir -p /home/runner/work/winebuild
+          ./configure --enable-win64 --prefix=/home/runner/work/winebuild
       - name: Building Wine
         working-directory: /home/runner/work/wine/wine
         run: |
          make -j$(nproc)
+         make install
       - uses: actions/upload-artifact@v2
         with:
           name: Output
-          path: /home/runner/work/wine/wine/*
+          path: /home/runner/work/winebuild
          
           
           
