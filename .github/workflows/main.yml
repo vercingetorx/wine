@@ -1,4 +1,4 @@
-name: Wine + Wine Staging
+name: chardonnay
 on:
   push:
     branches: [ master ]
