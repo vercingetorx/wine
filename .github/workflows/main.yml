@@ -52,7 +52,7 @@ jobs:
         working-directory: /home/runner/work/wine/wine
         run: |
           mkdir -p /home/runner/work/winebuild_32
-          cp -a /home/runner/work/wine/wine /home/runner/work/winebuild_32_source
+          cp -a /home/runner/work/wine/wine/* /home/runner/work/winebuild_32_source/
           ./configure --prefix=/home/runner/work/winebuild_32
       
       - name: Building Wine 32
@@ -65,7 +65,7 @@ jobs:
         working-directory: /home/runner/work/wine/wine
         run: |
           mkdir -p /home/runner/work/winebuild_64
-          cp -a /home/runner/work/wine/wine /home/runner/work/winebuild_64_source
+          cp -a /home/runner/work/wine/wine/* /home/runner/work/winebuild_64_source/
           ./configure --enable-win64 --prefix=/home/runner/work/winebuild_64
       
       - name: Building Wine 64
