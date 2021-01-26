@@ -43,17 +43,6 @@ jobs:
         working-directory: /home/runner/work/wine-staging/staging
         run: ./patchinstall.py -d /home/runner/work/wine/wine -a
       
-      - name: Configuring Wine Build 64
-        working-directory: /home/runner/work/wine/wine
-        run: |
-          mkdir -p /home/runner/work/winebuild
-          ./configure --enable-win64 --prefix=/home/runner/work/winebuild_64
-      
-      - name: Building Wine 64
-        working-directory: /home/runner/work/wine/wine
-        run: |
-         make -j$(nproc)
-      
       - name: Configuring Wine Build 32
         working-directory: /home/runner/work/wine/wine
         run: |
@@ -64,6 +53,19 @@ jobs:
         working-directory: /home/runner/work/wine/wine
         run: |
          make -j$(nproc)
+         make install
+      
+      - name: Configuring Wine Build 64
+        working-directory: /home/runner/work/wine/wine
+        run: |
+          mkdir -p /home/runner/work/winebuild
+          ./configure --enable-win64 --prefix=/home/runner/work/winebuild_64
+      
+      - name: Building Wine 64
+        working-directory: /home/runner/work/wine/wine
+        run: |
+         make -j$(nproc)
+         make install
       
       - name: Configuring Wine Build combo
         working-directory: /home/runner/work/wine/wine
