@@ -11,7 +11,7 @@ jobs:
     steps:
       - uses: actions/checkout@v2
       
-      - name: Packages Update
+      - name: Dependencies
         run: |
           sudo apt-get -qq update
           sudo apt install -y autoconf bison ccache debhelper desktop-file-utils docbook-to-man \
@@ -34,30 +34,53 @@ jobs:
         run: |
           if [ "$CXX" = "g++" ]; then export CXX="g++-5" CC="gcc-5"; fi
       
-      - name: Wine Staging Setup
+      - name: Fetching Wine Staging
         working-directory: /home/runner/work/
         run: |
           git clone https://github.com/wine-staging/wine-staging.git
       
-      - name: Apply Wine Staging
+      - name: Applying Wine Staging
         working-directory: /home/runner/work/wine-staging/staging
         run: ./patchinstall.py -d /home/runner/work/wine/wine -a
       
-      - name: Wine Build Configure
+      - name: Configuring Wine Build 64
         working-directory: /home/runner/work/wine/wine
         run: |
           mkdir -p /home/runner/work/winebuild
-          ./configure --enable-win64 --prefix=/home/runner/work/winebuild
+          ./configure --enable-win64 --prefix=/home/runner/work/winebuild_64
       
-      - name: Building Wine
+      - name: Building Wine 64
+        working-directory: /home/runner/work/wine/wine
+        run: |
+         make -j$(nproc)
+      
+      - name: Configuring Wine Build 32
+        working-directory: /home/runner/work/wine/wine
+        run: |
+          mkdir -p /home/runner/work/winebuild
+          ./configure --prefix=/home/runner/work/winebuild_32
+      
+      - name: Building Wine 32
+        working-directory: /home/runner/work/wine/wine
+        run: |
+         make -j$(nproc)
+      
+      - name: Configuring Wine Build combo
+        working-directory: /home/runner/work/wine/wine
+        run: |
+          mkdir -p /home/runner/work/winebuild_combo
+          ./configure --with-wine64=/home/runner/work/winebuild_64 --with-wine-tools=/home/runner/work/winebuild_32 --prefix=/home/runner/work/winebuild_combo
+      
+      - name: Building Wine combo
         working-directory: /home/runner/work/wine/wine
         run: |
          make -j$(nproc)
          make install
+         
       - uses: actions/upload-artifact@v2
         with:
           name: Output
-          path: /home/runner/work/winebuild
+          path: /home/runner/work/winebuild_combo
          
           
           
