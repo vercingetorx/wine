@@ -60,7 +60,6 @@ jobs:
         run: |
          make -j$(nproc)
          make install
-         make clean
       
       - name: Configuring Wine Build 64
         working-directory: /home/runner/work/wine/wine
