@@ -84,7 +84,7 @@ jobs:
       - name: Configuring Wine Build combo
         working-directory: /home/runner/work/wine/wine
         run: |
-          ./configure --with-wine64=/home/runner/work/wine/wine_64_source --with-wine-tools=/home/runner/work/wine/wine_32_source --prefix=/home/runner/work/winebuild_combo
+          ./configure --with-wine64=/home/runner/work/wine/wine_64_source --prefix=/home/runner/work/winebuild_combo
       
       - name: Building Wine combo
         working-directory: /home/runner/work/wine/wine
