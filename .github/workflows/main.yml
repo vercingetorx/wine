@@ -48,30 +48,35 @@ jobs:
         working-directory: /home/runner/work/wine-staging/staging
         run: ./patchinstall.py -d /home/runner/work/wine/wine -a
       
-      - name: Configuring Wine Build 32
-        working-directory: /home/runner/work/wine/wine
+      - name: Preparing directories
+        working-directory: /home/runner/work/wine-staging/staging
         run: |
           mkdir -p /home/runner/work/winebuild_32
-          mkdir -p /home/runner/work/winebuild_32_source
-          cp -a /home/runner/work/wine/wine/* /home/runner/work/winebuild_32_source/
+          mkdir -p /home/runner/work/winebuild_64
+          mkdir -p /home/runner/work/winebuild_combo
+          mkdir -p /home/runner/work/wine/wine_32_source
+          mkdir -p /home/runner/work/wine/wine_64_source
+          cp -a /home/runner/work/wine/wine /home/runner/work/wine/winesource_32
+          cp -a /home/runner/work/wine/wine /home/runner/work/wine/winesource_64
+      
+      - name: Configuring Wine Build 32
+        working-directory: /home/runner/work/wine/winesource_32
+        run: |
           ./configure --prefix=/home/runner/work/winebuild_32
       
       - name: Building Wine 32
-        working-directory: /home/runner/work/winebuild_32_source
+        working-directory: /home/runner/work/wine/winesource_32
         run: |
          make -j$(nproc)
          make install
       
       - name: Configuring Wine Build 64
-        working-directory: /home/runner/work/wine/wine
+        working-directory: /home/runner/work/wine/winesource_64
         run: |
-          mkdir -p /home/runner/work/winebuild_64
-          mkdir -p /home/runner/work/winebuild_64_source
-          cp -a /home/runner/work/wine/wine/* /home/runner/work/winebuild_64_source/
           ./configure --enable-win64 --prefix=/home/runner/work/winebuild_64
       
       - name: Building Wine 64
-        working-directory: /home/runner/work/winebuild_64_source
+        working-directory: /home/runner/work/wine/winesource_64
         run: |
          make -j$(nproc)
          make install
@@ -79,7 +84,6 @@ jobs:
       - name: Configuring Wine Build combo
         working-directory: /home/runner/work/wine/wine
         run: |
-          mkdir -p /home/runner/work/winebuild_combo
           ./configure --with-wine64=/home/runner/work/winebuild_64 --with-wine-tools=/home/runner/work/winebuild_32 --prefix=/home/runner/work/winebuild_combo
       
       - name: Building Wine combo
