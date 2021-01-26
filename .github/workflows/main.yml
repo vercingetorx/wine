@@ -51,23 +51,26 @@ jobs:
       - name: Configuring Wine Build 32
         working-directory: /home/runner/work/wine/wine
         run: |
-          mkdir -p /home/runner/work/winebuild
+          mkdir -p /home/runner/work/winebuild_32
+          cp -a /home/runner/work/wine/wine /home/runner/work/winebuild_32_source
           ./configure --prefix=/home/runner/work/winebuild_32
       
       - name: Building Wine 32
-        working-directory: /home/runner/work/wine/wine
+        working-directory: /home/runner/work/winebuild_32_source
         run: |
          make -j$(nproc)
          make install
+         make clean
       
       - name: Configuring Wine Build 64
         working-directory: /home/runner/work/wine/wine
         run: |
-          mkdir -p /home/runner/work/winebuild
+          mkdir -p /home/runner/work/winebuild_64
+          cp -a /home/runner/work/wine/wine /home/runner/work/winebuild_64_source
           ./configure --enable-win64 --prefix=/home/runner/work/winebuild_64
       
       - name: Building Wine 64
-        working-directory: /home/runner/work/wine/wine
+        working-directory: /home/runner/work/winebuild_64_source
         run: |
          make -j$(nproc)
          make install
