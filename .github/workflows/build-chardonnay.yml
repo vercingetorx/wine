@@ -1,0 +1,61 @@
+name: build-chardonnay
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Fetching Build Tools
+        working-directory: /home/runner/work/
+        run: git clone https://github.com/bottlesdevs/build-tools.git
+      
+      - name: Make build scripts executable
+        working-directory: /home/runner/work/build-tools/runners/chardonnay
+        run: chmod +x *
+      
+      - name: Launch environment.sh
+        working-directory: /home/runner/work/build-tools/runners/chardonnay
+        run: ./environment.sh
+      
+      - name: Launch patch-staging.sh
+        working-directory: /home/runner/work/build-tools/runners/chardonnay
+        run: ./patch-staging.sh
+      
+      - name: Launch build-tools.sh
+        working-directory: /home/runner/work/build-tools/runners/chardonnay
+        run: ./build-tools.sh
+      
+      - name: Launch build64.sh
+        working-directory: /home/runner/work/build-tools/runners/chardonnay
+        run: ./build64.sh
+      
+      - name: Launch build32.sh
+        working-directory: /home/runner/work/build-tools/runners/chardonnay
+        run: ./build32.sh
+      
+      - name: Launch package.sh
+        working-directory: /home/runner/work/build-tools/runners/chardonnay
+        run: ./package.sh
+
+      - name: Get release version
+        working-directory: /home/runner/work/wine/wine
+        id: vars
+        run: |
+          wine_version=$(cat VERSION)
+          echo "::set-output name=release_version::${wine_version:13}"
+        
+      - uses: "marvinpinto/action-automatic-releases@latest"
+        with:
+          repo_token: "${{ secrets.GITHUB_TOKEN }}"
+          draft: false
+          prerelease: false
+          automatic_release_tag: "${{ steps.vars.outputs.release_version }}"
+          title: "Chardonnay ${{ steps.vars.outputs.release_version }}"
+          files: "/home/runner/work/wine/wine/chardonnay-${{ steps.vars.outputs.release_version }}-x86_64.tar.gz"
+          
