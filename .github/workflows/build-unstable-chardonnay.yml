@@ -23,6 +23,10 @@ jobs:
         working-directory: /home/runner/work/build-tools/runners/chardonnay
         run: ./environment.sh
       
+      - name: Launch patch-josh-flat-theme.sh
+        working-directory: /home/runner/work/build-tools/runners/chardonnay
+        run: ./patch-josh-flat-theme.sh
+      
       - name: Launch patch-staging.sh
         working-directory: /home/runner/work/build-tools/runners/chardonnay
         run: ./patch-staging.sh
