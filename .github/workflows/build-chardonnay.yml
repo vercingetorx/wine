@@ -1,4 +1,4 @@
-name: build-chardonnay
+name: build-unstable-chardonnay
 on:
   push:
     branches: [ master ]
@@ -41,7 +41,7 @@ jobs:
       
       - name: Launch package.sh
         working-directory: /home/runner/work/build-tools/runners/chardonnay
-        run: ./package.sh
+        run: ./package.sh -s unstable
 
       - name: Get release version
         working-directory: /home/runner/work/wine/wine
@@ -57,5 +57,5 @@ jobs:
           prerelease: false
           automatic_release_tag: "${{ steps.vars.outputs.release_version }}"
           title: "Chardonnay ${{ steps.vars.outputs.release_version }}"
-          files: "/home/runner/work/wine/wine/chardonnay-${{ steps.vars.outputs.release_version }}-x86_64.tar.gz"
+          files: "/home/runner/work/wine/wine/chardonnay-${{ steps.vars.outputs.release_version }}-unstable-x86_64.tar.gz"
           
