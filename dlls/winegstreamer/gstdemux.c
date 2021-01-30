@@ -74,7 +74,7 @@ struct parser
     pthread_cond_t init_cond;
     bool no_more_pads, has_duration, error;
 
-    HANDLE push_thread;
+    pthread_t push_thread;
 
     HANDLE read_thread;
     pthread_cond_t read_cond, read_done_cond;
@@ -821,28 +821,24 @@ static gboolean event_sink(GstPad *pad, GstObject *parent, GstEvent *event)
     return TRUE;
 }
 
-static DWORD CALLBACK push_data(LPVOID iface)
+static GstFlowReturn request_buffer_src(GstPad *pad, GstObject *parent, guint64 offset, guint size, GstBuffer **buffer);
+
+static void *push_data(void *iface)
 {
-    LONGLONG maxlen, curlen;
     struct parser *This = iface;
-    GstMapInfo mapping;
     GstBuffer *buffer;
-    HRESULT hr;
+    LONGLONG maxlen;
+
+    GST_DEBUG("Starting push thread.");
 
     if (!(buffer = gst_buffer_new_allocate(NULL, 16384, NULL)))
     {
-        ERR("Failed to allocate memory.\n");
-        return 0;
+        GST_ERROR("Failed to allocate memory.");
+        return NULL;
     }
 
-    IBaseFilter_AddRef(&This->filter.IBaseFilter_iface);
+    maxlen = This->stop ? This->stop : This->filesize;
 
-    if (!This->stop)
-        IAsyncReader_Length(This->reader, &maxlen, &curlen);
-    else
-        maxlen = This->stop;
-
-    TRACE("Starting..\n");
     for (;;) {
         ULONG len;
         int ret;
@@ -851,44 +847,29 @@ static DWORD CALLBACK push_data(LPVOID iface)
             break;
         len = min(16384, maxlen - This->nextofs);
 
-        if (!gst_buffer_map_range(buffer, -1, len, &mapping, GST_MAP_WRITE))
+        if ((ret = request_buffer_src(This->my_src, NULL, This->nextofs, len, &buffer)) < 0)
         {
-            ERR("Failed to map buffer.\n");
-            break;
-        }
-        hr = IAsyncReader_SyncRead(This->reader, This->nextofs, len, mapping.data);
-        gst_buffer_unmap(buffer, &mapping);
-        if (hr != S_OK)
-        {
-            ERR("Failed to read data, hr %#x.\n", hr);
+            GST_ERROR("Failed to read data, ret %s.", gst_flow_get_name(ret));
             break;
         }
 
         This->nextofs += len;
 
         buffer->duration = buffer->pts = -1;
-        ret = gst_pad_push(This->my_src, buffer);
-        if (ret >= 0)
-            hr = S_OK;
-        else
-            ERR("Sending returned: %i\n", ret);
-        if (ret == GST_FLOW_ERROR)
-            hr = E_FAIL;
-        else if (ret == GST_FLOW_FLUSHING)
-            hr = VFW_E_WRONG_STATE;
-        if (hr != S_OK)
+        if ((ret = gst_pad_push(This->my_src, buffer)) < 0)
+        {
+            GST_ERROR("Failed to push data, ret %s.", gst_flow_get_name(ret));
             break;
+        }
     }
 
     gst_buffer_unref(buffer);
 
     gst_pad_push_event(This->my_src, gst_event_new_eos());
 
-    TRACE("Stopping.. %08x\n", hr);
+    GST_DEBUG("Stopping push thread.");
 
-    IBaseFilter_Release(&This->filter.IBaseFilter_iface);
-
-    return 0;
+    return NULL;
 }
 
 static GstFlowReturn got_data_sink(GstPad *pad, GstObject *parent, GstBuffer *buffer)
@@ -1440,23 +1421,23 @@ static gboolean activate_push(GstPad *pad, gboolean activate)
 {
     struct parser *This = gst_pad_get_element_private(pad);
 
-    EnterCriticalSection(&This->filter.filter_cs);
     if (!activate) {
-        TRACE("Deactivating\n");
-        IAsyncReader_BeginFlush(This->reader);
         if (This->push_thread) {
-            WaitForSingleObject(This->push_thread, -1);
-            CloseHandle(This->push_thread);
-            This->push_thread = NULL;
+            pthread_join(This->push_thread, NULL);
+            This->push_thread = 0;
         }
-        IAsyncReader_EndFlush(This->reader);
         if (This->filter.state == State_Stopped)
             This->nextofs = This->start;
     } else if (!This->push_thread) {
-        TRACE("Activating\n");
-        This->push_thread = CreateThread(NULL, 0, push_data, This, 0, NULL);
+        int ret;
+
+        if ((ret = pthread_create(&This->push_thread, NULL, push_data, This)))
+        {
+            GST_ERROR("Failed to create push thread: %s", strerror(errno));
+            This->push_thread = 0;
+            return FALSE;
+        }
     }
-    LeaveCriticalSection(&This->filter.filter_cs);
     return TRUE;
 }
 
@@ -1464,7 +1445,7 @@ static gboolean activate_mode(GstPad *pad, GstObject *parent, GstPadMode mode, g
 {
     struct parser *filter = gst_pad_get_element_private(pad);
 
-    TRACE("%s source pad for filter %p in %s mode.\n",
+    GST_DEBUG("%s source pad for filter %p in %s mode.",
             activate ? "Activating" : "Deactivating", filter, gst_pad_mode_get_name(mode));
 
     switch (mode) {
@@ -1600,7 +1581,7 @@ static HRESULT GST_Connect(struct parser *This, IPin *pConnectPin)
     This->my_src = gst_pad_new_from_static_template(&src_template, "quartz-src");
     gst_pad_set_getrange_function(This->my_src, request_buffer_src);
     gst_pad_set_query_function(This->my_src, query_function);
-    gst_pad_set_activatemode_function(This->my_src, activate_mode_wrapper);
+    gst_pad_set_activatemode_function(This->my_src, activate_mode);
     gst_pad_set_event_function(This->my_src, event_src);
     gst_pad_set_element_private (This->my_src, This);
 
@@ -2528,12 +2509,6 @@ void perform_cb_gstdemux(struct cb_data *cbdata)
         {
             struct pad_added_data *data = &cbdata->u.pad_added_data;
             existing_new_pad(data->element, data->pad, data->user);
-            break;
-        }
-    case ACTIVATE_MODE:
-        {
-            struct activate_mode_data *data = &cbdata->u.activate_mode_data;
-            cbdata->u.activate_mode_data.ret = activate_mode(data->pad, data->parent, data->mode, data->activate);
             break;
         }
     case QUERY_SINK:

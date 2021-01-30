@@ -230,6 +230,7 @@ extern HRESULT GCEReader_CreateInstance(REFIID iid, void **ppv) DECLSPEC_HIDDEN;
 extern HRESULT APEReader_CreateInstance(REFIID iid, void **ppv) DECLSPEC_HIDDEN;
 extern HRESULT GifCommentReader_CreateInstance(REFIID iid, void **ppv) DECLSPEC_HIDDEN;
 extern HRESULT MetadataQueryReader_CreateInstance(IWICMetadataBlockReader *, const WCHAR *, IWICMetadataQueryReader **) DECLSPEC_HIDDEN;
+extern HRESULT MetadataQueryWriter_CreateInstance(IWICMetadataBlockWriter *, const WCHAR *, IWICMetadataQueryWriter **) DECLSPEC_HIDDEN;
 extern HRESULT stream_initialize_from_filehandle(IWICStream *iface, HANDLE hfile) DECLSPEC_HIDDEN;
 
 static inline WCHAR *heap_strdupW(const WCHAR *src)
@@ -355,6 +356,7 @@ enum encoder_option
 
 #define ENCODER_FLAGS_MULTI_FRAME 0x1
 #define ENCODER_FLAGS_ICNS_SIZE 0x2
+#define ENCODER_FLAGS_SUPPORTS_METADATA 0x4
 
 struct encoder_info
 {

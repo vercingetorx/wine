@@ -34,14 +34,14 @@
 @ stub DbgPrompt
 # @ stub DbgQueryDebugFilterState
 # @ stub DbgSetDebugFilterState
-@ stub DbgUiConnectToDbg
+@ stdcall DbgUiConnectToDbg()
 @ stub DbgUiContinue
 @ stub DbgUiConvertStateChangeStructure
 # @ stub DbgUiDebugActiveProcess
-# @ stub DbgUiGetThreadDebugObject
+@ stdcall DbgUiGetThreadDebugObject()
 @ stdcall DbgUiIssueRemoteBreakin(long)
 @ stdcall DbgUiRemoteBreakin(ptr)
-# @ stub DbgUiSetThreadDebugObject
+@ stdcall DbgUiSetThreadDebugObject(long)
 # @ stub DbgUiStopDebugging
 @ stub DbgUiWaitStateChange
 @ stdcall DbgUserBreakPoint()

@@ -3013,6 +3013,8 @@ typedef struct _PS_CREATE_INFO
 #define DEBUG_QUERY_INFORMATION 0x0008
 #define DEBUG_ALL_ACCESS        (STANDARD_RIGHTS_REQUIRED | SYNCHRONIZE | 0x0f)
 
+#define DEBUG_KILL_ON_CLOSE 0x1
+
 /***********************************************************************
  * Function declarations
  */
@@ -3020,8 +3022,11 @@ typedef struct _PS_CREATE_INFO
 NTSYSAPI void      WINAPI DbgBreakPoint(void);
 NTSYSAPI NTSTATUS WINAPIV DbgPrint(LPCSTR fmt, ...);
 NTSYSAPI NTSTATUS WINAPIV DbgPrintEx(ULONG iComponentId, ULONG Level, LPCSTR fmt, ...);
+NTSYSAPI NTSTATUS  WINAPI DbgUiConnectToDbg(void);
+NTSYSAPI HANDLE    WINAPI DbgUiGetThreadDebugObject(void);
 NTSYSAPI NTSTATUS  WINAPI DbgUiIssueRemoteBreakin(HANDLE);
 NTSYSAPI void      WINAPI DbgUiRemoteBreakin(void*);
+NTSYSAPI void      WINAPI DbgUiSetThreadDebugObject(HANDLE);
 NTSYSAPI void      WINAPI DbgUserBreakPoint(void);
 NTSYSAPI NTSTATUS  WINAPI LdrAccessResource(HMODULE,const IMAGE_RESOURCE_DATA_ENTRY*,void**,PULONG);
 NTSYSAPI NTSTATUS  WINAPI LdrAddDllDirectory(const UNICODE_STRING*,void**);
