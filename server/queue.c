@@ -166,15 +166,15 @@ static void timer_callback( void *private );
 static const struct object_ops msg_queue_ops =
 {
     sizeof(struct msg_queue),  /* size */
+    &no_type,                  /* type */
     msg_queue_dump,            /* dump */
-    no_get_type,               /* get_type */
     msg_queue_add_queue,       /* add_queue */
     msg_queue_remove_queue,    /* remove_queue */
     msg_queue_signaled,        /* signaled */
     msg_queue_satisfied,       /* satisfied */
     no_signal,                 /* signal */
     no_get_fd,                 /* get_fd */
-    no_map_access,             /* map_access */
+    default_map_access,        /* map_access */
     default_get_sd,            /* get_sd */
     default_set_sd,            /* set_sd */
     no_get_full_name,          /* get_full_name */
@@ -203,15 +203,15 @@ static const struct fd_ops msg_queue_fd_ops =
 static const struct object_ops thread_input_ops =
 {
     sizeof(struct thread_input),  /* size */
+    &no_type,                     /* type */
     thread_input_dump,            /* dump */
-    no_get_type,                  /* get_type */
     no_add_queue,                 /* add_queue */
     NULL,                         /* remove_queue */
     NULL,                         /* signaled */
     NULL,                         /* satisfied */
     no_signal,                    /* signal */
     no_get_fd,                    /* get_fd */
-    no_map_access,                /* map_access */
+    default_map_access,           /* map_access */
     default_get_sd,               /* get_sd */
     default_set_sd,               /* set_sd */
     no_get_full_name,             /* get_full_name */

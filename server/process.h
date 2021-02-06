@@ -38,8 +38,6 @@ struct process_dll
     struct list          entry;           /* entry in per-process dll list */
     mod_handle_t         base;            /* dll base address (in process addr space) */
     client_ptr_t         name;            /* ptr to ptr to name (in process addr space) */
-    int                  dbg_offset;      /* debug info offset */
-    int                  dbg_size;        /* debug info size */
     data_size_t          namelen;         /* length of dll file name */
     WCHAR               *filename;        /* dll file name */
 };
@@ -110,10 +108,11 @@ extern void *get_ptid_entry( unsigned int id );
 extern struct process *create_process( int fd, struct process *parent, int inherit_all, const startup_info_t *info,
                                        const struct security_descriptor *sd, const obj_handle_t *handles,
                                        unsigned int handle_count, struct token *token );
-extern data_size_t init_process( struct thread *thread );
+extern data_size_t get_process_startup_info_size( struct process *process );
 extern struct thread *get_process_first_thread( struct process *process );
 extern struct process *get_process_from_id( process_id_t id );
 extern struct process *get_process_from_handle( obj_handle_t handle, unsigned int access );
+extern struct debug_obj *get_debug_obj( struct process *process, obj_handle_t handle, unsigned int access );
 extern int process_set_debugger( struct process *process, struct thread *thread );
 extern void debugger_detach( struct process *process, struct debug_obj *debug_obj );
 extern int set_process_debug_flag( struct process *process, int flag );

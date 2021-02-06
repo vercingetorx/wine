@@ -513,6 +513,7 @@ static const struct wined3d_gpu_description gpu_description_table[] =
     {HW_VENDOR_AMD,        CARD_AMD_RADEON_RAVEN,          "AMD Radeon(TM) Vega 10 Mobile Graphics", DRIVER_AMD_RX,     1024},
     {HW_VENDOR_AMD,        CARD_AMD_RADEON_RX_VEGA_20,     "Radeon RX Vega 20",                DRIVER_AMD_RX,           4096},
     {HW_VENDOR_AMD,        CARD_AMD_RADEON_RX_NAVI_10,     "Radeon RX 5700 / 5700 XT",         DRIVER_AMD_RX,           8192},
+    {HW_VENDOR_AMD,        CARD_AMD_RADEON_RX_NAVI_14,     "Radeon RX 5500M",                  DRIVER_AMD_RX,           4096},
 
     /* Red Hat */
     {HW_VENDOR_REDHAT,     CARD_REDHAT_VIRGL,              "Red Hat VirtIO GPU",                                        DRIVER_REDHAT_VIRGL,  1024},
@@ -2469,6 +2470,7 @@ static const struct wined3d_state_entry_template misc_state_template_no3d[] =
     {STATE_BLEND_FACTOR,                                  {STATE_VDECL}},
     {STATE_SAMPLE_MASK,                                   {STATE_VDECL}},
     {STATE_DEPTH_STENCIL,                                 {STATE_VDECL}},
+    {STATE_STENCIL_REF,                                   {STATE_VDECL}},
     {STATE_STREAMSRC,                                     {STATE_VDECL}},
     {STATE_VDECL,                                         {STATE_VDECL, state_nop}},
     {STATE_RASTERIZER,                                    {STATE_VDECL}},
@@ -2545,7 +2547,6 @@ static const struct wined3d_state_entry_template misc_state_template_no3d[] =
     {STATE_RENDER(WINED3D_RS_ANISOTROPY),                 {STATE_VDECL}},
     {STATE_RENDER(WINED3D_RS_FLUSHBATCH),                 {STATE_VDECL}},
     {STATE_RENDER(WINED3D_RS_TRANSLUCENTSORTINDEPENDENT), {STATE_VDECL}},
-    {STATE_RENDER(WINED3D_RS_STENCILREF),                 {STATE_VDECL}},
     {STATE_RENDER(WINED3D_RS_WRAP0),                      {STATE_VDECL}},
     {STATE_RENDER(WINED3D_RS_WRAP1),                      {STATE_VDECL}},
     {STATE_RENDER(WINED3D_RS_WRAP2),                      {STATE_VDECL}},

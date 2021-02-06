@@ -50,7 +50,7 @@
 #include "user.h"
 #include "security.h"
 
-/* process structure */
+/* process object */
 
 static struct list process_list = LIST_INIT(process_list);
 static int running_processes, user_processes;
@@ -58,10 +58,23 @@ static struct event *shutdown_event;           /* signaled when shutdown starts 
 static struct timeout_user *shutdown_timeout;  /* timeout for server shutdown */
 static int shutdown_stage;  /* current stage in the shutdown process */
 
-/* process operations */
+static const WCHAR process_name[] = {'P','r','o','c','e','s','s'};
+
+struct type_descr process_type =
+{
+    { process_name, sizeof(process_name) },   /* name */
+    PROCESS_ALL_ACCESS,                       /* valid_access */
+    {                                         /* mapping */
+        STANDARD_RIGHTS_READ | PROCESS_VM_READ | PROCESS_QUERY_INFORMATION,
+        STANDARD_RIGHTS_WRITE | PROCESS_SUSPEND_RESUME | PROCESS_SET_INFORMATION | PROCESS_SET_QUOTA
+        | PROCESS_CREATE_PROCESS | PROCESS_DUP_HANDLE | PROCESS_VM_WRITE | PROCESS_VM_OPERATION
+        | PROCESS_CREATE_THREAD,
+        STANDARD_RIGHTS_EXECUTE | SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_TERMINATE,
+        PROCESS_ALL_ACCESS
+    },
+};
 
 static void process_dump( struct object *obj, int verbose );
-static struct object_type *process_get_type( struct object *obj );
 static int process_signaled( struct object *obj, struct wait_queue_entry *entry );
 static unsigned int process_map_access( struct object *obj, unsigned int access );
 static struct security_descriptor *process_get_sd( struct object *obj );
@@ -73,8 +86,8 @@ static void terminate_process( struct process *process, struct thread *skip, int
 static const struct object_ops process_ops =
 {
     sizeof(struct process),      /* size */
+    &process_type,               /* type */
     process_dump,                /* dump */
-    process_get_type,            /* get_type */
     add_queue,                   /* add_queue */
     remove_queue,                /* remove_queue */
     process_signaled,            /* signaled */
@@ -124,15 +137,15 @@ static void startup_info_destroy( struct object *obj );
 static const struct object_ops startup_info_ops =
 {
     sizeof(struct startup_info),   /* size */
+    &no_type,                      /* type */
     startup_info_dump,             /* dump */
-    no_get_type,                   /* get_type */
     add_queue,                     /* add_queue */
     remove_queue,                  /* remove_queue */
     startup_info_signaled,         /* signaled */
     no_satisfied,                  /* satisfied */
     no_signal,                     /* signal */
     no_get_fd,                     /* get_fd */
-    no_map_access,                 /* map_access */
+    default_map_access,            /* map_access */
     default_get_sd,                /* get_sd */
     default_set_sd,                /* set_sd */
     no_get_full_name,              /* get_full_name */
@@ -147,10 +160,22 @@ static const struct object_ops startup_info_ops =
 
 /* job object */
 
+static const WCHAR job_name[] = {'J','o','b'};
+
+struct type_descr job_type =
+{
+    { job_name, sizeof(job_name) },   /* name */
+    JOB_OBJECT_ALL_ACCESS,            /* valid_access */
+    {                                 /* mapping */
+        STANDARD_RIGHTS_READ | JOB_OBJECT_QUERY,
+        STANDARD_RIGHTS_WRITE | JOB_OBJECT_TERMINATE | JOB_OBJECT_SET_ATTRIBUTES | JOB_OBJECT_ASSIGN_PROCESS,
+        STANDARD_RIGHTS_EXECUTE | SYNCHRONIZE,
+        JOB_OBJECT_ALL_ACCESS
+    },
+};
+
 static void job_dump( struct object *obj, int verbose );
-static struct object_type *job_get_type( struct object *obj );
 static int job_signaled( struct object *obj, struct wait_queue_entry *entry );
-static unsigned int job_map_access( struct object *obj, unsigned int access );
 static int job_close_handle( struct object *obj, struct process *process, obj_handle_t handle );
 static void job_destroy( struct object *obj );
 
@@ -170,15 +195,15 @@ struct job
 static const struct object_ops job_ops =
 {
     sizeof(struct job),            /* size */
+    &job_type,                     /* type */
     job_dump,                      /* dump */
-    job_get_type,                  /* get_type */
     add_queue,                     /* add_queue */
     remove_queue,                  /* remove_queue */
     job_signaled,                  /* signaled */
     no_satisfied,                  /* satisfied */
     no_signal,                     /* signal */
     no_get_fd,                     /* get_fd */
-    job_map_access,                /* map_access */
+    default_map_access,            /* map_access */
     default_get_sd,                /* get_sd */
     default_set_sd,                /* set_sd */
     default_get_full_name,         /* get_full_name */
@@ -217,22 +242,6 @@ static struct job *create_job_object( struct object *root, const struct unicode_
 static struct job *get_job_obj( struct process *process, obj_handle_t handle, unsigned int access )
 {
     return (struct job *)get_handle_obj( process, handle, access, &job_ops );
-}
-
-static struct object_type *job_get_type( struct object *obj )
-{
-    static const WCHAR name[] = {'J','o','b'};
-    static const struct unicode_str str = { name, sizeof(name) };
-    return get_object_type( &str );
-};
-
-static unsigned int job_map_access( struct object *obj, unsigned int access )
-{
-    if (access & GENERIC_READ)    access |= STANDARD_RIGHTS_READ;
-    if (access & GENERIC_WRITE)   access |= STANDARD_RIGHTS_WRITE;
-    if (access & GENERIC_EXECUTE) access |= STANDARD_RIGHTS_EXECUTE;
-    if (access & GENERIC_ALL)     access |= JOB_OBJECT_ALL_ACCESS;
-    return access & ~(GENERIC_READ | GENERIC_WRITE | GENERIC_EXECUTE | GENERIC_ALL);
 }
 
 static void add_job_completion( struct job *job, apc_param_t msg, apc_param_t pid )
@@ -607,10 +616,9 @@ struct process *create_process( int fd, struct process *parent, int inherit_all,
     return NULL;
 }
 
-/* initialize the current process and fill in the request */
-data_size_t init_process( struct thread *thread )
+/* get the process data size */
+data_size_t get_process_startup_info_size( struct process *process )
 {
-    struct process *process = thread->process;
     struct startup_info *info = process->startup_info;
 
     if (!info) return 0;
@@ -655,13 +663,6 @@ static void process_dump( struct object *obj, int verbose )
     fprintf( stderr, "Process id=%04x handles=%p\n", process->id, process->handles );
 }
 
-static struct object_type *process_get_type( struct object *obj )
-{
-    static const WCHAR name[] = {'P','r','o','c','e','s','s'};
-    static const struct unicode_str str = { name, sizeof(name) };
-    return get_object_type( &str );
-}
-
 static int process_signaled( struct object *obj, struct wait_queue_entry *entry )
 {
     struct process *process = (struct process *)obj;
@@ -670,16 +671,10 @@ static int process_signaled( struct object *obj, struct wait_queue_entry *entry 
 
 static unsigned int process_map_access( struct object *obj, unsigned int access )
 {
-    if (access & GENERIC_READ)    access |= STANDARD_RIGHTS_READ | PROCESS_QUERY_INFORMATION | PROCESS_VM_READ;
-    if (access & GENERIC_WRITE)   access |= STANDARD_RIGHTS_WRITE | PROCESS_SET_QUOTA | PROCESS_SET_INFORMATION | PROCESS_SUSPEND_RESUME |
-                                            PROCESS_VM_WRITE | PROCESS_DUP_HANDLE | PROCESS_CREATE_PROCESS | PROCESS_CREATE_THREAD | PROCESS_VM_OPERATION;
-    if (access & GENERIC_EXECUTE) access |= STANDARD_RIGHTS_EXECUTE | SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_TERMINATE;
-    if (access & GENERIC_ALL)     access |= PROCESS_ALL_ACCESS;
-
+    access = default_map_access( obj, access );
     if (access & PROCESS_QUERY_INFORMATION) access |= PROCESS_QUERY_LIMITED_INFORMATION;
     if (access & PROCESS_SET_INFORMATION) access |= PROCESS_SET_LIMITED_INFORMATION;
-
-    return access & ~(GENERIC_READ | GENERIC_WRITE | GENERIC_EXECUTE | GENERIC_ALL);
+    return access;
 }
 
 static struct list *process_get_kernel_obj_list( struct object *obj )
@@ -837,7 +832,7 @@ static void process_unload_dll( struct process *process, mod_handle_t base )
         free( dll->filename );
         list_remove( &dll->entry );
         free( dll );
-        generate_debug_event( current, UNLOAD_DLL_DEBUG_EVENT, &base );
+        generate_debug_event( current, DbgUnloadDllStateChange, &base );
     }
     else set_error( STATUS_INVALID_PARAMETER );
 }
@@ -968,10 +963,10 @@ void remove_process_thread( struct process *process, struct thread *thread )
     {
         /* we have removed the last running thread, exit the process */
         process->exit_code = thread->exit_code;
-        generate_debug_event( thread, EXIT_PROCESS_DEBUG_EVENT, process );
+        generate_debug_event( thread, DbgExitProcessStateChange, process );
         process_killed( process );
     }
-    else generate_debug_event( thread, EXIT_THREAD_DEBUG_EVENT, thread );
+    else generate_debug_event( thread, DbgExitThreadStateChange, thread );
     release_object( thread );
 }
 
@@ -1092,6 +1087,7 @@ DECL_HANDLER(new_process)
     const struct object_attributes *objattr = get_req_object_attributes( &sd, &name, NULL );
     struct process *process = NULL;
     struct token *token = NULL;
+    struct debug_obj *debug_obj = NULL;
     struct process *parent;
     struct thread *parent_thread = current;
     int socket_fd = thread_get_inflight_fd( current, req->socket_fd );
@@ -1215,6 +1211,11 @@ DECL_HANDLER(new_process)
         close( socket_fd );
         goto done;
     }
+    if (req->debug && !(debug_obj = get_debug_obj( current->process, req->debug, DEBUG_PROCESS_ASSIGN )))
+    {
+        close( socket_fd );
+        goto done;
+    }
 
     if (!(process = create_process( socket_fd, parent, req->inherit_all, info->data, sd,
                                     handles, req->handles_size / sizeof(*handles), token )))
@@ -1249,15 +1250,16 @@ DECL_HANDLER(new_process)
         if (get_error() == STATUS_INVALID_HANDLE ||
             get_error() == STATUS_OBJECT_TYPE_MISMATCH) clear_error();
     }
-    /* attach to the debugger if requested */
-    if (req->create_flags & (DEBUG_PROCESS | DEBUG_ONLY_THIS_PROCESS))
+
+    /* attach to the debugger */
+    if (debug_obj)
     {
-        set_process_debugger( process, current );
+        process->debug_obj = debug_obj;
         process->debug_children = !(req->create_flags & DEBUG_ONLY_THIS_PROCESS);
     }
-    else if (current->process->debug_children)
+    else if (parent->debug_children)
     {
-        process->debug_obj = current->process->debug_obj;
+        process->debug_obj = parent->debug_obj;
         /* debug_children is set to 1 by default */
     }
 
@@ -1271,6 +1273,7 @@ DECL_HANDLER(new_process)
 
  done:
     if (process) release_object( process );
+    if (debug_obj) release_object( debug_obj );
     if (token) release_object( token );
     release_object( parent );
     release_object( info );
@@ -1362,12 +1365,11 @@ DECL_HANDLER(init_process_done)
     list_remove( &dll->entry );
     list_add_head( &process->dlls, &dll->entry );
 
-    process->ldt_copy = req->ldt_copy;
     process->start_time = current_time;
     current->entry_point = req->entry;
 
     init_process_tracing( process );
-    generate_startup_debug_events( process, req->entry );
+    generate_startup_debug_events( process );
     set_process_startup_state( process, STARTUP_DONE );
 
     if (req->gui) process->idle_event = create_event( NULL, NULL, 0, 1, 0, NULL );
@@ -1424,9 +1426,10 @@ DECL_HANDLER(get_process_info)
         reply->debug_children   = process->debug_children;
         if (get_reply_max_size())
         {
+            client_ptr_t base;
             const pe_image_info_t *info;
-            struct process_dll *exe = get_process_exe_module( process );
-            if (exe && (info = get_mapping_image_info( process, exe->base )))
+            struct memory_view *view = get_exe_view( process );
+            if (view && (info = get_view_image_info( view, &base )))
                 set_reply_data( info, min( sizeof(*info), get_reply_max_size() ));
         }
         release_object( process );
@@ -1548,12 +1551,10 @@ DECL_HANDLER(load_dll)
 
     if ((dll = process_load_dll( current->process, req->base, get_req_data(), get_req_data_size() )))
     {
-        dll->dbg_offset = req->dbg_offset;
-        dll->dbg_size   = req->dbg_size;
-        dll->name       = req->name;
+        dll->name = req->name;
         /* only generate event if initialization is done */
         if (is_process_init_done( current->process ))
-            generate_debug_event( current, LOAD_DLL_DEBUG_EVENT, dll );
+            generate_debug_event( current, DbgLoadDllStateChange, dll );
     }
 }
 

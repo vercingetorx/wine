@@ -6025,7 +6025,6 @@ static void test_thread_security(void)
                "%d: expected %#x, got %#x\n", i, map[i].mapped, access);
             break;
         case GENERIC_WRITE:
-todo_wine
             ok(access == map[i].mapped ||
                access == (map[i].mapped | THREAD_SET_LIMITED_INFORMATION) /* Vista+ */ ||
                access == (map[i].mapped | THREAD_SET_LIMITED_INFORMATION | THREAD_RESUME) /* win8 */,
@@ -7878,6 +7877,55 @@ static void test_create_process_token_child(void)
     }
 }
 
+static void test_pseudo_handle_security(void)
+{
+    char buffer[200];
+    PSECURITY_DESCRIPTOR sd = buffer, sd_ptr;
+    unsigned int i;
+    DWORD size;
+    BOOL ret;
+
+    static const HKEY keys[] =
+    {
+        HKEY_CLASSES_ROOT,
+        HKEY_CURRENT_USER,
+        HKEY_LOCAL_MACHINE,
+        HKEY_USERS,
+        HKEY_PERFORMANCE_DATA,
+        HKEY_CURRENT_CONFIG,
+        HKEY_DYN_DATA,
+    };
+
+    ret = GetKernelObjectSecurity(GetCurrentProcess(), OWNER_SECURITY_INFORMATION, &sd, sizeof(buffer), &size);
+    ok(ret, "got error %u\n", GetLastError());
+
+    ret = GetKernelObjectSecurity(GetCurrentThread(), OWNER_SECURITY_INFORMATION, &sd, sizeof(buffer), &size);
+    ok(ret, "got error %u\n", GetLastError());
+
+    for (i = 0; i < ARRAY_SIZE(keys); ++i)
+    {
+        SetLastError(0xdeadbeef);
+        ret = GetKernelObjectSecurity(keys[i], OWNER_SECURITY_INFORMATION, &sd, sizeof(buffer), &size);
+        ok(!ret, "key %p: expected failure\n", keys[i]);
+        ok(GetLastError() == ERROR_INVALID_HANDLE, "key %p: got error %u\n", keys[i], GetLastError());
+
+        ret = GetSecurityInfo(keys[i], SE_REGISTRY_KEY,
+                DACL_SECURITY_INFORMATION, NULL, NULL, NULL, NULL, &sd_ptr);
+        if (keys[i] == HKEY_PERFORMANCE_DATA)
+            todo_wine ok(ret == ERROR_INVALID_HANDLE, "key %p: got error %u\n", keys[i], ret);
+        else if (keys[i] == HKEY_DYN_DATA)
+            todo_wine ok(ret == ERROR_CALL_NOT_IMPLEMENTED || broken(ret == ERROR_INVALID_HANDLE) /* <7 */,
+                    "key %p: got error %u\n", keys[i], ret);
+        else
+            ok(!ret, "key %p: got error %u\n", keys[i], ret);
+        LocalFree(sd_ptr);
+
+        ret = GetSecurityInfo(keys[i], SE_KERNEL_OBJECT,
+                DACL_SECURITY_INFORMATION, NULL, NULL, NULL, NULL, &sd_ptr);
+        ok(ret == ERROR_INVALID_HANDLE, "key %p: got error %u\n", keys[i], ret);
+    }
+}
+
 START_TEST(security)
 {
     init();
@@ -7940,6 +7988,7 @@ START_TEST(security)
     test_BuildSecurityDescriptorW();
     test_duplicate_handle_access();
     test_create_process_token();
+    test_pseudo_handle_security();
 
     /* Must be the last test, modifies process token */
     test_token_security_descriptor();

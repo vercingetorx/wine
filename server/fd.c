@@ -205,15 +205,15 @@ static void fd_destroy( struct object *obj );
 static const struct object_ops fd_ops =
 {
     sizeof(struct fd),        /* size */
+    &no_type,                 /* type */
     fd_dump,                  /* dump */
-    no_get_type,              /* get_type */
     no_add_queue,             /* add_queue */
     NULL,                     /* remove_queue */
     NULL,                     /* signaled */
     NULL,                     /* satisfied */
     no_signal,                /* signal */
     no_get_fd,                /* get_fd */
-    no_map_access,            /* map_access */
+    default_map_access,       /* map_access */
     default_get_sd,           /* get_sd */
     default_set_sd,           /* set_sd */
     no_get_full_name,         /* get_full_name */
@@ -246,15 +246,15 @@ static void device_destroy( struct object *obj );
 static const struct object_ops device_ops =
 {
     sizeof(struct device),    /* size */
+    &no_type,                 /* type */
     device_dump,              /* dump */
-    no_get_type,              /* get_type */
     no_add_queue,             /* add_queue */
     NULL,                     /* remove_queue */
     NULL,                     /* signaled */
     NULL,                     /* satisfied */
     no_signal,                /* signal */
     no_get_fd,                /* get_fd */
-    no_map_access,            /* map_access */
+    default_map_access,       /* map_access */
     default_get_sd,           /* get_sd */
     default_set_sd,           /* set_sd */
     no_get_full_name,         /* get_full_name */
@@ -286,15 +286,15 @@ static void inode_destroy( struct object *obj );
 static const struct object_ops inode_ops =
 {
     sizeof(struct inode),     /* size */
+    &no_type,                 /* type */
     inode_dump,               /* dump */
-    no_get_type,              /* get_type */
     no_add_queue,             /* add_queue */
     NULL,                     /* remove_queue */
     NULL,                     /* signaled */
     NULL,                     /* satisfied */
     no_signal,                /* signal */
     no_get_fd,                /* get_fd */
-    no_map_access,            /* map_access */
+    default_map_access,       /* map_access */
     default_get_sd,           /* get_sd */
     default_set_sd,           /* set_sd */
     no_get_full_name,         /* get_full_name */
@@ -328,15 +328,15 @@ static int file_lock_signaled( struct object *obj, struct wait_queue_entry *entr
 static const struct object_ops file_lock_ops =
 {
     sizeof(struct file_lock),   /* size */
+    &no_type,                   /* type */
     file_lock_dump,             /* dump */
-    no_get_type,                /* get_type */
     add_queue,                  /* add_queue */
     remove_queue,               /* remove_queue */
     file_lock_signaled,         /* signaled */
     no_satisfied,               /* satisfied */
     no_signal,                  /* signal */
     no_get_fd,                  /* get_fd */
-    no_map_access,              /* map_access */
+    default_map_access,         /* map_access */
     default_get_sd,             /* get_sd */
     default_set_sd,             /* set_sd */
     no_get_full_name,           /* get_full_name */
@@ -2090,16 +2090,6 @@ int default_fd_signaled( struct object *obj, struct wait_queue_entry *entry )
     int ret = fd->signaled;
     release_object( fd );
     return ret;
-}
-
-/* default map_access() routine for objects that behave like an fd */
-unsigned int default_fd_map_access( struct object *obj, unsigned int access )
-{
-    if (access & GENERIC_READ)    access |= FILE_GENERIC_READ;
-    if (access & GENERIC_WRITE)   access |= FILE_GENERIC_WRITE;
-    if (access & GENERIC_EXECUTE) access |= FILE_GENERIC_EXECUTE;
-    if (access & GENERIC_ALL)     access |= FILE_ALL_ACCESS;
-    return access & ~(GENERIC_READ | GENERIC_WRITE | GENERIC_EXECUTE | GENERIC_ALL);
 }
 
 int default_fd_get_poll_events( struct fd *fd )

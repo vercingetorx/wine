@@ -3436,8 +3436,8 @@ static WCHAR *get_oscaption( OSVERSIONINFOEXW *ver )
     if (!(ret = heap_alloc( len * sizeof(WCHAR) + sizeof(win2003W) ))) return NULL;
     memcpy( ret, windowsW, sizeof(windowsW) );
     if (ver->dwMajorVersion == 10 && ver->dwMinorVersion == 0) memcpy( ret + len, win10W, sizeof(win10W) );
-    else if (ver->dwMajorVersion == 6 && ver->dwMinorVersion == 3) memcpy( ret + len, win8W, sizeof(win8W) );
-    else if (ver->dwMajorVersion == 6 && ver->dwMinorVersion == 2) memcpy( ret + len, win81W, sizeof(win81W) );
+    else if (ver->dwMajorVersion == 6 && ver->dwMinorVersion == 3) memcpy( ret + len, win81W, sizeof(win81W) );
+    else if (ver->dwMajorVersion == 6 && ver->dwMinorVersion == 2) memcpy( ret + len, win8W, sizeof(win8W) );
     else if (ver->dwMajorVersion == 6 && ver->dwMinorVersion == 1)
     {
         if (ver->wProductType == VER_NT_WORKSTATION) memcpy( ret + len, win7W, sizeof(win7W) );
@@ -3514,13 +3514,13 @@ static enum fill_status fill_operatingsystem( struct table *table, const struct 
 {
     struct record_operatingsystem *rec;
     enum fill_status status = FILL_STATUS_UNFILTERED;
-    OSVERSIONINFOEXW ver;
+    RTL_OSVERSIONINFOEXW ver;
     UINT row = 0;
 
     if (!resize_table( table, 1, sizeof(*rec) )) return FILL_STATUS_FAILED;
 
     ver.dwOSVersionInfoSize = sizeof(ver);
-    GetVersionExW( (OSVERSIONINFOW *)&ver );
+    RtlGetVersion( &ver );
 
     rec = (struct record_operatingsystem *)table->data;
     rec->buildnumber            = get_osbuildnumber( &ver );

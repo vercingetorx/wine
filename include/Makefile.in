@@ -509,6 +509,7 @@ SOURCES = \
 	msxml6did.h \
 	msxmldid.h \
 	mtxdm.h \
+	mulres.idl \
 	multimon.h \
 	natupnp.idl \
 	nb30.h \
@@ -797,6 +798,8 @@ SOURCES = \
 	wmiutils.idl \
 	wmp.idl \
 	wmpids.h \
+	wmprealestate.idl \
+	wmpservices.idl \
 	wmsbuffer.idl \
 	wmsdk.h \
 	wmsdkidl.idl \

@@ -893,7 +893,6 @@ NTSTATUS WINAPI NtCreateUserProcess( HANDLE *process_handle_ptr, HANDLE *thread_
 
     TRACE( "%s image %s cmdline %s parent %p\n", debugstr_us( &path ),
            debugstr_us( &params->ImagePathName ), debugstr_us( &params->CommandLine ), parent );
-    if (debug) FIXME( "debug port %p not supported yet\n", debug );
 
     unixdir = get_unix_curdir( params );
 
@@ -942,6 +941,7 @@ NTSTATUS WINAPI NtCreateUserProcess( HANDLE *process_handle_ptr, HANDLE *thread_
     SERVER_START_REQ( new_process )
     {
         req->token          = wine_server_obj_handle( token );
+        req->debug          = wine_server_obj_handle( debug );
         req->parent_process = wine_server_obj_handle( parent );
         req->inherit_all    = !!(process_flags & PROCESS_CREATE_FLAGS_INHERIT_HANDLES);
         req->create_flags   = params->DebugFlags; /* hack: creation flags stored in DebugFlags for now */
@@ -1746,10 +1746,58 @@ NTSTATUS WINAPI NtResumeProcess( HANDLE handle )
 /**********************************************************************
  *           NtDebugActiveProcess  (NTDLL.@)
  */
-NTSTATUS WINAPI NtDebugActiveProcess( HANDLE process, HANDLE debug_object )
+NTSTATUS WINAPI NtDebugActiveProcess( HANDLE process, HANDLE debug )
 {
-    FIXME( "(%p %p), stub!\n", process, debug_object );
-    return STATUS_SUCCESS;
+    NTSTATUS ret;
+
+    SERVER_START_REQ( debug_process )
+    {
+        req->handle = wine_server_obj_handle( process );
+        req->debug  = wine_server_obj_handle( debug );
+        req->attach = 1;
+        ret = wine_server_call( req );
+    }
+    SERVER_END_REQ;
+    return ret;
+}
+
+
+/**********************************************************************
+ *           NtRemoveProcessDebug  (NTDLL.@)
+ */
+NTSTATUS WINAPI NtRemoveProcessDebug( HANDLE process, HANDLE debug )
+{
+    NTSTATUS ret;
+
+    SERVER_START_REQ( debug_process )
+    {
+        req->handle = wine_server_obj_handle( process );
+        req->debug  = wine_server_obj_handle( debug );
+        req->attach = 0;
+        ret = wine_server_call( req );
+    }
+    SERVER_END_REQ;
+    return ret;
+}
+
+
+/**********************************************************************
+ *           NtDebugContinue  (NTDLL.@)
+ */
+NTSTATUS WINAPI NtDebugContinue( HANDLE handle, CLIENT_ID *client, NTSTATUS status )
+{
+    NTSTATUS ret;
+
+    SERVER_START_REQ( continue_debug_event )
+    {
+        req->debug  = wine_server_obj_handle( handle );
+        req->pid    = HandleToULong( client->UniqueProcess );
+        req->tid    = HandleToULong( client->UniqueThread );
+        req->status = status;
+        ret = wine_server_call( req );
+    }
+    SERVER_END_REQ;
+    return ret;
 }
 
 

@@ -1921,10 +1921,8 @@ static NTSTATUS build_module( LPCWSTR load_path, const UNICODE_STRING *nt_name, 
 
     SERVER_START_REQ( load_dll )
     {
-        req->base       = wine_server_client_ptr( *module );
-        req->dbg_offset = nt->FileHeader.PointerToSymbolTable;
-        req->dbg_size   = nt->FileHeader.NumberOfSymbols;
-        req->name       = wine_server_client_ptr( &wm->ldr.FullDllName.Buffer );
+        req->base = wine_server_client_ptr( *module );
+        req->name = wine_server_client_ptr( &wm->ldr.FullDllName.Buffer );
         wine_server_add_data( req, wm->ldr.FullDllName.Buffer, wm->ldr.FullDllName.Length );
         wine_server_call( req );
     }
@@ -2042,7 +2040,7 @@ static BOOL get_cor_header( HANDLE file, const SECTION_IMAGE_INFORMATION *info, 
     va = nt.OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_COM_DESCRIPTOR].VirtualAddress;
     size = nt.OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_COM_DESCRIPTOR].Size;
     if (!va || size < sizeof(*cor)) return FALSE;
-    offset.QuadPart = offsetof( IMAGE_NT_HEADERS32, OptionalHeader ) + nt.FileHeader.SizeOfOptionalHeader;
+    offset.QuadPart += offsetof( IMAGE_NT_HEADERS32, OptionalHeader ) + nt.FileHeader.SizeOfOptionalHeader;
     count = min( 96, nt.FileHeader.NumberOfSections );
     if (NtReadFile( file, 0, NULL, NULL, &io, &sec, count * sizeof(*sec), &offset, NULL )) return FALSE;
     if (io.Information != count * sizeof(*sec)) return FALSE;
@@ -4031,29 +4029,6 @@ static NTSTATUS process_init(void)
     load_global_options();
     version_init();
 
-    /* setup the load callback and create ntdll modref */
-    RtlInitUnicodeString( &nt_name, L"\\??\\C:\\windows\\system32\\ntdll.dll" );
-    NtQueryVirtualMemory( GetCurrentProcess(), process_init, MemoryBasicInformation,
-                          &meminfo, sizeof(meminfo), NULL );
-    status = build_builtin_module( params->DllPath.Buffer, &nt_name, meminfo.AllocationBase, 0, &wm );
-    assert( !status );
-
-    if ((status = load_dll( params->DllPath.Buffer, L"C:\\windows\\system32\\kernel32.dll",
-                            NULL, 0, &wm )) != STATUS_SUCCESS)
-    {
-        MESSAGE( "wine: could not load kernel32.dll, status %x\n", status );
-        NtTerminateProcess( GetCurrentProcess(), status );
-    }
-    RtlInitAnsiString( &func_name, "BaseThreadInitThunk" );
-    if ((status = LdrGetProcedureAddress( wm->ldr.DllBase, &func_name,
-                                          0, (void **)&pBaseThreadInitThunk )) != STATUS_SUCCESS)
-    {
-        MESSAGE( "wine: could not find BaseThreadInitThunk in kernel32.dll, status %x\n", status );
-        NtTerminateProcess( GetCurrentProcess(), status );
-    }
-
-    init_locale( wm->ldr.DllBase );
-
     if (!(status = load_dll( params->DllPath.Buffer, params->ImagePathName.Buffer, NULL,
                              DONT_RESOLVE_DLL_REFERENCES, &wm )))
     {
@@ -4115,11 +4090,27 @@ static NTSTATUS process_init(void)
     }
 #endif
 
-    /* the main exe needs to be the first in the load order list */
-    RemoveEntryList( &wm->ldr.InLoadOrderLinks );
-    InsertHeadList( &peb->LdrData->InLoadOrderModuleList, &wm->ldr.InLoadOrderLinks );
-    RemoveEntryList( &wm->ldr.InMemoryOrderLinks );
-    InsertHeadList( &peb->LdrData->InMemoryOrderModuleList, &wm->ldr.InMemoryOrderLinks );
+    RtlInitUnicodeString( &nt_name, L"\\??\\C:\\windows\\system32\\ntdll.dll" );
+    NtQueryVirtualMemory( GetCurrentProcess(), process_init, MemoryBasicInformation,
+                          &meminfo, sizeof(meminfo), NULL );
+    status = build_builtin_module( params->DllPath.Buffer, &nt_name, meminfo.AllocationBase, 0, &wm );
+    assert( !status );
+
+    if ((status = load_dll( params->DllPath.Buffer, L"C:\\windows\\system32\\kernel32.dll",
+                            NULL, 0, &wm )) != STATUS_SUCCESS)
+    {
+        MESSAGE( "wine: could not load kernel32.dll, status %x\n", status );
+        NtTerminateProcess( GetCurrentProcess(), status );
+    }
+    RtlInitAnsiString( &func_name, "BaseThreadInitThunk" );
+    if ((status = LdrGetProcedureAddress( wm->ldr.DllBase, &func_name,
+                                          0, (void **)&pBaseThreadInitThunk )) != STATUS_SUCCESS)
+    {
+        MESSAGE( "wine: could not find BaseThreadInitThunk in kernel32.dll, status %x\n", status );
+        NtTerminateProcess( GetCurrentProcess(), status );
+    }
+
+    init_locale( wm->ldr.DllBase );
 
     RtlCreateUserStack( 0, 0, 0, 0x10000, 0x10000, &stack );
     teb->Tib.StackBase = stack.StackBase;

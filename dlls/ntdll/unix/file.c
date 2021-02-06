@@ -344,7 +344,7 @@ NTSTATUS errno_to_status( int err )
     case EACCES:    return STATUS_ACCESS_DENIED;
     case ENOTDIR:   return STATUS_OBJECT_PATH_NOT_FOUND;
     case ENOENT:    return STATUS_OBJECT_NAME_NOT_FOUND;
-    case EISDIR:    return STATUS_FILE_IS_A_DIRECTORY;
+    case EISDIR:    return STATUS_INVALID_DEVICE_REQUEST;
     case EMFILE:
     case ENFILE:    return STATUS_TOO_MANY_OPENED_FILES;
     case EINVAL:    return STATUS_INVALID_PARAMETER;
@@ -1342,6 +1342,7 @@ static BOOLEAN match_filename( const WCHAR *name, int length, const UNICODE_STRI
             next_to_retry = name;
             break;
         case '?':
+        case '>':
             mask++;
             name++;
             break;
@@ -6490,6 +6491,30 @@ NTSTATUS WINAPI NtSetEaFile( HANDLE handle, IO_STATUS_BLOCK *io, void *buffer, U
 }
 
 
+/* convert type information from server format; helper for NtQueryObject */
+static void *put_object_type_info( OBJECT_TYPE_INFORMATION *p, struct object_type_info *info )
+{
+    const ULONG align = sizeof(DWORD_PTR) - 1;
+
+    memset( p, 0, sizeof(*p) );
+    p->TypeName.Buffer               = (WCHAR *)(p + 1);
+    p->TypeName.Length               = info->name_len;
+    p->TypeName.MaximumLength        = info->name_len + sizeof(WCHAR);
+    p->TotalNumberOfObjects          = info->obj_count;
+    p->TotalNumberOfHandles          = info->handle_count;
+    p->HighWaterNumberOfObjects      = info->obj_max;
+    p->HighWaterNumberOfHandles      = info->handle_max;
+    p->TypeIndex                     = info->index + 2;
+    p->GenericMapping.GenericRead    = info->mapping.read;
+    p->GenericMapping.GenericWrite   = info->mapping.write;
+    p->GenericMapping.GenericExecute = info->mapping.exec;
+    p->GenericMapping.GenericAll     = info->mapping.all;
+    p->ValidAccessMask               = info->valid_access;
+    memcpy( p->TypeName.Buffer, info + 1, info->name_len );
+    p->TypeName.Buffer[info->name_len / sizeof(WCHAR)] = 0;
+    return (char *)(p + 1) + ((p->TypeName.MaximumLength + align) & ~align);
+}
+
 /**************************************************************************
  *           NtQueryObject   (NTDLL.@)
  */
@@ -6595,37 +6620,65 @@ NTSTATUS WINAPI NtQueryObject( HANDLE handle, OBJECT_INFORMATION_CLASS info_clas
     case ObjectTypeInformation:
     {
         OBJECT_TYPE_INFORMATION *p = ptr;
+        char buffer[sizeof(struct object_type_info) + 64];
+        struct object_type_info *info = (struct object_type_info *)buffer;
 
         SERVER_START_REQ( get_object_type )
         {
             req->handle = wine_server_obj_handle( handle );
-            if (len > sizeof(*p)) wine_server_set_reply( req, p + 1, len - sizeof(*p) );
+            wine_server_set_reply( req, buffer, sizeof(buffer) );
             status = wine_server_call( req );
-            if (status == STATUS_SUCCESS)
-            {
-                if (!reply->total)  /* no name */
-                {
-                    if (sizeof(*p) > len) status = STATUS_INFO_LENGTH_MISMATCH;
-                    else memset( p, 0, sizeof(*p) );
-                    if (used_len) *used_len = sizeof(*p);
-                }
-                else if (sizeof(*p) + reply->total + sizeof(WCHAR) > len)
-                {
-                    if (used_len) *used_len = sizeof(*p) + reply->total + sizeof(WCHAR);
-                    status = STATUS_INFO_LENGTH_MISMATCH;
-                }
-                else
-                {
-                    ULONG res = wine_server_reply_size( reply );
-                    p->TypeName.Buffer = (WCHAR *)(p + 1);
-                    p->TypeName.Length = res;
-                    p->TypeName.MaximumLength = res + sizeof(WCHAR);
-                    p->TypeName.Buffer[res / sizeof(WCHAR)] = 0;
-                    if (used_len) *used_len = sizeof(*p) + p->TypeName.MaximumLength;
-                }
-            }
         }
         SERVER_END_REQ;
+        if (status) break;
+        if (sizeof(*p) + info->name_len + sizeof(WCHAR) <= len)
+        {
+            put_object_type_info( p, info );
+            if (used_len) *used_len = sizeof(*p) + p->TypeName.MaximumLength;
+        }
+        else
+        {
+            if (used_len) *used_len = sizeof(*p) + info->name_len + sizeof(WCHAR);
+            status = STATUS_INFO_LENGTH_MISMATCH;
+        }
+        break;
+    }
+
+    case ObjectTypesInformation:
+    {
+        OBJECT_TYPES_INFORMATION *types = ptr;
+        OBJECT_TYPE_INFORMATION *p;
+        struct object_type_info *buffer;
+        /* assume at most 32 types, with an average 16-char name */
+        ULONG size = 32 * (sizeof(struct object_type_info) + 16 * sizeof(WCHAR));
+        ULONG i, count, pos, total, align = sizeof(DWORD_PTR) - 1;
+
+        buffer = malloc( size );
+        SERVER_START_REQ( get_object_types )
+        {
+            wine_server_set_reply( req, buffer, size );
+            status = wine_server_call( req );
+            count = reply->count;
+        }
+        SERVER_END_REQ;
+        if (!status)
+        {
+            if (len >= sizeof(*types)) types->NumberOfTypes = count;
+            total = (sizeof(*types) + align) & ~align;
+            p = (OBJECT_TYPE_INFORMATION *)((char *)ptr + total);
+            for (i = pos = 0; i < count; i++)
+            {
+                struct object_type_info *info = (struct object_type_info *)((char *)buffer + pos);
+                pos += sizeof(*info) + ((info->name_len + 3) & ~3);
+                total += sizeof(*p) + ((info->name_len + sizeof(WCHAR) + align) & ~align);
+                if (total <= len) p = put_object_type_info( p, info );
+            }
+            if (used_len) *used_len = total;
+            if (total > len) status = STATUS_INFO_LENGTH_MISMATCH;
+        }
+        else if (status == STATUS_BUFFER_OVERFLOW) FIXME( "size %u too small\n", size );
+
+        free( buffer );
         break;
     }
 
