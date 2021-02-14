@@ -882,10 +882,8 @@ typedef struct
 
 /* Signal the end of the process initialization */
 @REQ(init_process_done)
-    int          gui;          /* is it a GUI process? */
-    mod_handle_t module;       /* main module base address */
-    client_ptr_t entry;        /* process entry point */
 @REPLY
+    client_ptr_t entry;        /* process entry point */
     int          suspend;      /* is process suspended? */
 @END
 
@@ -955,9 +953,27 @@ typedef struct
     int          exit_code;        /* process exit code */
     int          priority;         /* priority class */
     client_cpu_t cpu;              /* CPU that this process is running on */
-    short int    debugger_present; /* process is being debugged */
-    short int    debug_children;   /* inherit debugger to child processes */
     VARARG(image,pe_image_info);   /* image info for main exe */
+@END
+
+
+/* Retrieve debug information about a process */
+@REQ(get_process_debug_info)
+    obj_handle_t handle;           /* process handle */
+@REPLY
+    obj_handle_t debug;            /* handle to debug port */
+    int          debug_children;   /* inherit debugger to child processes */
+    VARARG(image,pe_image_info);   /* image info for main exe */
+@END
+
+
+/* Fetch the name of the process image */
+@REQ(get_process_image_name)
+    obj_handle_t handle;           /* process handle */
+    int          win32;            /* return a win32 filename? */
+@REPLY
+    data_size_t  len;              /* len in bytes required to store filename */
+    VARARG(name,unicode_str);      /* image name for main exe */
 @END
 
 
@@ -1034,17 +1050,6 @@ typedef struct
 #define SET_THREAD_INFO_DBG_HIDDEN  0x20
 
 
-/* Retrieve information about a module */
-@REQ(get_dll_info)
-    obj_handle_t handle;       /* process handle */
-    mod_handle_t base_address; /* base address of module */
-@REPLY
-    client_ptr_t entry_point;
-    data_size_t  filename_len;    /* buffer len in bytes required to store filename */
-    VARARG(filename,unicode_str); /* file name of module */
-@END
-
-
 /* Suspend a thread */
 @REQ(suspend_thread)
     obj_handle_t handle;       /* thread handle */
@@ -1058,20 +1063,6 @@ typedef struct
     obj_handle_t handle;       /* thread handle */
 @REPLY
     int          count;        /* new suspend count */
-@END
-
-
-/* Notify the server that a dll has been loaded */
-@REQ(load_dll)
-    mod_handle_t base;         /* base address */
-    client_ptr_t name;         /* ptr to ptr to name (in process addr space) */
-    VARARG(filename,unicode_str); /* file name of dll */
-@END
-
-
-/* Notify the server that a dll is being unloaded */
-@REQ(unload_dll)
-    mod_handle_t base;         /* base address */
 @END
 
 
@@ -1580,6 +1571,16 @@ enum server_fd_type
 @REQ(is_same_mapping)
     client_ptr_t base1;         /* first view base address */
     client_ptr_t base2;         /* second view base address */
+@END
+
+
+/* Get the filename of a mapping */
+@REQ(get_mapping_filename)
+    obj_handle_t process;       /* process handle */
+    client_ptr_t addr;          /* address inside mapped view (in process address space) */
+@REPLY
+    data_size_t  len;           /* total filename length in bytes */
+    VARARG(filename,unicode_str); /* filename in NT format */
 @END
 
 
@@ -3536,8 +3537,10 @@ struct handle_info
 @REQ(set_fd_name_info)
     obj_handle_t handle;          /* handle to a file or directory */
     obj_handle_t rootdir;         /* root directory */
+    data_size_t  namelen;         /* length of NT name in bytes */
     int          link;            /* link instead of renaming */
     int          replace;         /* replace an existing file? */
+    VARARG(name,unicode_str,namelen); /* NT name */
     VARARG(filename,string);      /* new file name */
 @END
 

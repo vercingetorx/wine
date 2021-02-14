@@ -33,15 +33,6 @@ enum startup_state { STARTUP_IN_PROGRESS, STARTUP_DONE, STARTUP_ABORTED };
 
 /* process structures */
 
-struct process_dll
-{
-    struct list          entry;           /* entry in per-process dll list */
-    mod_handle_t         base;            /* dll base address (in process addr space) */
-    client_ptr_t         name;            /* ptr to ptr to name (in process addr space) */
-    data_size_t          namelen;         /* length of dll file name */
-    WCHAR               *filename;        /* dll file name */
-};
-
 struct rawinput_device_entry
 {
     struct list            entry;
@@ -86,7 +77,6 @@ struct process
     obj_handle_t         desktop;         /* handle to desktop to use for new threads */
     struct token        *token;           /* security token associated with this process */
     struct list          views;           /* list of memory views */
-    struct list          dlls;            /* list of loaded dlls */
     client_ptr_t         peb;             /* PEB address in client address space */
     client_ptr_t         ldt_copy;        /* pointer to LDT copy in client addr space */
     struct dir_cache    *dir_cache;       /* map of client-side directory cache */
@@ -151,12 +141,6 @@ static inline process_id_t get_process_id( struct process *process ) { return pr
 static inline int is_process_init_done( struct process *process )
 {
     return process->startup_state == STARTUP_DONE;
-}
-
-static inline struct process_dll *get_process_exe_module( struct process *process )
-{
-    struct list *ptr = list_head( &process->dlls );
-    return ptr ? LIST_ENTRY( ptr, struct process_dll, entry ) : NULL;
 }
 
 #endif  /* __WINE_SERVER_PROCESS_H */

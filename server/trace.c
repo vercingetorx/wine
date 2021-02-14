@@ -1420,14 +1420,12 @@ static void dump_get_startup_info_reply( const struct get_startup_info_reply *re
 
 static void dump_init_process_done_request( const struct init_process_done_request *req )
 {
-    fprintf( stderr, " gui=%d", req->gui );
-    dump_uint64( ", module=", &req->module );
-    dump_uint64( ", entry=", &req->entry );
 }
 
 static void dump_init_process_done_reply( const struct init_process_done_reply *req )
 {
-    fprintf( stderr, " suspend=%d", req->suspend );
+    dump_uint64( " entry=", &req->entry );
+    fprintf( stderr, ", suspend=%d", req->suspend );
 }
 
 static void dump_init_first_thread_request( const struct init_first_thread_request *req )
@@ -1506,9 +1504,31 @@ static void dump_get_process_info_reply( const struct get_process_info_reply *re
     fprintf( stderr, ", exit_code=%d", req->exit_code );
     fprintf( stderr, ", priority=%d", req->priority );
     dump_client_cpu( ", cpu=", &req->cpu );
-    fprintf( stderr, ", debugger_present=%d", req->debugger_present );
+    dump_varargs_pe_image_info( ", image=", cur_size );
+}
+
+static void dump_get_process_debug_info_request( const struct get_process_debug_info_request *req )
+{
+    fprintf( stderr, " handle=%04x", req->handle );
+}
+
+static void dump_get_process_debug_info_reply( const struct get_process_debug_info_reply *req )
+{
+    fprintf( stderr, " debug=%04x", req->debug );
     fprintf( stderr, ", debug_children=%d", req->debug_children );
     dump_varargs_pe_image_info( ", image=", cur_size );
+}
+
+static void dump_get_process_image_name_request( const struct get_process_image_name_request *req )
+{
+    fprintf( stderr, " handle=%04x", req->handle );
+    fprintf( stderr, ", win32=%d", req->win32 );
+}
+
+static void dump_get_process_image_name_reply( const struct get_process_image_name_reply *req )
+{
+    fprintf( stderr, " len=%u", req->len );
+    dump_varargs_unicode_str( ", name=", cur_size );
 }
 
 static void dump_get_process_vm_counters_request( const struct get_process_vm_counters_request *req )
@@ -1580,19 +1600,6 @@ static void dump_set_thread_info_request( const struct set_thread_info_request *
     dump_varargs_unicode_str( ", desc=", cur_size );
 }
 
-static void dump_get_dll_info_request( const struct get_dll_info_request *req )
-{
-    fprintf( stderr, " handle=%04x", req->handle );
-    dump_uint64( ", base_address=", &req->base_address );
-}
-
-static void dump_get_dll_info_reply( const struct get_dll_info_reply *req )
-{
-    dump_uint64( " entry_point=", &req->entry_point );
-    fprintf( stderr, ", filename_len=%u", req->filename_len );
-    dump_varargs_unicode_str( ", filename=", cur_size );
-}
-
 static void dump_suspend_thread_request( const struct suspend_thread_request *req )
 {
     fprintf( stderr, " handle=%04x", req->handle );
@@ -1611,18 +1618,6 @@ static void dump_resume_thread_request( const struct resume_thread_request *req 
 static void dump_resume_thread_reply( const struct resume_thread_reply *req )
 {
     fprintf( stderr, " count=%d", req->count );
-}
-
-static void dump_load_dll_request( const struct load_dll_request *req )
-{
-    dump_uint64( " base=", &req->base );
-    dump_uint64( ", name=", &req->name );
-    dump_varargs_unicode_str( ", filename=", cur_size );
-}
-
-static void dump_unload_dll_request( const struct unload_dll_request *req )
-{
-    dump_uint64( " base=", &req->base );
 }
 
 static void dump_queue_apc_request( const struct queue_apc_request *req )
@@ -2193,6 +2188,18 @@ static void dump_is_same_mapping_request( const struct is_same_mapping_request *
 {
     dump_uint64( " base1=", &req->base1 );
     dump_uint64( ", base2=", &req->base2 );
+}
+
+static void dump_get_mapping_filename_request( const struct get_mapping_filename_request *req )
+{
+    fprintf( stderr, " process=%04x", req->process );
+    dump_uint64( ", addr=", &req->addr );
+}
+
+static void dump_get_mapping_filename_reply( const struct get_mapping_filename_reply *req )
+{
+    fprintf( stderr, " len=%u", req->len );
+    dump_varargs_unicode_str( ", filename=", cur_size );
 }
 
 static void dump_list_processes_request( const struct list_processes_request *req )
@@ -4284,8 +4291,10 @@ static void dump_set_fd_name_info_request( const struct set_fd_name_info_request
 {
     fprintf( stderr, " handle=%04x", req->handle );
     fprintf( stderr, ", rootdir=%04x", req->rootdir );
+    fprintf( stderr, ", namelen=%u", req->namelen );
     fprintf( stderr, ", link=%d", req->link );
     fprintf( stderr, ", replace=%d", req->replace );
+    dump_varargs_unicode_str( ", name=", min(cur_size,req->namelen) );
     dump_varargs_string( ", filename=", cur_size );
 }
 
@@ -4471,16 +4480,15 @@ static const dump_func req_dumpers[REQ_NB_REQUESTS] = {
     (dump_func)dump_terminate_process_request,
     (dump_func)dump_terminate_thread_request,
     (dump_func)dump_get_process_info_request,
+    (dump_func)dump_get_process_debug_info_request,
+    (dump_func)dump_get_process_image_name_request,
     (dump_func)dump_get_process_vm_counters_request,
     (dump_func)dump_set_process_info_request,
     (dump_func)dump_get_thread_info_request,
     (dump_func)dump_get_thread_times_request,
     (dump_func)dump_set_thread_info_request,
-    (dump_func)dump_get_dll_info_request,
     (dump_func)dump_suspend_thread_request,
     (dump_func)dump_resume_thread_request,
-    (dump_func)dump_load_dll_request,
-    (dump_func)dump_unload_dll_request,
     (dump_func)dump_queue_apc_request,
     (dump_func)dump_get_apc_result_request,
     (dump_func)dump_close_handle_request,
@@ -4531,6 +4539,7 @@ static const dump_func req_dumpers[REQ_NB_REQUESTS] = {
     (dump_func)dump_get_mapping_committed_range_request,
     (dump_func)dump_add_mapping_committed_range_request,
     (dump_func)dump_is_same_mapping_request,
+    (dump_func)dump_get_mapping_filename_request,
     (dump_func)dump_list_processes_request,
     (dump_func)dump_create_debug_obj_request,
     (dump_func)dump_wait_debug_event_request,
@@ -4751,16 +4760,15 @@ static const dump_func reply_dumpers[REQ_NB_REQUESTS] = {
     (dump_func)dump_terminate_process_reply,
     (dump_func)dump_terminate_thread_reply,
     (dump_func)dump_get_process_info_reply,
+    (dump_func)dump_get_process_debug_info_reply,
+    (dump_func)dump_get_process_image_name_reply,
     (dump_func)dump_get_process_vm_counters_reply,
     NULL,
     (dump_func)dump_get_thread_info_reply,
     (dump_func)dump_get_thread_times_reply,
     NULL,
-    (dump_func)dump_get_dll_info_reply,
     (dump_func)dump_suspend_thread_reply,
     (dump_func)dump_resume_thread_reply,
-    NULL,
-    NULL,
     (dump_func)dump_queue_apc_reply,
     (dump_func)dump_get_apc_result_reply,
     NULL,
@@ -4811,6 +4819,7 @@ static const dump_func reply_dumpers[REQ_NB_REQUESTS] = {
     (dump_func)dump_get_mapping_committed_range_reply,
     NULL,
     NULL,
+    (dump_func)dump_get_mapping_filename_reply,
     (dump_func)dump_list_processes_reply,
     (dump_func)dump_create_debug_obj_reply,
     (dump_func)dump_wait_debug_event_reply,
@@ -5031,16 +5040,15 @@ static const char * const req_names[REQ_NB_REQUESTS] = {
     "terminate_process",
     "terminate_thread",
     "get_process_info",
+    "get_process_debug_info",
+    "get_process_image_name",
     "get_process_vm_counters",
     "set_process_info",
     "get_thread_info",
     "get_thread_times",
     "set_thread_info",
-    "get_dll_info",
     "suspend_thread",
     "resume_thread",
-    "load_dll",
-    "unload_dll",
     "queue_apc",
     "get_apc_result",
     "close_handle",
@@ -5091,6 +5099,7 @@ static const char * const req_names[REQ_NB_REQUESTS] = {
     "get_mapping_committed_range",
     "add_mapping_committed_range",
     "is_same_mapping",
+    "get_mapping_filename",
     "list_processes",
     "create_debug_obj",
     "wait_debug_event",
@@ -5340,6 +5349,7 @@ static const struct
     { "ERROR_NO_MORE_USER_HANDLES",  0xc0010000 | ERROR_NO_MORE_USER_HANDLES },
     { "ERROR_WINDOW_OF_OTHER_THREAD", 0xc0010000 | ERROR_WINDOW_OF_OTHER_THREAD },
     { "FILE_DELETED",                STATUS_FILE_DELETED },
+    { "FILE_INVALID",                STATUS_FILE_INVALID },
     { "FILE_IS_A_DIRECTORY",         STATUS_FILE_IS_A_DIRECTORY },
     { "FILE_LOCK_CONFLICT",          STATUS_FILE_LOCK_CONFLICT },
     { "GENERIC_NOT_MAPPED",          STATUS_GENERIC_NOT_MAPPED },
@@ -5351,6 +5361,7 @@ static const struct
     { "INFO_LENGTH_MISMATCH",        STATUS_INFO_LENGTH_MISMATCH },
     { "INSTANCE_NOT_AVAILABLE",      STATUS_INSTANCE_NOT_AVAILABLE },
     { "INSUFFICIENT_RESOURCES",      STATUS_INSUFFICIENT_RESOURCES },
+    { "INVALID_ADDRESS",             STATUS_INVALID_ADDRESS },
     { "INVALID_CID",                 STATUS_INVALID_CID },
     { "INVALID_DEVICE_REQUEST",      STATUS_INVALID_DEVICE_REQUEST },
     { "INVALID_FILE_FOR_SECTION",    STATUS_INVALID_FILE_FOR_SECTION },
@@ -5408,6 +5419,7 @@ static const struct
     { "PIPE_EMPTY",                  STATUS_PIPE_EMPTY },
     { "PIPE_LISTENING",              STATUS_PIPE_LISTENING },
     { "PIPE_NOT_AVAILABLE",          STATUS_PIPE_NOT_AVAILABLE },
+    { "PORT_NOT_SET",                STATUS_PORT_NOT_SET },
     { "PRIVILEGE_NOT_HELD",          STATUS_PRIVILEGE_NOT_HELD },
     { "PROCESS_IN_JOB",              STATUS_PROCESS_IN_JOB },
     { "PROCESS_IS_TERMINATING",      STATUS_PROCESS_IS_TERMINATING },

@@ -556,7 +556,6 @@ struct process *create_process( int fd, struct process *parent, int inherit_all,
     list_init( &process->asyncs );
     list_init( &process->classes );
     list_init( &process->views );
-    list_init( &process->dlls );
     list_init( &process->rawinput_devices );
 
     process->end_time = 0;
@@ -782,61 +781,6 @@ struct process *get_process_from_handle( obj_handle_t handle, unsigned int acces
                                              access, &process_ops );
 }
 
-/* find a dll from its base address */
-static inline struct process_dll *find_process_dll( struct process *process, mod_handle_t base )
-{
-    struct process_dll *dll;
-
-    LIST_FOR_EACH_ENTRY( dll, &process->dlls, struct process_dll, entry )
-    {
-        if (dll->base == base) return dll;
-    }
-    return NULL;
-}
-
-/* add a dll to a process list */
-static struct process_dll *process_load_dll( struct process *process, mod_handle_t base,
-                                             const WCHAR *filename, data_size_t name_len )
-{
-    struct process_dll *dll;
-
-    /* make sure we don't already have one with the same base address */
-    if (find_process_dll( process, base ))
-    {
-        set_error( STATUS_INVALID_PARAMETER );
-        return NULL;
-    }
-
-    if ((dll = mem_alloc( sizeof(*dll) )))
-    {
-        dll->base = base;
-        dll->filename = NULL;
-        dll->namelen  = name_len;
-        if (name_len && !(dll->filename = memdup( filename, name_len )))
-        {
-            free( dll );
-            return NULL;
-        }
-        list_add_tail( &process->dlls, &dll->entry );
-    }
-    return dll;
-}
-
-/* remove a dll from a process list */
-static void process_unload_dll( struct process *process, mod_handle_t base )
-{
-    struct process_dll *dll = find_process_dll( process, base );
-
-    if (dll && (&dll->entry != list_head( &process->dlls )))  /* main exe can't be unloaded */
-    {
-        free( dll->filename );
-        list_remove( &dll->entry );
-        free( dll );
-        generate_debug_event( current, DbgUnloadDllStateChange, &base );
-    }
-    else set_error( STATUS_INVALID_PARAMETER );
-}
-
 /* terminate a process with the given exit code */
 static void terminate_process( struct process *process, struct thread *skip, int exit_code )
 {
@@ -913,13 +857,6 @@ static void process_killed( struct process *process )
         struct rawinput_device_entry *entry = LIST_ENTRY( ptr, struct rawinput_device_entry, entry );
         list_remove( &entry->entry );
         free( entry );
-    }
-    while ((ptr = list_head( &process->dlls )))
-    {
-        struct process_dll *dll = LIST_ENTRY( ptr, struct process_dll, entry );
-        free( dll->filename );
-        list_remove( &dll->entry );
-        free( dll );
     }
     destroy_process_classes( process );
     free_mapped_views( process );
@@ -1347,33 +1284,34 @@ DECL_HANDLER(get_startup_info)
 /* signal the end of the process initialization */
 DECL_HANDLER(init_process_done)
 {
-    struct process_dll *dll;
     struct process *process = current->process;
+    struct memory_view *view;
+    client_ptr_t base;
+    const pe_image_info_t *image_info;
 
     if (is_process_init_done(process))
     {
         set_error( STATUS_INVALID_PARAMETER );
         return;
     }
-    if (!(dll = find_process_dll( process, req->module )))
+    if (!(view = get_exe_view( process )))
     {
         set_error( STATUS_DLL_NOT_FOUND );
         return;
     }
-
-    /* main exe is the first in the dll list */
-    list_remove( &dll->entry );
-    list_add_head( &process->dlls, &dll->entry );
+    if (!(image_info = get_view_image_info( view, &base ))) return;
 
     process->start_time = current_time;
-    current->entry_point = req->entry;
+    current->entry_point = image_info->entry_point;
 
     init_process_tracing( process );
     generate_startup_debug_events( process );
     set_process_startup_state( process, STARTUP_DONE );
 
-    if (req->gui) process->idle_event = create_event( NULL, NULL, 0, 1, 0, NULL );
+    if (image_info->subsystem != IMAGE_SUBSYSTEM_WINDOWS_CUI)
+        process->idle_event = create_event( NULL, NULL, 0, 1, 0, NULL );
     if (process->debug_obj) set_process_debug_flag( process, 1 );
+    reply->entry = image_info->entry_point;
     reply->suspend = (current->suspend || process->suspend);
 }
 
@@ -1422,8 +1360,6 @@ DECL_HANDLER(get_process_info)
         reply->start_time       = process->start_time;
         reply->end_time         = process->end_time;
         reply->cpu              = process->cpu;
-        reply->debugger_present = !!process->debug_obj;
-        reply->debug_children   = process->debug_children;
         if (get_reply_max_size())
         {
             client_ptr_t base;
@@ -1434,6 +1370,49 @@ DECL_HANDLER(get_process_info)
         }
         release_object( process );
     }
+}
+
+/* retrieve debug information about a process */
+DECL_HANDLER(get_process_debug_info)
+{
+    struct process *process;
+
+    if (!(process = get_process_from_handle( req->handle, PROCESS_QUERY_LIMITED_INFORMATION ))) return;
+
+    reply->debug_children = process->debug_children;
+    if (!process->debug_obj) set_error( STATUS_PORT_NOT_SET );
+    else reply->debug = alloc_handle( current->process, process->debug_obj, DEBUG_ALL_ACCESS, 0 );
+    release_object( process );
+}
+
+/* fetch the name of the process image */
+DECL_HANDLER(get_process_image_name)
+{
+    struct unicode_str name;
+    struct memory_view *view;
+    struct process *process = get_process_from_handle( req->handle, PROCESS_QUERY_LIMITED_INFORMATION );
+
+    if (!process) return;
+    if ((view = get_exe_view( process )) && get_view_nt_name( view, &name ))
+    {
+        /* skip the \??\ prefix */
+        if (req->win32 && name.len > 6 * sizeof(WCHAR) && name.str[5] == ':')
+        {
+            name.str += 4;
+            name.len -= 4 * sizeof(WCHAR);
+        }
+        /* FIXME: else resolve symlinks in NT path */
+
+        reply->len = name.len;
+        if (name.len <= get_reply_max_size())
+        {
+            WCHAR *ptr = set_reply_data( name.str, name.len );
+            /* change \??\ to \\?\ */
+            if (req->win32 && name.len > sizeof(WCHAR) && ptr[1] == '?') ptr[1] = '\\';
+        }
+        else set_error( STATUS_BUFFER_TOO_SMALL );
+    }
+    release_object( process );
 }
 
 /* retrieve information about a process memory usage */
@@ -1540,60 +1519,6 @@ DECL_HANDLER(write_process_memory)
         data_size_t len = get_req_data_size();
         if (len) write_process_memory( process, req->addr, len, get_req_data() );
         else set_error( STATUS_INVALID_PARAMETER );
-        release_object( process );
-    }
-}
-
-/* notify the server that a dll has been loaded */
-DECL_HANDLER(load_dll)
-{
-    struct process_dll *dll;
-
-    if ((dll = process_load_dll( current->process, req->base, get_req_data(), get_req_data_size() )))
-    {
-        dll->name = req->name;
-        /* only generate event if initialization is done */
-        if (is_process_init_done( current->process ))
-            generate_debug_event( current, DbgLoadDllStateChange, dll );
-    }
-}
-
-/* notify the server that a dll is being unloaded */
-DECL_HANDLER(unload_dll)
-{
-    process_unload_dll( current->process, req->base );
-}
-
-/* retrieve information about a module in a process */
-DECL_HANDLER(get_dll_info)
-{
-    struct process *process;
-
-    if ((process = get_process_from_handle( req->handle, PROCESS_QUERY_LIMITED_INFORMATION )))
-    {
-        struct process_dll *dll;
-
-        if (req->base_address)
-            dll = find_process_dll( process, req->base_address );
-        else /* NULL means main module */
-            dll = list_head( &process->dlls ) ?
-                LIST_ENTRY(list_head( &process->dlls ), struct process_dll, entry) : NULL;
-
-        if (dll)
-        {
-            reply->entry_point = 0; /* FIXME */
-            reply->filename_len = dll->namelen;
-            if (dll->filename)
-            {
-                if (dll->namelen <= get_reply_max_size())
-                    set_reply_data( dll->filename, dll->namelen );
-                else
-                    set_error( STATUS_BUFFER_TOO_SMALL );
-            }
-        }
-        else
-            set_error( STATUS_DLL_NOT_FOUND );
-
         release_object( process );
     }
 }
@@ -1806,6 +1731,7 @@ DECL_HANDLER(list_processes)
 {
     struct process *process;
     struct thread *thread;
+    struct unicode_str nt_name;
     unsigned int pos = 0;
     char *buffer;
 
@@ -1814,10 +1740,10 @@ DECL_HANDLER(list_processes)
 
     LIST_FOR_EACH_ENTRY( process, &process_list, struct process, entry )
     {
-        struct process_dll *exe = get_process_exe_module( process );
+        struct memory_view *view = get_exe_view( process );
+        if (!view || !get_view_nt_name( view, &nt_name )) nt_name.len = 0;
         reply->info_size = (reply->info_size + 7) & ~7;
-        reply->info_size += sizeof(struct process_info);
-        if (exe) reply->info_size += exe->namelen;
+        reply->info_size += sizeof(struct process_info) + nt_name.len;
         reply->info_size = (reply->info_size + 7) & ~7;
         reply->info_size += process->running_threads * sizeof(struct thread_info);
         reply->process_count++;
@@ -1835,12 +1761,13 @@ DECL_HANDLER(list_processes)
     LIST_FOR_EACH_ENTRY( process, &process_list, struct process, entry )
     {
         struct process_info *process_info;
-        struct process_dll *exe = get_process_exe_module( process );
+        struct memory_view *view = get_exe_view( process );
 
         pos = (pos + 7) & ~7;
+        if (!view || !get_view_nt_name( view, &nt_name )) nt_name.len = 0;
         process_info = (struct process_info *)(buffer + pos);
         process_info->start_time = process->start_time;
-        process_info->name_len = exe ? exe->namelen : 0;
+        process_info->name_len = nt_name.len;
         process_info->thread_count = process->running_threads;
         process_info->priority = process->priority;
         process_info->pid = process->id;
@@ -1848,13 +1775,8 @@ DECL_HANDLER(list_processes)
         process_info->handle_count = get_handle_table_count(process);
         process_info->unix_pid = process->unix_pid;
         pos += sizeof(*process_info);
-
-        if (exe)
-        {
-            memcpy( buffer + pos, exe->filename, exe->namelen );
-            pos += exe->namelen;
-        }
-
+        memcpy( buffer + pos, nt_name.str, nt_name.len );
+        pos += nt_name.len;
         pos = (pos + 7) & ~7;
         LIST_FOR_EACH_ENTRY( thread, &process->thread_list, struct thread, proc_entry )
         {

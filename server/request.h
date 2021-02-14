@@ -130,16 +130,15 @@ DECL_HANDLER(init_thread);
 DECL_HANDLER(terminate_process);
 DECL_HANDLER(terminate_thread);
 DECL_HANDLER(get_process_info);
+DECL_HANDLER(get_process_debug_info);
+DECL_HANDLER(get_process_image_name);
 DECL_HANDLER(get_process_vm_counters);
 DECL_HANDLER(set_process_info);
 DECL_HANDLER(get_thread_info);
 DECL_HANDLER(get_thread_times);
 DECL_HANDLER(set_thread_info);
-DECL_HANDLER(get_dll_info);
 DECL_HANDLER(suspend_thread);
 DECL_HANDLER(resume_thread);
-DECL_HANDLER(load_dll);
-DECL_HANDLER(unload_dll);
 DECL_HANDLER(queue_apc);
 DECL_HANDLER(get_apc_result);
 DECL_HANDLER(close_handle);
@@ -190,6 +189,7 @@ DECL_HANDLER(unmap_view);
 DECL_HANDLER(get_mapping_committed_range);
 DECL_HANDLER(add_mapping_committed_range);
 DECL_HANDLER(is_same_mapping);
+DECL_HANDLER(get_mapping_filename);
 DECL_HANDLER(list_processes);
 DECL_HANDLER(create_debug_obj);
 DECL_HANDLER(wait_debug_event);
@@ -413,16 +413,15 @@ static const req_handler req_handlers[REQ_NB_REQUESTS] =
     (req_handler)req_terminate_process,
     (req_handler)req_terminate_thread,
     (req_handler)req_get_process_info,
+    (req_handler)req_get_process_debug_info,
+    (req_handler)req_get_process_image_name,
     (req_handler)req_get_process_vm_counters,
     (req_handler)req_set_process_info,
     (req_handler)req_get_thread_info,
     (req_handler)req_get_thread_times,
     (req_handler)req_set_thread_info,
-    (req_handler)req_get_dll_info,
     (req_handler)req_suspend_thread,
     (req_handler)req_resume_thread,
-    (req_handler)req_load_dll,
-    (req_handler)req_unload_dll,
     (req_handler)req_queue_apc,
     (req_handler)req_get_apc_result,
     (req_handler)req_close_handle,
@@ -473,6 +472,7 @@ static const req_handler req_handlers[REQ_NB_REQUESTS] =
     (req_handler)req_get_mapping_committed_range,
     (req_handler)req_add_mapping_committed_range,
     (req_handler)req_is_same_mapping,
+    (req_handler)req_get_mapping_filename,
     (req_handler)req_list_processes,
     (req_handler)req_create_debug_obj,
     (req_handler)req_wait_debug_event,
@@ -746,12 +746,10 @@ C_ASSERT( sizeof(struct new_thread_reply) == 16 );
 C_ASSERT( sizeof(struct get_startup_info_request) == 16 );
 C_ASSERT( FIELD_OFFSET(struct get_startup_info_reply, info_size) == 8 );
 C_ASSERT( sizeof(struct get_startup_info_reply) == 16 );
-C_ASSERT( FIELD_OFFSET(struct init_process_done_request, gui) == 12 );
-C_ASSERT( FIELD_OFFSET(struct init_process_done_request, module) == 16 );
-C_ASSERT( FIELD_OFFSET(struct init_process_done_request, entry) == 24 );
-C_ASSERT( sizeof(struct init_process_done_request) == 32 );
-C_ASSERT( FIELD_OFFSET(struct init_process_done_reply, suspend) == 8 );
-C_ASSERT( sizeof(struct init_process_done_reply) == 16 );
+C_ASSERT( sizeof(struct init_process_done_request) == 16 );
+C_ASSERT( FIELD_OFFSET(struct init_process_done_reply, entry) == 8 );
+C_ASSERT( FIELD_OFFSET(struct init_process_done_reply, suspend) == 16 );
+C_ASSERT( sizeof(struct init_process_done_reply) == 24 );
 C_ASSERT( FIELD_OFFSET(struct init_first_thread_request, unix_pid) == 12 );
 C_ASSERT( FIELD_OFFSET(struct init_first_thread_request, unix_tid) == 16 );
 C_ASSERT( FIELD_OFFSET(struct init_first_thread_request, debug_level) == 20 );
@@ -799,9 +797,17 @@ C_ASSERT( FIELD_OFFSET(struct get_process_info_reply, end_time) == 40 );
 C_ASSERT( FIELD_OFFSET(struct get_process_info_reply, exit_code) == 48 );
 C_ASSERT( FIELD_OFFSET(struct get_process_info_reply, priority) == 52 );
 C_ASSERT( FIELD_OFFSET(struct get_process_info_reply, cpu) == 56 );
-C_ASSERT( FIELD_OFFSET(struct get_process_info_reply, debugger_present) == 60 );
-C_ASSERT( FIELD_OFFSET(struct get_process_info_reply, debug_children) == 62 );
 C_ASSERT( sizeof(struct get_process_info_reply) == 64 );
+C_ASSERT( FIELD_OFFSET(struct get_process_debug_info_request, handle) == 12 );
+C_ASSERT( sizeof(struct get_process_debug_info_request) == 16 );
+C_ASSERT( FIELD_OFFSET(struct get_process_debug_info_reply, debug) == 8 );
+C_ASSERT( FIELD_OFFSET(struct get_process_debug_info_reply, debug_children) == 12 );
+C_ASSERT( sizeof(struct get_process_debug_info_reply) == 16 );
+C_ASSERT( FIELD_OFFSET(struct get_process_image_name_request, handle) == 12 );
+C_ASSERT( FIELD_OFFSET(struct get_process_image_name_request, win32) == 16 );
+C_ASSERT( sizeof(struct get_process_image_name_request) == 24 );
+C_ASSERT( FIELD_OFFSET(struct get_process_image_name_reply, len) == 8 );
+C_ASSERT( sizeof(struct get_process_image_name_reply) == 16 );
 C_ASSERT( FIELD_OFFSET(struct get_process_vm_counters_request, handle) == 12 );
 C_ASSERT( sizeof(struct get_process_vm_counters_request) == 16 );
 C_ASSERT( FIELD_OFFSET(struct get_process_vm_counters_reply, peak_virtual_size) == 8 );
@@ -845,12 +851,6 @@ C_ASSERT( FIELD_OFFSET(struct set_thread_info_request, affinity) == 24 );
 C_ASSERT( FIELD_OFFSET(struct set_thread_info_request, entry_point) == 32 );
 C_ASSERT( FIELD_OFFSET(struct set_thread_info_request, token) == 40 );
 C_ASSERT( sizeof(struct set_thread_info_request) == 48 );
-C_ASSERT( FIELD_OFFSET(struct get_dll_info_request, handle) == 12 );
-C_ASSERT( FIELD_OFFSET(struct get_dll_info_request, base_address) == 16 );
-C_ASSERT( sizeof(struct get_dll_info_request) == 24 );
-C_ASSERT( FIELD_OFFSET(struct get_dll_info_reply, entry_point) == 8 );
-C_ASSERT( FIELD_OFFSET(struct get_dll_info_reply, filename_len) == 16 );
-C_ASSERT( sizeof(struct get_dll_info_reply) == 24 );
 C_ASSERT( FIELD_OFFSET(struct suspend_thread_request, handle) == 12 );
 C_ASSERT( sizeof(struct suspend_thread_request) == 16 );
 C_ASSERT( FIELD_OFFSET(struct suspend_thread_reply, count) == 8 );
@@ -859,11 +859,6 @@ C_ASSERT( FIELD_OFFSET(struct resume_thread_request, handle) == 12 );
 C_ASSERT( sizeof(struct resume_thread_request) == 16 );
 C_ASSERT( FIELD_OFFSET(struct resume_thread_reply, count) == 8 );
 C_ASSERT( sizeof(struct resume_thread_reply) == 16 );
-C_ASSERT( FIELD_OFFSET(struct load_dll_request, base) == 16 );
-C_ASSERT( FIELD_OFFSET(struct load_dll_request, name) == 24 );
-C_ASSERT( sizeof(struct load_dll_request) == 32 );
-C_ASSERT( FIELD_OFFSET(struct unload_dll_request, base) == 16 );
-C_ASSERT( sizeof(struct unload_dll_request) == 24 );
 C_ASSERT( FIELD_OFFSET(struct queue_apc_request, handle) == 12 );
 C_ASSERT( FIELD_OFFSET(struct queue_apc_request, call) == 16 );
 C_ASSERT( sizeof(struct queue_apc_request) == 64 );
@@ -1140,6 +1135,11 @@ C_ASSERT( sizeof(struct add_mapping_committed_range_request) == 40 );
 C_ASSERT( FIELD_OFFSET(struct is_same_mapping_request, base1) == 16 );
 C_ASSERT( FIELD_OFFSET(struct is_same_mapping_request, base2) == 24 );
 C_ASSERT( sizeof(struct is_same_mapping_request) == 32 );
+C_ASSERT( FIELD_OFFSET(struct get_mapping_filename_request, process) == 12 );
+C_ASSERT( FIELD_OFFSET(struct get_mapping_filename_request, addr) == 16 );
+C_ASSERT( sizeof(struct get_mapping_filename_request) == 24 );
+C_ASSERT( FIELD_OFFSET(struct get_mapping_filename_reply, len) == 8 );
+C_ASSERT( sizeof(struct get_mapping_filename_reply) == 16 );
 C_ASSERT( sizeof(struct list_processes_request) == 16 );
 C_ASSERT( FIELD_OFFSET(struct list_processes_reply, info_size) == 8 );
 C_ASSERT( FIELD_OFFSET(struct list_processes_reply, process_count) == 12 );
@@ -2170,8 +2170,9 @@ C_ASSERT( FIELD_OFFSET(struct set_fd_disp_info_request, unlink) == 16 );
 C_ASSERT( sizeof(struct set_fd_disp_info_request) == 24 );
 C_ASSERT( FIELD_OFFSET(struct set_fd_name_info_request, handle) == 12 );
 C_ASSERT( FIELD_OFFSET(struct set_fd_name_info_request, rootdir) == 16 );
-C_ASSERT( FIELD_OFFSET(struct set_fd_name_info_request, link) == 20 );
-C_ASSERT( FIELD_OFFSET(struct set_fd_name_info_request, replace) == 24 );
+C_ASSERT( FIELD_OFFSET(struct set_fd_name_info_request, namelen) == 20 );
+C_ASSERT( FIELD_OFFSET(struct set_fd_name_info_request, link) == 24 );
+C_ASSERT( FIELD_OFFSET(struct set_fd_name_info_request, replace) == 28 );
 C_ASSERT( sizeof(struct set_fd_name_info_request) == 32 );
 C_ASSERT( FIELD_OFFSET(struct get_window_layered_info_request, handle) == 12 );
 C_ASSERT( sizeof(struct get_window_layered_info_request) == 16 );

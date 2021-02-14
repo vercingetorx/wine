@@ -210,6 +210,7 @@ int is_file_executable( const char *name )
 }
 
 static struct object *create_file( struct fd *root, const char *nameptr, data_size_t len,
+                                   struct unicode_str nt_name,
                                    unsigned int access, unsigned int sharing, int create,
                                    unsigned int options, unsigned int attrs,
                                    const struct security_descriptor *sd )
@@ -220,7 +221,7 @@ static struct object *create_file( struct fd *root, const char *nameptr, data_si
     char *name;
     mode_t mode;
 
-    if (!len || ((nameptr[0] == '/') ^ !root))
+    if (!len || ((nameptr[0] == '/') ^ !root) || (nt_name.len && ((nt_name.str[0] == '\\') ^ !root)))
     {
         set_error( STATUS_OBJECT_PATH_SYNTAX_BAD );
         return NULL;
@@ -267,7 +268,7 @@ static struct object *create_file( struct fd *root, const char *nameptr, data_si
     access = map_access( access, &file_type.mapping );
 
     /* FIXME: should set error to STATUS_OBJECT_NAME_COLLISION if file existed before */
-    fd = open_fd( root, name, flags | O_NONBLOCK | O_LARGEFILE, &mode, access, sharing, options );
+    fd = open_fd( root, name, nt_name, flags | O_NONBLOCK | O_LARGEFILE, &mode, access, sharing, options );
     if (!fd) goto done;
 
     if (S_ISDIR(mode))
@@ -603,13 +604,15 @@ static struct object *file_open_file( struct object *obj, unsigned int access,
 {
     struct file *file = (struct file *)obj;
     struct object *new_file = NULL;
+    struct unicode_str nt_name;
     char *unix_name;
 
     assert( obj->ops == &file_ops );
 
     if ((unix_name = dup_fd_name( file->fd, "" )))
     {
-        new_file = create_file( NULL, unix_name, strlen(unix_name), access,
+        get_nt_name( file->fd, &nt_name );
+        new_file = create_file( NULL, unix_name, strlen(unix_name), nt_name, access,
                                 sharing, FILE_OPEN, options, 0, NULL );
         free( unix_name );
     }
@@ -685,20 +688,13 @@ DECL_HANDLER(create_file)
 {
     struct object *file;
     struct fd *root_fd = NULL;
-    struct unicode_str unicode_name;
+    struct unicode_str nt_name;
     const struct security_descriptor *sd;
-    const struct object_attributes *objattr = get_req_object_attributes( &sd, &unicode_name, NULL );
+    const struct object_attributes *objattr = get_req_object_attributes( &sd, &nt_name, NULL );
     const char *name;
     data_size_t name_len;
 
     if (!objattr) return;
-
-    /* name is transferred in the unix codepage outside of the objattr structure */
-    if (unicode_name.len)
-    {
-        set_error( STATUS_INVALID_PARAMETER );
-        return;
-    }
 
     if (objattr->rootdir)
     {
@@ -713,7 +709,7 @@ DECL_HANDLER(create_file)
     name = get_req_data_after_objattr( objattr, &name_len );
 
     reply->handle = 0;
-    if ((file = create_file( root_fd, name, name_len, req->access, req->sharing,
+    if ((file = create_file( root_fd, name, name_len, nt_name, req->access, req->sharing,
                              req->create, req->options, req->attrs, sd )))
     {
         reply->handle = alloc_handle( current->process, file, req->access, objattr->attributes );
