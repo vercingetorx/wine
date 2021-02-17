@@ -1,7 +1,5 @@
 /*
- * IDL Compiler
- *
- * Copyright 2002 Ove Kaaven
+ * Copyright 2021 Zebediah Figura
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -18,30 +16,15 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#ifndef __WIDL_PARSER_H
-#define __WIDL_PARSER_H
+#include <oaidl.h>
+#include <commdlg.h>
+#include <shlwapi.h>
 
-int parser_parse(void);
+extern DWORD WINAPI StrCmpCA(const char *, const char *);
 
-extern FILE *parser_in;
-extern char *parser_text;
-extern int parser_debug;
-extern int yy_flex_debug;
-
-int parser_lex(void);
-
-extern int import_stack_ptr;
-int do_import(char *fname);
-void abort_import(void);
-void pop_import(void);
-
-#define parse_only import_stack_ptr
-
-int is_type(const char *name);
-
-int do_warning(const char *toggle, warning_list_t *wnum);
-int is_warning_enabled(int warning);
-
-extern char *temp_name;
-
-#endif
+void export(void)
+{
+    SysAllocString(NULL);
+    GetOpenFileNameA(NULL);
+    SHRegGetIntW(NULL, NULL, 0);
+}

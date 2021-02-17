@@ -981,7 +981,8 @@ static void fill_builtin_image_info( void *module, pe_image_info_t *info )
 /***********************************************************************
  *           dlopen_dll
  */
-static NTSTATUS dlopen_dll( const char *so_name, void **ret_module, pe_image_info_t *image_info )
+static NTSTATUS dlopen_dll( const char *so_name, UNICODE_STRING *nt_name,
+                            void **ret_module, pe_image_info_t *image_info )
 {
     struct builtin_module *builtin;
     void *module, *handle;
@@ -1028,7 +1029,7 @@ static NTSTATUS dlopen_dll( const char *so_name, void **ret_module, pe_image_inf
         dlclose( handle );
         return STATUS_NO_MEMORY;
     }
-    virtual_create_builtin_view( module, image_info );
+    virtual_create_builtin_view( module, nt_name, image_info );
     *ret_module = module;
     return STATUS_SUCCESS;
 
@@ -1107,7 +1108,7 @@ static NTSTATUS CDECL load_so_dll( UNICODE_STRING *nt_name, void **module )
     len = nt_name->Length / sizeof(WCHAR);
     if (len > 3 && !wcsicmp( nt_name->Buffer + len - 3, soW )) nt_name->Length -= 3 * sizeof(WCHAR);
 
-    status = dlopen_dll( unix_name, module, &info );
+    status = dlopen_dll( unix_name, nt_name, module, &info );
     free( unix_name );
     return status;
 }
@@ -1224,7 +1225,7 @@ static NTSTATUS open_dll_file( const char *name, OBJECT_ATTRIBUTES *attr, HANDLE
 
     NtQuerySection( *mapping, SectionImageInformation, image_info, sizeof(*image_info), NULL );
     /* ignore non-builtins */
-    if (!(image_info->u.ImageFlags & IMAGE_FLAGS_WineBuiltin))
+    if (!(image_info->u.s.WineBuiltin))
     {
         WARN( "%s found in WINEDLLPATH but not a builtin, ignoring\n", debugstr_a(name) );
         status = STATUS_DLL_NOT_FOUND;
@@ -1261,7 +1262,7 @@ static NTSTATUS open_builtin_file( char *name, OBJECT_ATTRIBUTES *attr, HANDLE *
         {
             pe_image_info_t info;
 
-            if (!dlopen_dll( name, module, &info ))
+            if (!dlopen_dll( name, attr->ObjectName, module, &info ))
             {
                 virtual_fill_image_information( &info, image_info );
                 status = STATUS_SUCCESS;
@@ -1606,11 +1607,6 @@ static struct unix_funcs unix_funcs =
     ntdll_sin,
     ntdll_sqrt,
     ntdll_tan,
-    get_initial_environment,
-    get_startup_info,
-    get_dynamic_environment,
-    get_initial_console,
-    get_initial_directory,
     get_unix_codepage_data,
     get_locales,
     virtual_release_address_space,
@@ -1643,6 +1639,7 @@ static void start_main_thread(void)
     virtual_map_user_shared_data();
     init_cpu_info();
     init_files();
+    init_startup_info();
     NtCreateKeyedEvent( &keyed_event, GENERIC_READ | GENERIC_WRITE, NULL, 0 );
     load_ntdll();
     load_libwine();

@@ -680,6 +680,7 @@ enum irp_type
     IRP_CALL_WRITE,
     IRP_CALL_FLUSH,
     IRP_CALL_IOCTL,
+    IRP_CALL_VOLUME,
     IRP_CALL_FREE,
     IRP_CALL_CANCEL
 };
@@ -732,6 +733,14 @@ typedef union
         int              __pad;
         client_ptr_t     file;
     } ioctl;
+    struct
+    {
+        enum irp_type    type;
+        unsigned int     info_class;
+        data_size_t      out_size;
+        int              __pad;
+        client_ptr_t     file;
+    } volume;
     struct
     {
         enum irp_type    type;
@@ -1250,9 +1259,6 @@ struct dup_handle_reply
     int          closed;
     char __pad_20[4];
 };
-#define DUP_HANDLE_CLOSE_SOURCE  DUPLICATE_CLOSE_SOURCE
-#define DUP_HANDLE_SAME_ACCESS   DUPLICATE_SAME_ACCESS
-#define DUP_HANDLE_MAKE_GLOBAL   0x80000000
 
 
 
@@ -1688,13 +1694,16 @@ struct get_volume_info_request
 {
     struct request_header __header;
     obj_handle_t handle;
+    async_data_t async;
     unsigned int info_class;
-    char __pad_20[4];
+    char __pad_60[4];
 };
 struct get_volume_info_reply
 {
     struct reply_header __header;
+    obj_handle_t wait;
     /* VARARG(data,bytes); */
+    char __pad_12[4];
 };
 
 
@@ -1923,6 +1932,7 @@ struct map_view_request
     mem_size_t   size;
     file_pos_t   start;
     /* VARARG(image,pe_image_info); */
+    /* VARARG(name,unicode_str); */
 };
 struct map_view_reply
 {
@@ -2517,8 +2527,8 @@ struct get_selector_entry_reply
 struct add_atom_request
 {
     struct request_header __header;
-    obj_handle_t  table;
     /* VARARG(name,unicode_str); */
+    char __pad_12[4];
 };
 struct add_atom_reply
 {
@@ -2532,9 +2542,7 @@ struct add_atom_reply
 struct delete_atom_request
 {
     struct request_header __header;
-    obj_handle_t  table;
     atom_t        atom;
-    char __pad_20[4];
 };
 struct delete_atom_reply
 {
@@ -2546,8 +2554,8 @@ struct delete_atom_reply
 struct find_atom_request
 {
     struct request_header __header;
-    obj_handle_t table;
     /* VARARG(name,unicode_str); */
+    char __pad_12[4];
 };
 struct find_atom_reply
 {
@@ -2561,9 +2569,7 @@ struct find_atom_reply
 struct get_atom_information_request
 {
     struct request_header __header;
-    obj_handle_t table;
     atom_t       atom;
-    char __pad_20[4];
 };
 struct get_atom_information_reply
 {
@@ -2573,48 +2579,6 @@ struct get_atom_information_reply
     data_size_t  total;
     /* VARARG(name,unicode_str); */
     char __pad_20[4];
-};
-
-
-
-struct set_atom_information_request
-{
-    struct request_header __header;
-    obj_handle_t table;
-    atom_t       atom;
-    int          pinned;
-};
-struct set_atom_information_reply
-{
-    struct reply_header __header;
-};
-
-
-
-struct empty_atom_table_request
-{
-    struct request_header __header;
-    obj_handle_t table;
-    int          if_pinned;
-    char __pad_20[4];
-};
-struct empty_atom_table_reply
-{
-    struct reply_header __header;
-};
-
-
-
-struct init_atom_table_request
-{
-    struct request_header __header;
-    int          entries;
-};
-struct init_atom_table_reply
-{
-    struct reply_header __header;
-    obj_handle_t table;
-    char __pad_12[4];
 };
 
 
@@ -5524,9 +5488,6 @@ enum request
     REQ_delete_atom,
     REQ_find_atom,
     REQ_get_atom_information,
-    REQ_set_atom_information,
-    REQ_empty_atom_table,
-    REQ_init_atom_table,
     REQ_get_msg_queue,
     REQ_set_queue_fd,
     REQ_set_queue_mask,
@@ -5808,9 +5769,6 @@ union generic_request
     struct delete_atom_request delete_atom_request;
     struct find_atom_request find_atom_request;
     struct get_atom_information_request get_atom_information_request;
-    struct set_atom_information_request set_atom_information_request;
-    struct empty_atom_table_request empty_atom_table_request;
-    struct init_atom_table_request init_atom_table_request;
     struct get_msg_queue_request get_msg_queue_request;
     struct set_queue_fd_request set_queue_fd_request;
     struct set_queue_mask_request set_queue_mask_request;
@@ -6090,9 +6048,6 @@ union generic_reply
     struct delete_atom_reply delete_atom_reply;
     struct find_atom_reply find_atom_reply;
     struct get_atom_information_reply get_atom_information_reply;
-    struct set_atom_information_reply set_atom_information_reply;
-    struct empty_atom_table_reply empty_atom_table_reply;
-    struct init_atom_table_reply init_atom_table_reply;
     struct get_msg_queue_reply get_msg_queue_reply;
     struct set_queue_fd_reply set_queue_fd_reply;
     struct set_queue_mask_reply set_queue_mask_reply;
@@ -6265,7 +6220,7 @@ union generic_reply
 
 /* ### protocol_version begin ### */
 
-#define SERVER_PROTOCOL_VERSION 674
+#define SERVER_PROTOCOL_VERSION 678
 
 /* ### protocol_version end ### */
 

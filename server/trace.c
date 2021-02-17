@@ -381,6 +381,12 @@ static void dump_irp_params( const char *prefix, const irp_params_t *data )
         dump_uint64( ",file=", &data->ioctl.file );
         fputc( '}', stderr );
         break;
+    case IRP_CALL_VOLUME:
+        fprintf( stderr, "%s{VOLUME,class=%u,out_size=%u", prefix,
+                 data->volume.info_class, data->volume.out_size );
+        dump_uint64( ",file=", &data->volume.file );
+        fputc( '}', stderr );
+        break;
     case IRP_CALL_FREE:
         fprintf( stderr, "%s{FREE", prefix );
         dump_uint64( ",obj=", &data->free.obj );
@@ -1308,7 +1314,7 @@ static void dump_varargs_pe_image_info( const char *prefix, data_size_t size )
              info.header_size, info.file_size, info.checksum );
     dump_client_cpu( ",cpu=", &info.cpu );
     fputc( '}', stderr );
-    remove_data( size );
+    remove_data( min( size, sizeof(info) ));
 }
 
 static void dump_varargs_rawinput_devices(const char *prefix, data_size_t size )
@@ -1993,12 +1999,14 @@ static void dump_get_file_info_reply( const struct get_file_info_reply *req )
 static void dump_get_volume_info_request( const struct get_volume_info_request *req )
 {
     fprintf( stderr, " handle=%04x", req->handle );
+    dump_async_data( ", async=", &req->async );
     fprintf( stderr, ", info_class=%08x", req->info_class );
 }
 
 static void dump_get_volume_info_reply( const struct get_volume_info_reply *req )
 {
-    dump_varargs_bytes( " data=", cur_size );
+    fprintf( stderr, " wait=%04x", req->wait );
+    dump_varargs_bytes( ", data=", cur_size );
 }
 
 static void dump_lock_file_request( const struct lock_file_request *req )
@@ -2158,6 +2166,7 @@ static void dump_map_view_request( const struct map_view_request *req )
     dump_uint64( ", size=", &req->size );
     dump_uint64( ", start=", &req->start );
     dump_varargs_pe_image_info( ", image=", cur_size );
+    dump_varargs_unicode_str( ", name=", cur_size );
 }
 
 static void dump_unmap_view_request( const struct unmap_view_request *req )
@@ -2524,8 +2533,7 @@ static void dump_get_selector_entry_reply( const struct get_selector_entry_reply
 
 static void dump_add_atom_request( const struct add_atom_request *req )
 {
-    fprintf( stderr, " table=%04x", req->table );
-    dump_varargs_unicode_str( ", name=", cur_size );
+    dump_varargs_unicode_str( " name=", cur_size );
 }
 
 static void dump_add_atom_reply( const struct add_atom_reply *req )
@@ -2535,14 +2543,12 @@ static void dump_add_atom_reply( const struct add_atom_reply *req )
 
 static void dump_delete_atom_request( const struct delete_atom_request *req )
 {
-    fprintf( stderr, " table=%04x", req->table );
-    fprintf( stderr, ", atom=%04x", req->atom );
+    fprintf( stderr, " atom=%04x", req->atom );
 }
 
 static void dump_find_atom_request( const struct find_atom_request *req )
 {
-    fprintf( stderr, " table=%04x", req->table );
-    dump_varargs_unicode_str( ", name=", cur_size );
+    dump_varargs_unicode_str( " name=", cur_size );
 }
 
 static void dump_find_atom_reply( const struct find_atom_reply *req )
@@ -2552,8 +2558,7 @@ static void dump_find_atom_reply( const struct find_atom_reply *req )
 
 static void dump_get_atom_information_request( const struct get_atom_information_request *req )
 {
-    fprintf( stderr, " table=%04x", req->table );
-    fprintf( stderr, ", atom=%04x", req->atom );
+    fprintf( stderr, " atom=%04x", req->atom );
 }
 
 static void dump_get_atom_information_reply( const struct get_atom_information_reply *req )
@@ -2562,29 +2567,6 @@ static void dump_get_atom_information_reply( const struct get_atom_information_r
     fprintf( stderr, ", pinned=%d", req->pinned );
     fprintf( stderr, ", total=%u", req->total );
     dump_varargs_unicode_str( ", name=", cur_size );
-}
-
-static void dump_set_atom_information_request( const struct set_atom_information_request *req )
-{
-    fprintf( stderr, " table=%04x", req->table );
-    fprintf( stderr, ", atom=%04x", req->atom );
-    fprintf( stderr, ", pinned=%d", req->pinned );
-}
-
-static void dump_empty_atom_table_request( const struct empty_atom_table_request *req )
-{
-    fprintf( stderr, " table=%04x", req->table );
-    fprintf( stderr, ", if_pinned=%d", req->if_pinned );
-}
-
-static void dump_init_atom_table_request( const struct init_atom_table_request *req )
-{
-    fprintf( stderr, " entries=%d", req->entries );
-}
-
-static void dump_init_atom_table_reply( const struct init_atom_table_reply *req )
-{
-    fprintf( stderr, " table=%04x", req->table );
 }
 
 static void dump_get_msg_queue_request( const struct get_msg_queue_request *req )
@@ -4575,9 +4557,6 @@ static const dump_func req_dumpers[REQ_NB_REQUESTS] = {
     (dump_func)dump_delete_atom_request,
     (dump_func)dump_find_atom_request,
     (dump_func)dump_get_atom_information_request,
-    (dump_func)dump_set_atom_information_request,
-    (dump_func)dump_empty_atom_table_request,
-    (dump_func)dump_init_atom_table_request,
     (dump_func)dump_get_msg_queue_request,
     (dump_func)dump_set_queue_fd_request,
     (dump_func)dump_set_queue_mask_request,
@@ -4855,9 +4834,6 @@ static const dump_func reply_dumpers[REQ_NB_REQUESTS] = {
     NULL,
     (dump_func)dump_find_atom_reply,
     (dump_func)dump_get_atom_information_reply,
-    NULL,
-    NULL,
-    (dump_func)dump_init_atom_table_reply,
     (dump_func)dump_get_msg_queue_reply,
     NULL,
     (dump_func)dump_set_queue_mask_reply,
@@ -5135,9 +5111,6 @@ static const char * const req_names[REQ_NB_REQUESTS] = {
     "delete_atom",
     "find_atom",
     "get_atom_information",
-    "set_atom_information",
-    "empty_atom_table",
-    "init_atom_table",
     "get_msg_queue",
     "set_queue_fd",
     "set_queue_mask",

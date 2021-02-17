@@ -21,13 +21,12 @@
 #ifndef __NTDLL_UNIXLIB_H
 #define __NTDLL_UNIXLIB_H
 
-#include "wine/server.h"
 #include "wine/debug.h"
 
 struct _DISPATCHER_CONTEXT;
 
 /* increment this when you change the function table */
-#define NTDLL_UNIXLIB_VERSION 108
+#define NTDLL_UNIXLIB_VERSION 111
 
 struct unix_funcs
 {
@@ -71,11 +70,6 @@ struct unix_funcs
     double        (CDECL *tan)( double d );
 
     /* environment functions */
-    NTSTATUS      (CDECL *get_initial_environment)( WCHAR **wargv[], WCHAR *env, SIZE_T *size );
-    NTSTATUS      (CDECL *get_startup_info)( startup_info_t *info, SIZE_T *total_size, SIZE_T *info_size );
-    NTSTATUS      (CDECL *get_dynamic_environment)( WCHAR *env, SIZE_T *size );
-    void          (CDECL *get_initial_console)( RTL_USER_PROCESS_PARAMETERS *params );
-    void          (CDECL *get_initial_directory)( UNICODE_STRING *dir );
     USHORT *      (CDECL *get_unix_codepage_data)(void);
     void          (CDECL *get_locales)( WCHAR *sys, WCHAR *user );
 

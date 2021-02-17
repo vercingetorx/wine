@@ -246,7 +246,7 @@ static void test_group_equal(HANDLE Handle, PSID expected, int line)
     HeapFree(GetProcessHeap(), 0, queriedSD);
 }
 
-static void test_sid(void)
+static void test_ConvertStringSidToSid(void)
 {
     struct sidRef refs[] = {
      { { {0x00,0x00,0x33,0x44,0x55,0x66} }, "S-1-860116326-1" },
@@ -767,13 +767,6 @@ static void test_lookupPrivilegeValue(void)
              privs[i].name);
         }
     }
-}
-
-static void test_luid(void)
-{
-    test_allocateLuid();
-    test_lookupPrivilegeName();
-    test_lookupPrivilegeValue();
 }
 
 static void test_FileSecurity(void)
@@ -4601,7 +4594,7 @@ static void test_PrivateObjectSecurity(void)
 #undef CHECK_RESULT_AND_FREE
 #undef CHECK_ONE_OF_AND_FREE
 
-static void test_acls(void)
+static void test_InitializeAcl(void)
 {
     char buffer[256];
     PACL pAcl = (PACL)buffer;
@@ -6402,13 +6395,13 @@ static void test_AddMandatoryAce(void)
     static SID_IDENTIFIER_AUTHORITY sia_world = {SECURITY_WORLD_SID_AUTHORITY};
     char buffer_sd[SECURITY_DESCRIPTOR_MIN_LENGTH];
     SECURITY_DESCRIPTOR *sd2, *sd = (SECURITY_DESCRIPTOR *)&buffer_sd;
-    BOOL defaulted, present, ret, found, found2;
+    BOOL defaulted, present, ret;
     ACL_SIZE_INFORMATION acl_size_info;
     SYSTEM_MANDATORY_LABEL_ACE *ace;
     char buffer_acl[256];
     ACL *acl = (ACL *)&buffer_acl;
     SECURITY_ATTRIBUTES sa;
-    DWORD index, size;
+    DWORD size;
     HANDLE handle;
     SID *everyone;
     ACL *sacl;
@@ -6460,18 +6453,17 @@ static void test_AddMandatoryAce(void)
     ret = pAddMandatoryAce(acl, ACL_REVISION, 0, SYSTEM_MANDATORY_LABEL_NO_WRITE_UP, &low_level);
     ok(ret, "AddMandatoryAce failed with %u\n", GetLastError());
 
-    index = 0;
-    found = FALSE;
-    while (GetAce(acl, index++, (void **)&ace))
-    {
-        if (ace->Header.AceType != SYSTEM_MANDATORY_LABEL_ACE_TYPE) continue;
-        ok(ace->Header.AceFlags == 0, "Expected flags 0, got %x\n", ace->Header.AceFlags);
-        ok(ace->Mask == SYSTEM_MANDATORY_LABEL_NO_WRITE_UP,
-           "Expected mask SYSTEM_MANDATORY_LABEL_NO_WRITE_UP, got %x\n", ace->Mask);
-        ok(EqualSid(&ace->SidStart, &low_level), "Expected low integrity level\n");
-        found = TRUE;
-    }
-    ok(found, "Could not find mandatory label ace\n");
+    ret = GetAce(acl, 0, (void **)&ace);
+    ok(ret, "got error %u\n", GetLastError());
+    ok(ace->Header.AceType == SYSTEM_MANDATORY_LABEL_ACE_TYPE, "got type %#x\n", ace->Header.AceType);
+    ok(!ace->Header.AceFlags, "got flags %#x\n", ace->Header.AceFlags);
+    ok(ace->Mask == SYSTEM_MANDATORY_LABEL_NO_WRITE_UP, "got mask %#x\n", ace->Mask);
+    ok(EqualSid(&ace->SidStart, &low_level), "wrong sid\n");
+
+    SetLastError(0xdeadbeef);
+    ret = GetAce(acl, 1, (void **)&ace);
+    ok(!ret, "expected failure\n");
+    ok(GetLastError() == ERROR_INVALID_PARAMETER, "got error %u\n", GetLastError());
 
     ret = SetSecurityDescriptorSacl(sd, TRUE, acl, FALSE);
     ok(ret, "SetSecurityDescriptorSacl failed with error %u\n", GetLastError());
@@ -6532,30 +6524,24 @@ static void test_AddMandatoryAce(void)
     ok(sacl->AceCount == 2, "Expected 2 ACEs, got %d\n", sacl->AceCount);
     ok(!defaulted, "SACL defaulted\n");
 
-    index = 0;
-    found = found2 = FALSE;
-    while (GetAce(sacl, index++, (void **)&ace))
-    {
-        if (ace->Header.AceType == SYSTEM_MANDATORY_LABEL_ACE_TYPE)
-        {
-            if (EqualSid(&ace->SidStart, &low_level))
-            {
-                found = TRUE;
-                ok(!ace->Header.AceFlags, "Expected 0 as flags, got %#x\n", ace->Header.AceFlags);
-                ok(ace->Mask == SYSTEM_MANDATORY_LABEL_NO_WRITE_UP,
-                   "Expected SYSTEM_MANDATORY_LABEL_NO_WRITE_UP as mask, got %#x\n", ace->Mask);
-            }
-            if (EqualSid(&ace->SidStart, &medium_level))
-            {
-                found2 = TRUE;
-                ok(!ace->Header.AceFlags, "Expected 0 as flags, got %#x\n", ace->Header.AceFlags);
-                ok(ace->Mask == SYSTEM_MANDATORY_LABEL_NO_EXECUTE_UP,
-                   "Expected SYSTEM_MANDATORY_LABEL_NO_EXECUTE_UP as mask, got %#x\n", ace->Mask);
-            }
-        }
-    }
-    ok(found, "Could not find low mandatory label\n");
-    ok(found2, "Could not find medium mandatory label\n");
+    ret = GetAce(acl, 0, (void **)&ace);
+    ok(ret, "got error %u\n", GetLastError());
+    ok(ace->Header.AceType == SYSTEM_MANDATORY_LABEL_ACE_TYPE, "got type %#x\n", ace->Header.AceType);
+    ok(!ace->Header.AceFlags, "got flags %#x\n", ace->Header.AceFlags);
+    ok(ace->Mask == SYSTEM_MANDATORY_LABEL_NO_WRITE_UP, "got mask %#x\n", ace->Mask);
+    ok(EqualSid(&ace->SidStart, &low_level), "wrong sid\n");
+
+    ret = GetAce(acl, 1, (void **)&ace);
+    ok(ret, "got error %u\n", GetLastError());
+    ok(ace->Header.AceType == SYSTEM_MANDATORY_LABEL_ACE_TYPE, "got type %#x\n", ace->Header.AceType);
+    ok(!ace->Header.AceFlags, "got flags %#x\n", ace->Header.AceFlags);
+    ok(ace->Mask == SYSTEM_MANDATORY_LABEL_NO_EXECUTE_UP, "got mask %#x\n", ace->Mask);
+    ok(EqualSid(&ace->SidStart, &medium_level), "wrong sid\n");
+
+    SetLastError(0xdeadbeef);
+    ret = GetAce(acl, 2, (void **)&ace);
+    ok(!ret, "expected failure\n");
+    ok(GetLastError() == ERROR_INVALID_PARAMETER, "got error %u\n", GetLastError());
 
     HeapFree(GetProcessHeap(), 0, sd2);
 
@@ -6969,6 +6955,12 @@ static void test_token_label(void)
     char *str;
     SID *sid;
 
+    if (!pAddMandatoryAce)
+    {
+        win_skip("Mandatory integrity control is not supported.\n");
+        return;
+    }
+
     ret = OpenProcessToken(GetCurrentProcess(), READ_CONTROL | WRITE_OWNER, &token);
     ok(ret, "OpenProcessToken failed with error %u\n", GetLastError());
 
@@ -6982,8 +6974,7 @@ static void test_token_label(void)
 
     ret = GetSecurityDescriptorControl(sd, &control, &revision);
     ok(ret, "GetSecurityDescriptorControl failed with error %u\n", GetLastError());
-    todo_wine ok(control == (SE_SELF_RELATIVE | SE_SACL_AUTO_INHERITED | SE_SACL_PRESENT) ||
-                 broken(control == SE_SELF_RELATIVE) /* WinXP, Win2003 */,
+    todo_wine ok(control == (SE_SELF_RELATIVE | SE_SACL_AUTO_INHERITED | SE_SACL_PRESENT),
                  "Unexpected security descriptor control %#x\n", control);
     ok(revision == 1, "Unexpected security descriptor revision %u\n", revision);
 
@@ -7003,28 +6994,24 @@ static void test_token_label(void)
 
     ret = GetSecurityDescriptorSacl(sd, &present, &sacl, &defaulted);
     ok(ret, "GetSecurityDescriptorSacl failed with error %u\n", GetLastError());
-    ok(present || broken(!present) /* WinXP, Win2003 */, "No SACL in the security descriptor\n");
-    ok(sacl || broken(!sacl) /* WinXP, Win2003 */, "NULL SACL in the security descriptor\n");
+    ok(present, "No SACL in the security descriptor\n");
+    ok(!!sacl, "NULL SACL in the security descriptor\n");
+    ok(!defaulted, "SACL defaulted\n");
+    ok(sacl->AceCount == 1, "SACL contains an unexpected ACE count %u\n", sacl->AceCount);
 
-    if (present)
-    {
-        ok(!defaulted, "SACL defaulted\n");
-        ok(sacl->AceCount == 1, "SACL contains an unexpected ACE count %u\n", sacl->AceCount);
+    ret = GetAce(sacl, 0, (void **)&ace);
+    ok(ret, "GetAce failed with error %u\n", GetLastError());
 
-        ret = GetAce(sacl, 0, (void **)&ace);
-        ok(ret, "GetAce failed with error %u\n", GetLastError());
+    ok(ace->Header.AceType == SYSTEM_MANDATORY_LABEL_ACE_TYPE,
+       "Unexpected ACE type %#x\n", ace->Header.AceType);
+    ok(!ace->Header.AceFlags, "Unexpected ACE flags %#x\n", ace->Header.AceFlags);
+    ok(ace->Header.AceSize, "Unexpected ACE size %u\n", ace->Header.AceSize);
+    ok(ace->Mask == SYSTEM_MANDATORY_LABEL_NO_WRITE_UP, "Unexpected ACE mask %#x\n", ace->Mask);
 
-        ok(ace->Header.AceType == SYSTEM_MANDATORY_LABEL_ACE_TYPE,
-           "Unexpected ACE type %#x\n", ace->Header.AceType);
-        ok(!ace->Header.AceFlags, "Unexpected ACE flags %#x\n", ace->Header.AceFlags);
-        ok(ace->Header.AceSize, "Unexpected ACE size %u\n", ace->Header.AceSize);
-        ok(ace->Mask == SYSTEM_MANDATORY_LABEL_NO_WRITE_UP, "Unexpected ACE mask %#x\n", ace->Mask);
-
-        sid = (SID *)&ace->SidStart;
-        ConvertSidToStringSidA(sid, &str);
-        ok(EqualSid(sid, &medium_sid) || EqualSid(sid, &high_sid), "Got unexpected SID %s\n", str);
-        LocalFree(str);
-    }
+    sid = (SID *)&ace->SidStart;
+    ConvertSidToStringSidA(sid, &str);
+    ok(EqualSid(sid, &medium_sid) || EqualSid(sid, &high_sid), "Got unexpected SID %s\n", str);
+    LocalFree(str);
 
     ret = GetSecurityDescriptorDacl(sd, &present, &dacl, &defaulted);
     ok(ret, "GetSecurityDescriptorDacl failed with error %u\n", GetLastError());
@@ -7961,9 +7948,11 @@ START_TEST(security)
         return;
     }
     test_kernel_objects_security();
-    test_sid();
+    test_ConvertStringSidToSid();
     test_trustee();
-    test_luid();
+    test_allocateLuid();
+    test_lookupPrivilegeName();
+    test_lookupPrivilegeValue();
     test_CreateWellKnownSid();
     test_FileSecurity();
     test_AccessCheck();
@@ -7981,7 +7970,7 @@ START_TEST(security)
     test_ConvertStringSecurityDescriptor();
     test_ConvertSecurityDescriptorToString();
     test_PrivateObjectSecurity();
-    test_acls();
+    test_InitializeAcl();
     test_GetWindowsAccountDomainSid();
     test_EqualDomainSid();
     test_GetSecurityInfo();
