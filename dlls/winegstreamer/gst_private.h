@@ -133,39 +133,6 @@ struct wg_format
     } u;
 };
 
-struct wg_parser
-{
-    BOOL (*init_gst)(struct wg_parser *parser);
-
-    struct wg_parser_stream **streams;
-    unsigned int stream_count;
-
-    GstElement *container;
-    GstBus *bus;
-    GstPad *my_src, *their_sink;
-
-    guint64 file_size, start_offset, next_offset, stop_offset;
-
-    pthread_t push_thread;
-
-    pthread_mutex_t mutex;
-
-    pthread_cond_t init_cond;
-    bool no_more_pads, has_duration, error;
-
-    pthread_cond_t read_cond, read_done_cond;
-    struct
-    {
-        GstBuffer *buffer;
-        uint64_t offset;
-        uint32_t size;
-        bool done;
-        GstFlowReturn ret;
-    } read_request;
-
-    bool flushing, sink_connected;
-};
-
 enum wg_parser_event_type
 {
     WG_PARSER_EVENT_NONE = 0,
@@ -179,29 +146,19 @@ struct wg_parser_event
     enum wg_parser_event_type type;
     union
     {
-        GstBuffer *buffer;
+        struct
+        {
+            /* pts and duration are in 100-nanosecond units. */
+            uint64_t pts, duration;
+            uint32_t size;
+            bool discontinuity, preroll, delta, has_pts, has_duration;
+        } buffer;
         struct
         {
             uint64_t position, stop;
             double rate;
         } segment;
     } u;
-};
-
-struct wg_parser_stream
-{
-    struct wg_parser *parser;
-
-    GstPad *their_src, *post_sink, *post_src, *my_sink;
-    GstElement *flip;
-    struct wg_format preferred_format, current_format;
-
-    pthread_cond_t event_cond, event_empty_cond;
-    struct wg_parser_event event;
-
-    bool flushing, eos, enabled, has_caps;
-
-    uint64_t duration;
 };
 
 struct unix_funcs
@@ -218,6 +175,10 @@ struct unix_funcs
     void (CDECL *wg_parser_begin_flush)(struct wg_parser *parser);
     void (CDECL *wg_parser_end_flush)(struct wg_parser *parser);
 
+    bool (CDECL *wg_parser_get_read_request)(struct wg_parser *parser,
+            void **data, uint64_t *offset, uint32_t *size);
+    void (CDECL *wg_parser_complete_read_request)(struct wg_parser *parser, bool ret);
+
     uint32_t (CDECL *wg_parser_get_stream_count)(struct wg_parser *parser);
     struct wg_parser_stream *(CDECL *wg_parser_get_stream)(struct wg_parser *parser, uint32_t index);
 
@@ -226,8 +187,17 @@ struct unix_funcs
     void (CDECL *wg_parser_stream_disable)(struct wg_parser_stream *stream);
 
     bool (CDECL *wg_parser_stream_get_event)(struct wg_parser_stream *stream, struct wg_parser_event *event);
+    bool (CDECL *wg_parser_stream_copy_buffer)(struct wg_parser_stream *stream,
+            void *data, uint32_t offset, uint32_t size);
+    void (CDECL *wg_parser_stream_release_buffer)(struct wg_parser_stream *stream);
     void (CDECL *wg_parser_stream_notify_qos)(struct wg_parser_stream *stream,
             bool underflow, double proportion, int64_t diff, uint64_t timestamp);
+
+    /* Returns the duration in 100-nanosecond units. */
+    uint64_t (CDECL *wg_parser_stream_get_duration)(struct wg_parser_stream *stream);
+    /* start_pos and stop_pos are in 100-nanosecond units. */
+    bool (CDECL *wg_parser_stream_seek)(struct wg_parser_stream *stream, double rate,
+            uint64_t start_pos, uint64_t stop_pos, DWORD start_flags, DWORD stop_flags);
 };
 
 extern const struct unix_funcs *unix_funcs;

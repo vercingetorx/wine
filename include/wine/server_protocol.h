@@ -2356,7 +2356,10 @@ struct load_registry_reply
 struct unload_registry_request
 {
     struct request_header __header;
-    obj_handle_t hkey;
+    obj_handle_t parent;
+    unsigned int attributes;
+    /* VARARG(name,unicode_str); */
+    char __pad_20[4];
 };
 struct unload_registry_reply
 {
@@ -4540,6 +4543,8 @@ struct handle_info
     process_id_t owner;
     obj_handle_t handle;
     unsigned int access;
+    unsigned int attributes;
+    unsigned int type;
 };
 
 
@@ -4738,19 +4743,6 @@ struct get_object_types_reply
 
 
 
-struct get_token_impersonation_level_request
-{
-    struct request_header __header;
-    obj_handle_t   handle;
-};
-struct get_token_impersonation_level_reply
-{
-    struct reply_header __header;
-    int            impersonation_level;
-    char __pad_12[4];
-};
-
-
 struct allocate_locally_unique_id_request
 {
     struct request_header __header;
@@ -4918,20 +4910,36 @@ struct make_process_system_reply
 
 
 
-struct get_token_statistics_request
+struct get_token_info_request
 {
     struct request_header __header;
     obj_handle_t   handle;
 };
-struct get_token_statistics_reply
+struct get_token_info_reply
 {
     struct reply_header __header;
     luid_t         token_id;
     luid_t         modified_id;
     int            primary;
     int            impersonation_level;
+    int            elevation;
     int            group_count;
     int            privilege_count;
+    char __pad_44[4];
+};
+
+
+
+struct create_linked_token_request
+{
+    struct request_header __header;
+    obj_handle_t   handle;
+};
+struct create_linked_token_reply
+{
+    struct reply_header __header;
+    obj_handle_t   linked;
+    char __pad_12[4];
 };
 
 
@@ -5614,7 +5622,6 @@ enum request
     REQ_get_object_info,
     REQ_get_object_type,
     REQ_get_object_types,
-    REQ_get_token_impersonation_level,
     REQ_allocate_locally_unique_id,
     REQ_create_device_manager,
     REQ_create_device,
@@ -5626,7 +5633,8 @@ enum request
     REQ_release_kernel_object,
     REQ_get_kernel_object_handle,
     REQ_make_process_system,
-    REQ_get_token_statistics,
+    REQ_get_token_info,
+    REQ_create_linked_token,
     REQ_create_completion,
     REQ_open_completion,
     REQ_add_completion,
@@ -5895,7 +5903,6 @@ union generic_request
     struct get_object_info_request get_object_info_request;
     struct get_object_type_request get_object_type_request;
     struct get_object_types_request get_object_types_request;
-    struct get_token_impersonation_level_request get_token_impersonation_level_request;
     struct allocate_locally_unique_id_request allocate_locally_unique_id_request;
     struct create_device_manager_request create_device_manager_request;
     struct create_device_request create_device_request;
@@ -5907,7 +5914,8 @@ union generic_request
     struct release_kernel_object_request release_kernel_object_request;
     struct get_kernel_object_handle_request get_kernel_object_handle_request;
     struct make_process_system_request make_process_system_request;
-    struct get_token_statistics_request get_token_statistics_request;
+    struct get_token_info_request get_token_info_request;
+    struct create_linked_token_request create_linked_token_request;
     struct create_completion_request create_completion_request;
     struct open_completion_request open_completion_request;
     struct add_completion_request add_completion_request;
@@ -6174,7 +6182,6 @@ union generic_reply
     struct get_object_info_reply get_object_info_reply;
     struct get_object_type_reply get_object_type_reply;
     struct get_object_types_reply get_object_types_reply;
-    struct get_token_impersonation_level_reply get_token_impersonation_level_reply;
     struct allocate_locally_unique_id_reply allocate_locally_unique_id_reply;
     struct create_device_manager_reply create_device_manager_reply;
     struct create_device_reply create_device_reply;
@@ -6186,7 +6193,8 @@ union generic_reply
     struct release_kernel_object_reply release_kernel_object_reply;
     struct get_kernel_object_handle_reply get_kernel_object_handle_reply;
     struct make_process_system_reply make_process_system_reply;
-    struct get_token_statistics_reply get_token_statistics_reply;
+    struct get_token_info_reply get_token_info_reply;
+    struct create_linked_token_reply create_linked_token_reply;
     struct create_completion_reply create_completion_reply;
     struct open_completion_reply open_completion_reply;
     struct add_completion_reply add_completion_reply;
@@ -6220,7 +6228,7 @@ union generic_reply
 
 /* ### protocol_version begin ### */
 
-#define SERVER_PROTOCOL_VERSION 678
+#define SERVER_PROTOCOL_VERSION 684
 
 /* ### protocol_version end ### */
 

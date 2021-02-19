@@ -470,6 +470,9 @@ void write_type_left(FILE *h, const decl_spec_t *ds, enum name_type name_type, i
       case TYPE_RUNTIMECLASS:
         fprintf(h, "%s", type_get_name(type_runtimeclass_get_default_iface(t), name_type));
         break;
+      case TYPE_DELEGATE:
+        fprintf(h, "%s", type_get_name(type_delegate_get_iface(t), name_type));
+        break;
       case TYPE_VOID:
         fprintf(h, "void");
         break;
@@ -555,6 +558,7 @@ void write_type_right(FILE *h, type_t *t, int is_field)
   case TYPE_COCLASS:
   case TYPE_INTERFACE:
   case TYPE_RUNTIMECLASS:
+  case TYPE_DELEGATE:
     break;
   case TYPE_APICONTRACT:
   case TYPE_PARAMETERIZED_TYPE:
@@ -776,7 +780,7 @@ static int for_each_serializable(const statement_list_t *stmts, FILE *header,
 {
     statement_t *stmt, *iface_stmt;
     statement_list_t *iface_stmts;
-    const type_list_t *type_entry;
+    typeref_t *ref;
 
     if (stmts) LIST_FOR_EACH_ENTRY( stmt, stmts, statement_t, entry )
     {
@@ -787,12 +791,12 @@ static int for_each_serializable(const statement_list_t *stmts, FILE *header,
         if (iface_stmts) LIST_FOR_EACH_ENTRY( iface_stmt, iface_stmts, statement_t, entry )
         {
             if (iface_stmt->type != STMT_TYPEDEF) continue;
-            for (type_entry = iface_stmt->u.type_list; type_entry; type_entry = type_entry->next)
+            if (iface_stmt->u.type_list) LIST_FOR_EACH_ENTRY(ref, iface_stmt->u.type_list, typeref_t, entry)
             {
-                if (!is_attr(type_entry->type->attrs, ATTR_ENCODE)
-                    && !is_attr(type_entry->type->attrs, ATTR_DECODE))
+                if (!is_attr(ref->type->attrs, ATTR_ENCODE)
+                    && !is_attr(ref->type->attrs, ATTR_DECODE))
                     continue;
-                if (!proc(header, type_entry->type))
+                if (!proc(header, ref->type))
                     return 0;
             }
         }
@@ -974,7 +978,7 @@ int has_out_arg_or_return(const var_t *func)
 int is_object(const type_t *iface)
 {
     const attr_t *attr;
-    if (type_is_defined(iface) && type_iface_get_inherit(iface))
+    if (type_is_defined(iface) && (type_get_type(iface) == TYPE_DELEGATE || type_iface_get_inherit(iface)))
         return 1;
     if (iface->attrs) LIST_FOR_EACH_ENTRY( attr, iface->attrs, const attr_t, entry )
         if (attr->type == ATTR_OBJECT || attr->type == ATTR_ODL) return 1;
@@ -1479,7 +1483,8 @@ static void write_forward(FILE *header, type_t *iface)
   fprintf(header, "typedef interface %s %s;\n", iface->c_name, iface->c_name);
   fprintf(header, "#ifdef __cplusplus\n");
   write_namespace_start(header, iface->namespace);
-  write_line(header, 0, "interface %s;", iface->name);
+  if (strchr(iface->name, '<')) write_line(header, 0, "template<> struct %s;", iface->name);
+  else write_line(header, 0, "interface %s;", iface->name);
   write_namespace_end(header, iface->namespace);
   fprintf(header, "#endif /* __cplusplus */\n");
   fprintf(header, "#endif\n\n" );
@@ -1548,11 +1553,13 @@ static void write_com_interface_end(FILE *header, type_t *iface)
       write_namespace_start(header, iface->namespace);
   }
   if (uuid) {
+      if (strchr(iface->name, '<')) write_line(header, 0, "template<>");
       write_line(header, 0, "MIDL_INTERFACE(\"%s\")", uuid_string(uuid));
       indent(header, 0);
   }else {
       indent(header, 0);
-      fprintf(header, "interface ");
+      if (strchr(iface->name, '<')) fprintf(header, "template<> struct ");
+      else fprintf(header, "interface ");
   }
   if (type_iface_get_inherit(iface))
   {
@@ -1796,9 +1803,10 @@ static void write_forward_decls(FILE *header, const statement_list_t *stmts)
     switch (stmt->type)
     {
       case STMT_TYPE:
-        if (type_get_type(stmt->u.type) == TYPE_INTERFACE)
+        if (type_get_type(stmt->u.type) == TYPE_INTERFACE || type_get_type(stmt->u.type) == TYPE_DELEGATE)
         {
           type_t *iface = stmt->u.type;
+          if (type_get_type(iface) == TYPE_DELEGATE) iface = type_delegate_get_iface(iface);
           if (is_object(iface) || is_attr(iface->attrs, ATTR_DISPINTERFACE))
           {
             write_forward(header, iface);
@@ -1838,10 +1846,11 @@ static void write_header_stmts(FILE *header, const statement_list_t *stmts, cons
     switch (stmt->type)
     {
       case STMT_TYPE:
-        if (type_get_type(stmt->u.type) == TYPE_INTERFACE)
+        if (type_get_type(stmt->u.type) == TYPE_INTERFACE || type_get_type(stmt->u.type) == TYPE_DELEGATE)
         {
-          type_t *iface = stmt->u.type;
-          type_t *async_iface = type_iface_get_async_iface(iface);
+          type_t *iface = stmt->u.type, *async_iface;
+          if (type_get_type(stmt->u.type) == TYPE_DELEGATE) iface = type_delegate_get_iface(iface);
+          async_iface = type_iface_get_async_iface(iface);
           if (is_object(iface)) is_object_interface++;
           if (is_attr(stmt->u.type->attrs, ATTR_DISPINTERFACE) || is_object(stmt->u.type))
           {
@@ -1887,9 +1896,9 @@ static void write_header_stmts(FILE *header, const statement_list_t *stmts, cons
         break;
       case STMT_TYPEDEF:
       {
-        const type_list_t *type_entry = stmt->u.type_list;
-        for (; type_entry; type_entry = type_entry->next)
-          write_typedef(header, type_entry->type, stmt->declonly);
+        typeref_t *ref;
+        if (stmt->u.type_list) LIST_FOR_EACH_ENTRY(ref, stmt->u.type_list, typeref_t, entry)
+          write_typedef(header, ref->type, stmt->declonly);
         break;
       }
       case STMT_LIBRARY:

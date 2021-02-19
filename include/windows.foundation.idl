@@ -113,6 +113,12 @@ namespace Windows {
         }
 
 #ifdef __WIDL__
+        [
+            contract(Windows.Foundation.FoundationContract, 1.0),
+            uuid(9de1c535-6ae1-11e0-84e1-18a905bcc53f)
+        ]
+        delegate HRESULT EventHandler<T>([in] IInspectable *sender, [in] T args);
+
         namespace Collections
         {
             [
@@ -125,6 +131,15 @@ namespace Windows {
                 [propget] HRESULT HasCurrent([out, retval] BOOL *value);
                 HRESULT MoveNext([out, retval] BOOL *value);
                 HRESULT GetMany([in] UINT32 count, [out] T *items, [out, retval] UINT32 *value);
+            }
+
+            [
+                contract(Windows.Foundation.FoundationContract, 1.0),
+                uuid(faa585ea-6214-4217-afda-7f46de5869b3)
+            ]
+            interface IIterable<T> : IInspectable
+            {
+                HRESULT First([out, retval] Windows.Foundation.Collections.IIterator<T> **value);
             }
 
             [

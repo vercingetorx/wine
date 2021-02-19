@@ -36,6 +36,58 @@ WINE_DEFAULT_DEBUG_CHANNEL(gstreamer);
 GST_DEBUG_CATEGORY_STATIC(wine);
 #define GST_CAT_DEFAULT wine
 
+struct wg_parser
+{
+    BOOL (*init_gst)(struct wg_parser *parser);
+
+    struct wg_parser_stream **streams;
+    unsigned int stream_count;
+
+    GstElement *container;
+    GstBus *bus;
+    GstPad *my_src, *their_sink;
+
+    guint64 file_size, start_offset, next_offset, stop_offset;
+    guint64 next_pull_offset;
+
+    pthread_t push_thread;
+
+    pthread_mutex_t mutex;
+
+    pthread_cond_t init_cond;
+    bool no_more_pads, has_duration, error;
+
+    pthread_cond_t read_cond, read_done_cond;
+    struct
+    {
+        void *data;
+        uint64_t offset;
+        uint32_t size;
+        bool done;
+        bool ret;
+    } read_request;
+
+    bool flushing, sink_connected;
+};
+
+struct wg_parser_stream
+{
+    struct wg_parser *parser;
+
+    GstPad *their_src, *post_sink, *post_src, *my_sink;
+    GstElement *flip;
+    struct wg_format preferred_format, current_format;
+
+    pthread_cond_t event_cond, event_empty_cond;
+    struct wg_parser_event event;
+    GstBuffer *buffer;
+    GstMapInfo map_info;
+
+    bool flushing, eos, enabled, has_caps;
+
+    uint64_t duration;
+};
+
 static enum wg_audio_format wg_audio_format_from_gst(GstAudioFormat format)
 {
     switch (format)
@@ -349,6 +401,38 @@ static void CDECL wg_parser_end_flush(struct wg_parser *parser)
     pthread_mutex_unlock(&parser->mutex);
 }
 
+static bool CDECL wg_parser_get_read_request(struct wg_parser *parser,
+        void **data, uint64_t *offset, uint32_t *size)
+{
+    pthread_mutex_lock(&parser->mutex);
+
+    while (parser->sink_connected && !parser->read_request.data)
+        pthread_cond_wait(&parser->read_cond, &parser->mutex);
+
+    if (!parser->sink_connected)
+    {
+        pthread_mutex_unlock(&parser->mutex);
+        return false;
+    }
+
+    *data = parser->read_request.data;
+    *offset = parser->read_request.offset;
+    *size = parser->read_request.size;
+
+    pthread_mutex_unlock(&parser->mutex);
+    return true;
+}
+
+static void CDECL wg_parser_complete_read_request(struct wg_parser *parser, bool ret)
+{
+    pthread_mutex_lock(&parser->mutex);
+    parser->read_request.done = true;
+    parser->read_request.ret = ret;
+    parser->read_request.data = NULL;
+    pthread_mutex_unlock(&parser->mutex);
+    pthread_cond_signal(&parser->read_done_cond);
+}
+
 static void CDECL wg_parser_stream_get_preferred_format(struct wg_parser_stream *stream, struct wg_format *format)
 {
     *format = stream->preferred_format;
@@ -358,6 +442,33 @@ static void CDECL wg_parser_stream_enable(struct wg_parser_stream *stream, const
 {
     stream->current_format = *format;
     stream->enabled = true;
+
+    if (format->major_type == WG_MAJOR_TYPE_VIDEO)
+    {
+        switch (format->u.video.format)
+        {
+            case WG_VIDEO_FORMAT_BGRA:
+            case WG_VIDEO_FORMAT_BGRx:
+            case WG_VIDEO_FORMAT_BGR:
+            case WG_VIDEO_FORMAT_RGB15:
+            case WG_VIDEO_FORMAT_RGB16:
+                gst_util_set_object_arg(G_OBJECT(stream->flip), "method", "vertical-flip");
+                break;
+
+            case WG_VIDEO_FORMAT_AYUV:
+            case WG_VIDEO_FORMAT_I420:
+            case WG_VIDEO_FORMAT_NV12:
+            case WG_VIDEO_FORMAT_UYVY:
+            case WG_VIDEO_FORMAT_YUY2:
+            case WG_VIDEO_FORMAT_YV12:
+            case WG_VIDEO_FORMAT_YVYU:
+            case WG_VIDEO_FORMAT_UNKNOWN:
+            case WG_VIDEO_FORMAT_CINEPAK:
+                gst_util_set_object_arg(G_OBJECT(stream->flip), "method", "none");
+                break;
+        }
+    }
+
     gst_pad_push_event(stream->my_sink, gst_event_new_reconfigure());
 }
 
@@ -383,12 +494,81 @@ static bool CDECL wg_parser_stream_get_event(struct wg_parser_stream *stream, st
     }
 
     *event = stream->event;
+
+    if (stream->event.type != WG_PARSER_EVENT_BUFFER)
+    {
+        stream->event.type = WG_PARSER_EVENT_NONE;
+        pthread_cond_signal(&stream->event_empty_cond);
+    }
+    pthread_mutex_unlock(&parser->mutex);
+
+    return true;
+}
+
+static bool CDECL wg_parser_stream_copy_buffer(struct wg_parser_stream *stream,
+        void *data, uint32_t offset, uint32_t size)
+{
+    struct wg_parser *parser = stream->parser;
+
+    pthread_mutex_lock(&parser->mutex);
+
+    if (!stream->buffer)
+    {
+        pthread_mutex_unlock(&parser->mutex);
+        return false;
+    }
+
+    assert(stream->event.type == WG_PARSER_EVENT_BUFFER);
+    assert(offset < stream->map_info.size);
+    assert(offset + size <= stream->map_info.size);
+    memcpy(data, stream->map_info.data + offset, size);
+
+    pthread_mutex_unlock(&parser->mutex);
+    return true;
+}
+
+static void CDECL wg_parser_stream_release_buffer(struct wg_parser_stream *stream)
+{
+    struct wg_parser *parser = stream->parser;
+
+    pthread_mutex_lock(&parser->mutex);
+
+    assert(stream->event.type == WG_PARSER_EVENT_BUFFER);
+
+    gst_buffer_unmap(stream->buffer, &stream->map_info);
+    gst_buffer_unref(stream->buffer);
+    stream->buffer = NULL;
     stream->event.type = WG_PARSER_EVENT_NONE;
 
     pthread_mutex_unlock(&parser->mutex);
     pthread_cond_signal(&stream->event_empty_cond);
+}
 
-    return true;
+static uint64_t CDECL wg_parser_stream_get_duration(struct wg_parser_stream *stream)
+{
+    return stream->duration;
+}
+
+static bool CDECL wg_parser_stream_seek(struct wg_parser_stream *stream, double rate,
+        uint64_t start_pos, uint64_t stop_pos, DWORD start_flags, DWORD stop_flags)
+{
+    GstSeekType start_type = GST_SEEK_TYPE_SET, stop_type = GST_SEEK_TYPE_SET;
+    GstSeekFlags flags = 0;
+
+    if (start_flags & AM_SEEKING_SeekToKeyFrame)
+        flags |= GST_SEEK_FLAG_KEY_UNIT;
+    if (start_flags & AM_SEEKING_Segment)
+        flags |= GST_SEEK_FLAG_SEGMENT;
+    if (!(start_flags & AM_SEEKING_NoFlush))
+        flags |= GST_SEEK_FLAG_FLUSH;
+
+    if ((start_flags & AM_SEEKING_PositioningBitsMask) == AM_SEEKING_NoPositioning)
+        start_type = GST_SEEK_TYPE_NONE;
+    if ((stop_flags & AM_SEEKING_PositioningBitsMask) == AM_SEEKING_NoPositioning)
+        stop_type = GST_SEEK_TYPE_NONE;
+
+    return gst_pad_push_event(stream->my_sink, gst_event_new_seek(rate,
+            GST_FORMAT_TIME, flags, start_type, start_pos * 100, stop_type, stop_pos * 100));
 }
 
 static void CDECL wg_parser_stream_notify_qos(struct wg_parser_stream *stream,
@@ -433,7 +613,8 @@ static void no_more_pads(GstElement *element, gpointer user)
     pthread_cond_signal(&parser->init_cond);
 }
 
-static GstFlowReturn queue_stream_event(struct wg_parser_stream *stream, const struct wg_parser_event *event)
+static GstFlowReturn queue_stream_event(struct wg_parser_stream *stream,
+        const struct wg_parser_event *event, GstBuffer *buffer)
 {
     struct wg_parser *parser = stream->parser;
 
@@ -452,7 +633,18 @@ static GstFlowReturn queue_stream_event(struct wg_parser_stream *stream, const s
         GST_DEBUG("Filter is flushing; discarding event.");
         return GST_FLOW_FLUSHING;
     }
+    if (buffer)
+    {
+        assert(GST_IS_BUFFER(buffer));
+        if (!gst_buffer_map(buffer, &stream->map_info, GST_MAP_READ))
+        {
+            pthread_mutex_unlock(&parser->mutex);
+            GST_ERROR("Failed to map buffer.\n");
+            return GST_FLOW_ERROR;
+        }
+    }
     stream->event = *event;
+    stream->buffer = buffer;
     pthread_mutex_unlock(&parser->mutex);
     pthread_cond_signal(&stream->event_cond);
     GST_LOG("Event queued.");
@@ -486,7 +678,7 @@ static gboolean event_sink(GstPad *pad, GstObject *parent, GstEvent *event)
                 stream_event.u.segment.position = segment->position / 100;
                 stream_event.u.segment.stop = segment->stop / 100;
                 stream_event.u.segment.rate = segment->rate * segment->applied_rate;
-                queue_stream_event(stream, &stream_event);
+                queue_stream_event(stream, &stream_event, NULL);
             }
             break;
 
@@ -496,7 +688,7 @@ static gboolean event_sink(GstPad *pad, GstObject *parent, GstEvent *event)
                 struct wg_parser_event stream_event;
 
                 stream_event.type = WG_PARSER_EVENT_EOS;
-                queue_stream_event(stream, &stream_event);
+                queue_stream_event(stream, &stream_event, NULL);
             }
             else
             {
@@ -515,16 +707,11 @@ static gboolean event_sink(GstPad *pad, GstObject *parent, GstEvent *event)
                 stream->flushing = true;
                 pthread_cond_signal(&stream->event_empty_cond);
 
-                switch (stream->event.type)
+                if (stream->event.type == WG_PARSER_EVENT_BUFFER)
                 {
-                    case WG_PARSER_EVENT_NONE:
-                    case WG_PARSER_EVENT_EOS:
-                    case WG_PARSER_EVENT_SEGMENT:
-                        break;
-
-                    case WG_PARSER_EVENT_BUFFER:
-                        gst_buffer_unref(stream->event.u.buffer);
-                        break;
+                    gst_buffer_unmap(stream->buffer, &stream->map_info);
+                    gst_buffer_unref(stream->buffer);
+                    stream->buffer = NULL;
                 }
                 stream->event.type = WG_PARSER_EVENT_NONE;
 
@@ -576,9 +763,18 @@ static GstFlowReturn got_data_sink(GstPad *pad, GstObject *parent, GstBuffer *bu
     }
 
     stream_event.type = WG_PARSER_EVENT_BUFFER;
-    stream_event.u.buffer = buffer;
-    /* Transfer our reference to the buffer to the object. */
-    if ((ret = queue_stream_event(stream, &stream_event)) != GST_FLOW_OK)
+
+    if ((stream_event.u.buffer.has_pts = GST_BUFFER_PTS_IS_VALID(buffer)))
+        stream_event.u.buffer.pts = GST_BUFFER_PTS(buffer) / 100;
+    if ((stream_event.u.buffer.has_duration = GST_BUFFER_DURATION_IS_VALID(buffer)))
+        stream_event.u.buffer.duration = GST_BUFFER_DURATION(buffer) / 100;
+    stream_event.u.buffer.discontinuity = GST_BUFFER_FLAG_IS_SET(buffer, GST_BUFFER_FLAG_DISCONT);
+    stream_event.u.buffer.preroll = GST_BUFFER_FLAG_IS_SET(buffer, GST_BUFFER_FLAG_LIVE);
+    stream_event.u.buffer.delta = GST_BUFFER_FLAG_IS_SET(buffer, GST_BUFFER_FLAG_DELTA_UNIT);
+    stream_event.u.buffer.size = gst_buffer_get_size(buffer);
+
+    /* Transfer our reference to the buffer to the stream object. */
+    if ((ret = queue_stream_event(stream, &stream_event, buffer)) != GST_FLOW_OK)
         gst_buffer_unref(buffer);
     return ret;
 }
@@ -846,17 +1042,28 @@ static GstFlowReturn request_buffer_src(GstPad *pad, GstObject *parent, guint64 
 {
     struct wg_parser *parser = gst_pad_get_element_private(pad);
     GstBuffer *new_buffer = NULL;
-    GstFlowReturn ret;
+    GstMapInfo map_info;
+    bool ret;
 
     GST_LOG("pad %p, offset %" G_GINT64_MODIFIER "u, length %u, buffer %p.", pad, offset, size, *buffer);
+
+    if (offset == GST_BUFFER_OFFSET_NONE)
+        offset = parser->next_pull_offset;
+    parser->next_pull_offset = offset + size;
+    if (offset >= parser->file_size)
+        return GST_FLOW_EOS;
+    if (offset + size >= parser->file_size)
+        size = parser->file_size - offset;
 
     if (!*buffer)
         *buffer = new_buffer = gst_buffer_new_and_alloc(size);
 
+    gst_buffer_map(*buffer, &map_info, GST_MAP_WRITE);
+
     pthread_mutex_lock(&parser->mutex);
 
-    assert(!parser->read_request.buffer);
-    parser->read_request.buffer = *buffer;
+    assert(!parser->read_request.data);
+    parser->read_request.data = map_info.data;
     parser->read_request.offset = offset;
     parser->read_request.size = size;
     parser->read_request.done = false;
@@ -873,12 +1080,14 @@ static GstFlowReturn request_buffer_src(GstPad *pad, GstObject *parent, guint64 
 
     pthread_mutex_unlock(&parser->mutex);
 
-    GST_LOG("Request returned %s.", gst_flow_get_name(ret));
+    gst_buffer_unmap(*buffer, &map_info);
 
-    if (ret != GST_FLOW_OK && new_buffer)
+    GST_LOG("Request returned %d.", ret);
+
+    if (!ret && new_buffer)
         gst_buffer_unref(new_buffer);
 
-    return ret;
+    return ret ? GST_FLOW_OK : GST_FLOW_ERROR;
 }
 
 static gboolean query_function(GstPad *pad, GstObject *parent, GstQuery *query)
@@ -1186,6 +1395,7 @@ static HRESULT CDECL wg_parser_connect(struct wg_parser *parser, uint64_t file_s
     gst_pad_set_element_private(parser->my_src, parser);
 
     parser->start_offset = parser->next_offset = parser->stop_offset = 0;
+    parser->next_pull_offset = 0;
 
     if (!parser->init_gst(parser))
         return E_FAIL;
@@ -1556,6 +1766,9 @@ static const struct unix_funcs funcs =
     wg_parser_begin_flush,
     wg_parser_end_flush,
 
+    wg_parser_get_read_request,
+    wg_parser_complete_read_request,
+
     wg_parser_get_stream_count,
     wg_parser_get_stream,
 
@@ -1564,7 +1777,12 @@ static const struct unix_funcs funcs =
     wg_parser_stream_disable,
 
     wg_parser_stream_get_event,
+    wg_parser_stream_copy_buffer,
+    wg_parser_stream_release_buffer,
     wg_parser_stream_notify_qos,
+
+    wg_parser_stream_get_duration,
+    wg_parser_stream_seek,
 };
 
 NTSTATUS CDECL __wine_init_unix_lib(HMODULE module, DWORD reason, const void *ptr_in, void *ptr_out)
