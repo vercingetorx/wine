@@ -5156,12 +5156,12 @@ static void test_set_notify_flags(void)
     IMediaEventEx *media_event;
     struct testfilter filter;
     LONG_PTR param1, param2;
+    LONG code, flags;
     HANDLE event;
     HWND window;
     BSTR status;
     HRESULT hr;
     ULONG ref;
-    LONG code;
     MSG msg;
 
     window = CreateWindowA("static", NULL, WS_OVERLAPPEDWINDOW,
@@ -5196,13 +5196,29 @@ static void test_set_notify_flags(void)
 
     while (PeekMessageA(&msg, window, WM_USER, WM_USER, PM_REMOVE));
 
+    hr = IMediaEventEx_SetNotifyFlags(media_event, 2);
+    ok(hr == E_INVALIDARG, "Got hr %#x.\n", hr);
+
+    hr = IMediaEventEx_GetNotifyFlags(media_event, NULL);
+    ok(hr == E_POINTER, "Got hr %#x.\n", hr);
+
+    flags = 0xdeadbeef;
+    hr = IMediaEventEx_GetNotifyFlags(media_event, &flags);
+    ok(hr == S_OK, "Got hr %#x.\n", hr);
+    ok(!flags, "Got flags %#x\n", flags);
+
     hr = IMediaEventEx_SetNotifyFlags(media_event, AM_MEDIAEVENT_NONOTIFY);
     ok(hr == S_OK, "Got hr %#x.\n", hr);
 
-    todo_wine ok(WaitForSingleObject(event, 0) == WAIT_TIMEOUT, "Event should not be signaled.\n");
+    flags = 0xdeadbeef;
+    hr = IMediaEventEx_GetNotifyFlags(media_event, &flags);
+    ok(hr == S_OK, "Got hr %#x.\n", hr);
+    ok(flags == AM_MEDIAEVENT_NONOTIFY, "Got flags %#x\n", flags);
+
+    ok(WaitForSingleObject(event, 0) == WAIT_TIMEOUT, "Event should not be signaled.\n");
 
     hr = IMediaEventEx_GetEvent(media_event, &code, &param1, &param2, 50);
-    todo_wine ok(hr == E_ABORT, "Got hr %#x.\n", hr);
+    ok(hr == E_ABORT, "Got hr %#x.\n", hr);
 
     hr = IMediaEventSink_Notify(media_event_sink, EC_STATUS, (LONG_PTR)status, (LONG_PTR)status);
     ok(hr == S_OK, "Got hr %#x.\n", hr);
@@ -5233,7 +5249,7 @@ static void test_set_notify_flags(void)
     hr = IMediaControl_Run(media_control);
     ok(hr == S_OK, "Got hr %#x.\n", hr);
 
-    todo_wine ok(WaitForSingleObject(event, 0) == WAIT_TIMEOUT, "Event should not be signaled.\n");
+    ok(WaitForSingleObject(event, 0) == WAIT_TIMEOUT, "Event should not be signaled.\n");
 
     hr = IMediaEventSink_Notify(media_event_sink, EC_COMPLETE, S_OK,
             (LONG_PTR)&filter.IBaseFilter_iface);
@@ -5244,10 +5260,15 @@ static void test_set_notify_flags(void)
     hr = IMediaEventEx_GetEvent(media_event, &code, &param1, &param2, 50);
     ok(hr == E_ABORT, "Got hr %#x.\n", hr);
 
-    todo_wine ok(WaitForSingleObject(event, 0) == WAIT_TIMEOUT, "Event should not be signaled.\n");
+    ok(WaitForSingleObject(event, 0) == WAIT_TIMEOUT, "Event should not be signaled.\n");
 
     hr = IMediaEventEx_SetNotifyFlags(media_event, 0);
     ok(hr == S_OK, "Got hr %#x.\n", hr);
+
+    flags = 0xdeadbeef;
+    hr = IMediaEventEx_GetNotifyFlags(media_event, &flags);
+    ok(hr == S_OK, "Got hr %#x.\n", hr);
+    ok(!flags, "Got flags %#x\n", flags);
 
     hr = IMediaControl_Stop(media_control);
     ok(hr == S_OK, "Got hr %#x.\n", hr);
@@ -5261,7 +5282,7 @@ static void test_set_notify_flags(void)
     hr = IMediaEventEx_SetNotifyFlags(media_event, AM_MEDIAEVENT_NONOTIFY);
     ok(hr == S_OK, "Got hr %#x.\n", hr);
 
-    todo_wine ok(WaitForSingleObject(event, 0) == WAIT_TIMEOUT, "Event should not be signaled.\n");
+    ok(WaitForSingleObject(event, 0) == WAIT_TIMEOUT, "Event should not be signaled.\n");
 
     hr = IMediaControl_Stop(media_control);
     ok(hr == S_OK, "Got hr %#x.\n", hr);
@@ -5277,9 +5298,9 @@ static void test_set_notify_flags(void)
     DestroyWindow(window);
 }
 
-#define check_events(a, b, c, d) check_events_(__LINE__, a, b, c, d)
+#define check_events(a, b, c) check_events_(__LINE__, a, b, c)
 static void check_events_(unsigned int line, IMediaEventEx *media_event,
-        int expected_ec_complete_count, int expected_ec_status_count, BOOL todo)
+        int expected_ec_complete_count, int expected_ec_status_count)
 {
     int ec_complete_count = 0;
     int ec_status_count = 0;
@@ -5295,9 +5316,11 @@ static void check_events_(unsigned int line, IMediaEventEx *media_event,
             ++ec_complete_count;
         if (code == EC_STATUS)
             ++ec_status_count;
+        hr = IMediaEventEx_FreeEventParams(media_event, code, param1, param2);
+        ok(hr == S_OK, "Got hr %#x.\n", hr);
     }
     ok(hr == E_ABORT, "Got hr %#x.\n", hr);
-    todo_wine_if(todo) ok_(__FILE__, line)(ec_complete_count == expected_ec_complete_count,
+    ok_(__FILE__, line)(ec_complete_count == expected_ec_complete_count,
         "Expected %d EC_COMPLETE events.\n", expected_ec_complete_count);
     ok_(__FILE__, line)(ec_status_count == expected_ec_status_count,
         "Expected %d EC_STATUS events.\n", expected_ec_status_count);
@@ -5336,7 +5359,49 @@ static void test_events(void)
     hr = IMediaEventEx_GetEventHandle(media_event, (OAEVENT *)&event);
     ok(hr == S_OK, "Got hr %#x.\n", hr);
 
+    code = 0xdeadbeef;
+    param1 = 0xdeadbeef;
+    param2 = 0xdeadbeef;
+    hr = IMediaEventEx_GetEvent(media_event, &code, &param1, &param2, 0);
+    ok(hr == E_ABORT, "Got hr %#x.\n", hr);
+    ok(!code, "Got code %#x.\n", code);
+    todo_wine ok(!param1, "Got param1 %#Ix.\n", param1);
+    todo_wine ok(!param2, "Got param2 %#Ix.\n", param2);
+
+    /* EC_COMPLETE is ignored while in stopped or paused state. */
+
+    hr = IMediaEventSink_Notify(media_event_sink, EC_STATUS, (LONG_PTR)status, (LONG_PTR)status);
+    ok(hr == S_OK, "Got hr %#x.\n", hr);
+    hr = IMediaEventSink_Notify(media_event_sink, EC_COMPLETE, S_OK,
+            (LONG_PTR)&filter.IBaseFilter_iface);
+    ok(hr == S_OK, "Got hr %#x.\n", hr);
+    hr = IMediaEventSink_Notify(media_event_sink, EC_STATUS, (LONG_PTR)status, (LONG_PTR)status);
+    ok(hr == S_OK, "Got hr %#x.\n", hr);
+
+    check_events(media_event, 0, 2);
+
+    hr = IMediaControl_Pause(media_control);
+    ok(hr == S_OK, "Got hr %#x.\n", hr);
+
+    hr = IMediaEventSink_Notify(media_event_sink, EC_STATUS, (LONG_PTR)status, (LONG_PTR)status);
+    ok(hr == S_OK, "Got hr %#x.\n", hr);
+    hr = IMediaEventSink_Notify(media_event_sink, EC_COMPLETE, S_OK,
+            (LONG_PTR)&filter.IBaseFilter_iface);
+    ok(hr == S_OK, "Got hr %#x.\n", hr);
+    hr = IMediaEventSink_Notify(media_event_sink, EC_STATUS, (LONG_PTR)status, (LONG_PTR)status);
+    ok(hr == S_OK, "Got hr %#x.\n", hr);
+
+    check_events(media_event, 0, 2);
+
     hr = IMediaControl_Run(media_control);
+    ok(hr == S_OK, "Got hr %#x.\n", hr);
+
+    check_events(media_event, 0, 0);
+
+    /* Pausing and then running the graph clears pending EC_COMPLETE events.
+     * This remains true even with default handling canceled. */
+
+    hr = IMediaEventEx_CancelDefaultHandling(media_event, EC_COMPLETE);
     ok(hr == S_OK, "Got hr %#x.\n", hr);
 
     hr = IMediaEventSink_Notify(media_event_sink, EC_STATUS, (LONG_PTR)status, (LONG_PTR)status);
@@ -5350,7 +5415,7 @@ static void test_events(void)
     hr = IMediaControl_Stop(media_control);
     ok(hr == S_OK, "Got hr %#x.\n", hr);
 
-    check_events(media_event, 1, 2, FALSE);
+    check_events(media_event, 1, 2);
 
     hr = IMediaControl_Run(media_control);
     ok(hr == S_OK, "Got hr %#x.\n", hr);
@@ -5368,7 +5433,7 @@ static void test_events(void)
     hr = IMediaControl_Run(media_control);
     ok(hr == S_OK, "Got hr %#x.\n", hr);
 
-    check_events(media_event, 0, 2, TRUE);
+    check_events(media_event, 0, 2);
 
     hr = IMediaEventSink_Notify(media_event_sink, EC_STATUS, (LONG_PTR)status, (LONG_PTR)status);
     ok(hr == S_OK, "Got hr %#x.\n", hr);
@@ -5383,14 +5448,33 @@ static void test_events(void)
     hr = IMediaControl_Pause(media_control);
     ok(hr == S_OK, "Got hr %#x.\n", hr);
 
-    check_events(media_event, 1, 2, FALSE);
+    check_events(media_event, 1, 2);
+
+    hr = IMediaControl_Run(media_control);
+    ok(hr == S_OK, "Got hr %#x.\n", hr);
+    hr = IMediaEventSink_Notify(media_event_sink, EC_STATUS, (LONG_PTR)status, (LONG_PTR)status);
+    ok(hr == S_OK, "Got hr %#x.\n", hr);
+    hr = IMediaEventSink_Notify(media_event_sink, EC_COMPLETE, S_OK,
+            (LONG_PTR)&filter.IBaseFilter_iface);
+    ok(hr == S_OK, "Got hr %#x.\n", hr);
+    hr = IMediaEventSink_Notify(media_event_sink, EC_STATUS, (LONG_PTR)status, (LONG_PTR)status);
+    ok(hr == S_OK, "Got hr %#x.\n", hr);
+
+    hr = IMediaControl_Pause(media_control);
+    ok(hr == S_OK, "Got hr %#x.\n", hr);
+    hr = IMediaControl_Run(media_control);
+    ok(hr == S_OK, "Got hr %#x.\n", hr);
+
+    check_events(media_event, 0, 2);
+
+    /* GetEvent() resets the event object if there are no events available. */
 
     SetEvent(event);
 
     hr = IMediaEventEx_GetEvent(media_event, &code, &param1, &param2, 50);
     ok(hr == E_ABORT, "Got hr %#x.\n", hr);
 
-    todo_wine ok(WaitForSingleObject(event, 0) == WAIT_TIMEOUT, "Event should not be signaled.\n");
+    ok(WaitForSingleObject(event, 0) == WAIT_TIMEOUT, "Event should not be signaled.\n");
 
     hr = IMediaControl_Stop(media_control);
     ok(hr == S_OK, "Got hr %#x.\n", hr);

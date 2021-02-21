@@ -1,7 +1,7 @@
 /*
  *    Text format and layout
  *
- * Copyright 2012, 2014-2017 Nikolay Sivov for CodeWeavers
+ * Copyright 2012, 2014-2021 Nikolay Sivov for CodeWeavers
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -2728,6 +2728,9 @@ static HRESULT set_layout_range_attr(struct dwrite_textlayout *layout, enum layo
     if (value->range.length == 0)
         return S_OK;
 
+    if (~0u - value->range.startPosition < value->range.length)
+        return E_INVALIDARG;
+
     /* select from ranges lists */
     switch (attr)
     {
@@ -3400,9 +3403,6 @@ static HRESULT WINAPI dwritetextlayout_layout_GetFontCollection(IDWriteTextLayou
 
     TRACE("%p, %u, %p, %p.\n", iface, position, collection, r);
 
-    if (position >= layout->len)
-        return S_OK;
-
     range = get_layout_range_by_pos(layout, position);
     *collection = range->collection;
     if (*collection)
@@ -3438,9 +3438,6 @@ static HRESULT WINAPI dwritetextlayout_layout_GetFontWeight(IDWriteTextLayout4 *
     struct layout_range *range;
 
     TRACE("%p, %u, %p, %p.\n", iface, position, weight, r);
-
-    if (position >= layout->len)
-        return S_OK;
 
     range = get_layout_range_by_pos(layout, position);
     *weight = range->weight;
@@ -3538,9 +3535,6 @@ static HRESULT WINAPI dwritetextlayout_GetInlineObject(IDWriteTextLayout4 *iface
     struct layout_range *range;
 
     TRACE("%p, %u, %p, %p.\n", iface, position, object, r);
-
-    if (position >= layout->len)
-        return S_OK;
 
     range = get_layout_range_by_pos(layout, position);
     *object = range->object;
@@ -4058,9 +4052,6 @@ static HRESULT WINAPI dwritetextlayout1_GetPairKerning(IDWriteTextLayout4 *iface
     struct layout_range *range;
 
     TRACE("%p, %u, %p, %p.\n", iface, position, is_pairkerning_enabled, r);
-
-    if (position >= layout->len)
-        return S_OK;
 
     range = get_layout_range_by_pos(layout, position);
     *is_pairkerning_enabled = range->pair_kerning;

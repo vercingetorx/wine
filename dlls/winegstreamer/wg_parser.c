@@ -43,7 +43,7 @@ struct wg_parser
     struct wg_parser_stream **streams;
     unsigned int stream_count;
 
-    GstElement *container;
+    GstElement *container, *decodebin;
     GstBus *bus;
     GstPad *my_src, *their_sink;
 
@@ -109,11 +109,70 @@ static enum wg_audio_format wg_audio_format_from_gst(GstAudioFormat format)
     }
 }
 
+static uint32_t wg_channel_position_from_gst(GstAudioChannelPosition position)
+{
+    static const uint32_t position_map[] =
+    {
+        SPEAKER_FRONT_LEFT,
+        SPEAKER_FRONT_RIGHT,
+        SPEAKER_FRONT_CENTER,
+        SPEAKER_LOW_FREQUENCY,
+        SPEAKER_BACK_LEFT,
+        SPEAKER_BACK_RIGHT,
+        SPEAKER_FRONT_LEFT_OF_CENTER,
+        SPEAKER_FRONT_RIGHT_OF_CENTER,
+        SPEAKER_BACK_CENTER,
+        0,
+        SPEAKER_SIDE_LEFT,
+        SPEAKER_SIDE_RIGHT,
+        SPEAKER_TOP_FRONT_LEFT,
+        SPEAKER_TOP_FRONT_RIGHT,
+        SPEAKER_TOP_FRONT_CENTER,
+        SPEAKER_TOP_CENTER,
+        SPEAKER_TOP_BACK_LEFT,
+        SPEAKER_TOP_BACK_RIGHT,
+        0,
+        0,
+        SPEAKER_TOP_BACK_CENTER,
+    };
+
+    if (position < ARRAY_SIZE(position_map))
+        return position_map[position];
+    return 0;
+}
+
+static uint32_t wg_channel_mask_from_gst(const GstAudioInfo *info)
+{
+    uint32_t mask = 0, position;
+    unsigned int i;
+
+    for (i = 0; i < GST_AUDIO_INFO_CHANNELS(info); ++i)
+    {
+        if (!(position = wg_channel_position_from_gst(GST_AUDIO_INFO_POSITION(info, i))))
+        {
+            GST_WARNING("Unsupported channel %#x.", GST_AUDIO_INFO_POSITION(info, i));
+            return 0;
+        }
+        /* Make sure it's also in WinMM order. WinMM mandates that channels be
+         * ordered, as it were, from least to most significant SPEAKER_* bit.
+         * Hence we fail if the current channel was already specified, or if any
+         * higher bit was already specified. */
+        if (mask & ~(position - 1))
+        {
+            GST_WARNING("Unsupported channel order.");
+            return 0;
+        }
+        mask |= position;
+    }
+    return mask;
+}
+
 static void wg_format_from_audio_info(struct wg_format *format, const GstAudioInfo *info)
 {
     format->major_type = WG_MAJOR_TYPE_AUDIO;
     format->u.audio.format = wg_audio_format_from_gst(GST_AUDIO_INFO_FORMAT(info));
     format->u.audio.channels = GST_AUDIO_INFO_CHANNELS(info);
+    format->u.audio.channel_mask = wg_channel_mask_from_gst(info);
     format->u.audio.rate = GST_AUDIO_INFO_RATE(info);
 }
 
@@ -273,15 +332,63 @@ static GstAudioFormat wg_audio_format_to_gst(enum wg_audio_format format)
     }
 }
 
+static void wg_channel_mask_to_gst(GstAudioChannelPosition *positions, uint32_t mask, uint32_t channel_count)
+{
+    const uint32_t orig_mask = mask;
+    unsigned int i;
+    DWORD bit;
+
+    static const GstAudioChannelPosition position_map[] =
+    {
+        GST_AUDIO_CHANNEL_POSITION_FRONT_LEFT,
+        GST_AUDIO_CHANNEL_POSITION_FRONT_RIGHT,
+        GST_AUDIO_CHANNEL_POSITION_FRONT_CENTER,
+        GST_AUDIO_CHANNEL_POSITION_LFE1,
+        GST_AUDIO_CHANNEL_POSITION_REAR_LEFT,
+        GST_AUDIO_CHANNEL_POSITION_REAR_RIGHT,
+        GST_AUDIO_CHANNEL_POSITION_FRONT_LEFT_OF_CENTER,
+        GST_AUDIO_CHANNEL_POSITION_FRONT_RIGHT_OF_CENTER,
+        GST_AUDIO_CHANNEL_POSITION_REAR_CENTER,
+        GST_AUDIO_CHANNEL_POSITION_SIDE_LEFT,
+        GST_AUDIO_CHANNEL_POSITION_SIDE_RIGHT,
+        GST_AUDIO_CHANNEL_POSITION_TOP_CENTER,
+        GST_AUDIO_CHANNEL_POSITION_TOP_FRONT_LEFT,
+        GST_AUDIO_CHANNEL_POSITION_TOP_FRONT_CENTER,
+        GST_AUDIO_CHANNEL_POSITION_TOP_FRONT_RIGHT,
+        GST_AUDIO_CHANNEL_POSITION_TOP_REAR_LEFT,
+        GST_AUDIO_CHANNEL_POSITION_TOP_REAR_CENTER,
+        GST_AUDIO_CHANNEL_POSITION_TOP_REAR_RIGHT,
+    };
+
+    for (i = 0; i < channel_count; ++i)
+    {
+        positions[i] = GST_AUDIO_CHANNEL_POSITION_NONE;
+        if (BitScanForward(&bit, mask))
+        {
+            if (bit < ARRAY_SIZE(position_map))
+                positions[i] = position_map[bit];
+            else
+                GST_WARNING("Invalid channel mask %#x.\n", orig_mask);
+            mask &= ~(1 << bit);
+        }
+        else
+        {
+            GST_WARNING("Incomplete channel mask %#x.\n", orig_mask);
+        }
+    }
+}
+
 static GstCaps *wg_format_to_caps_audio(const struct wg_format *format)
 {
+    GstAudioChannelPosition positions[32];
     GstAudioFormat audio_format;
     GstAudioInfo info;
 
     if ((audio_format = wg_audio_format_to_gst(format->u.audio.format)) == GST_AUDIO_FORMAT_UNKNOWN)
         return NULL;
 
-    gst_audio_info_set_format(&info, audio_format, format->u.audio.rate, format->u.audio.channels, NULL);
+    wg_channel_mask_to_gst(positions, format->u.audio.channel_mask, format->u.audio.channels);
+    gst_audio_info_set_format(&info, audio_format, format->u.audio.rate, format->u.audio.channels, positions);
     return gst_audio_info_to_caps(&info);
 }
 
@@ -431,6 +538,13 @@ static void CDECL wg_parser_complete_read_request(struct wg_parser *parser, bool
     parser->read_request.data = NULL;
     pthread_mutex_unlock(&parser->mutex);
     pthread_cond_signal(&parser->read_done_cond);
+}
+
+static void CDECL wg_parser_set_unlimited_buffering(struct wg_parser *parser)
+{
+    g_object_set(parser->decodebin, "max-size-buffers", 0, NULL);
+    g_object_set(parser->decodebin, "max-size-time", G_GUINT64_CONSTANT(0), NULL);
+    g_object_set(parser->decodebin, "max-size-bytes", 0, NULL);
 }
 
 static void CDECL wg_parser_stream_get_preferred_format(struct wg_parser_stream *stream, struct wg_format *format)
@@ -1495,6 +1609,7 @@ static BOOL decodebin_parser_init_gst(struct wg_parser *parser)
     }
 
     gst_bin_add(GST_BIN(parser->container), element);
+    parser->decodebin = element;
 
     g_signal_connect(element, "pad-added", G_CALLBACK(existing_new_pad), parser);
     g_signal_connect(element, "pad-removed", G_CALLBACK(removed_decoded_pad), parser);
@@ -1768,6 +1883,8 @@ static const struct unix_funcs funcs =
 
     wg_parser_get_read_request,
     wg_parser_complete_read_request,
+
+    wg_parser_set_unlimited_buffering,
 
     wg_parser_get_stream_count,
     wg_parser_get_stream,
