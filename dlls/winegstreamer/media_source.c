@@ -18,26 +18,11 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#include "config.h"
-
-#include <gst/gst.h>
-
 #include "gst_private.h"
-
-#include <assert.h>
-#include <stdarg.h>
-#include <assert.h>
-
-#define COBJMACROS
-#define NONAMELESSUNION
 
 #include "mfapi.h"
 #include "mferror.h"
-#include "mfidl.h"
-#include "mfobjects.h"
 
-#include "wine/debug.h"
-#include "wine/heap.h"
 #include "wine/list.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(mfplat);
@@ -167,7 +152,7 @@ static ULONG WINAPI source_async_command_Release(IUnknown *iface)
     {
         if (command->op == SOURCE_ASYNC_START)
             PropVariantClear(&command->u.start.position);
-        heap_free(command);
+        free(command);
     }
 
     return refcount;
@@ -184,7 +169,7 @@ static HRESULT source_create_async_op(enum source_async_op op, struct source_asy
 {
     struct source_async_command *command;
 
-    if (!(command = heap_alloc_zero(sizeof(*command))))
+    if (!(command = calloc(1, sizeof(*command))))
         return E_OUTOFMEMORY;
 
     command->IUnknown_iface.lpVtbl = &source_async_command_vtbl;
@@ -594,7 +579,7 @@ static ULONG WINAPI media_stream_Release(IMFMediaStream *iface)
     {
         if (stream->event_queue)
             IMFMediaEventQueue_Release(stream->event_queue);
-        heap_free(stream);
+        free(stream);
     }
 
     return ref;
@@ -720,7 +705,7 @@ static const IMFMediaStreamVtbl media_stream_vtbl =
 static HRESULT new_media_stream(struct media_source *source,
         struct wg_parser_stream *wg_stream, DWORD stream_id, struct media_stream **out_stream)
 {
-    struct media_stream *object = heap_alloc_zero(sizeof(*object));
+    struct media_stream *object = calloc(1, sizeof(*object));
     HRESULT hr;
 
     TRACE("source %p, wg_stream %p, stream_id %u.\n", source, wg_stream, stream_id);
@@ -781,7 +766,7 @@ static HRESULT media_stream_init_desc(struct media_stream *stream)
 
         IMFMediaType_GetGUID(base_type, &MF_MT_SUBTYPE, &base_subtype);
 
-        stream_types = heap_alloc( sizeof(IMFMediaType *) * ARRAY_SIZE(video_types) + 1);
+        stream_types = malloc(sizeof(IMFMediaType *) * (ARRAY_SIZE(video_types) + 1));
 
         stream_types[0] = base_type;
         type_count = 1;
@@ -834,7 +819,7 @@ done:
     for (i = 0; i < type_count; i++)
         IMFMediaType_Release(stream_types[i]);
     if (stream_types != &stream_type)
-        heap_free(stream_types);
+        free(stream_types);
     return hr;
 }
 
@@ -882,7 +867,7 @@ static ULONG WINAPI media_source_Release(IMFMediaSource *iface)
     {
         IMFMediaSource_Shutdown(&source->IMFMediaSource_iface);
         IMFMediaEventQueue_Release(source->event_queue);
-        heap_free(source);
+        free(source);
     }
 
     return ref;
@@ -1054,7 +1039,7 @@ static HRESULT WINAPI media_source_Shutdown(IMFMediaSource *iface)
     unix_funcs->wg_parser_destroy(source->wg_parser);
 
     if (source->stream_count)
-        heap_free(source->streams);
+        free(source->streams);
 
     if (source->async_commands_queue)
         MFUnlockWorkQueue(source->async_commands_queue);
@@ -1083,7 +1068,7 @@ static HRESULT media_source_constructor(IMFByteStream *bytestream, struct media_
 {
     IMFStreamDescriptor **descriptors = NULL;
     struct media_source *object;
-    gint64 total_pres_time = 0;
+    UINT64 total_pres_time = 0;
     struct wg_parser *parser;
     DWORD bytestream_caps;
     uint64_t file_size;
@@ -1105,7 +1090,7 @@ static HRESULT media_source_constructor(IMFByteStream *bytestream, struct media_
         return hr;
     }
 
-    if (!(object = heap_alloc_zero(sizeof(*object))))
+    if (!(object = calloc(1, sizeof(*object))))
         return E_OUTOFMEMORY;
 
     object->IMFMediaSource_iface.lpVtbl = &IMFMediaSource_vtbl;
@@ -1144,7 +1129,7 @@ static HRESULT media_source_constructor(IMFByteStream *bytestream, struct media_
 
     object->stream_count = unix_funcs->wg_parser_get_stream_count(parser);
 
-    if (!(object->streams = heap_alloc_zero(object->stream_count * sizeof(*object->streams))))
+    if (!(object->streams = calloc(object->stream_count, sizeof(*object->streams))))
     {
         hr = E_OUTOFMEMORY;
         goto fail;
@@ -1165,7 +1150,7 @@ static HRESULT media_source_constructor(IMFByteStream *bytestream, struct media_
 
     /* init presentation descriptor */
 
-    descriptors = heap_alloc(object->stream_count * sizeof(IMFStreamDescriptor*));
+    descriptors = malloc(object->stream_count * sizeof(IMFStreamDescriptor *));
     for (i = 0; i < object->stream_count; i++)
     {
         IMFMediaStream_GetStreamDescriptor(&object->streams[i]->IMFMediaStream_iface, &descriptors[i]);
@@ -1179,7 +1164,7 @@ static HRESULT media_source_constructor(IMFByteStream *bytestream, struct media_
         IMFPresentationDescriptor_SelectStream(object->pres_desc, i);
         IMFStreamDescriptor_Release(descriptors[i]);
     }
-    heap_free(descriptors);
+    free(descriptors);
     descriptors = NULL;
 
     for (i = 0; i < object->stream_count; i++)
@@ -1197,7 +1182,7 @@ static HRESULT media_source_constructor(IMFByteStream *bytestream, struct media_
     fail:
     WARN("Failed to construct MFMediaSource, hr %#x.\n", hr);
 
-    heap_free(descriptors);
+    free(descriptors);
     IMFMediaSource_Release(&object->IMFMediaSource_iface);
     return hr;
 }
@@ -1272,10 +1257,10 @@ static ULONG WINAPI winegstreamer_stream_handler_Release(IMFByteStreamHandler *i
             IMFAsyncResult_Release(result->result);
             if (result->object)
                 IUnknown_Release(result->object);
-            heap_free(result);
+            free(result);
         }
         DeleteCriticalSection(&handler->cs);
-        heap_free(handler);
+        free(handler);
     }
 
     return refcount;
@@ -1336,8 +1321,8 @@ static ULONG WINAPI create_object_context_Release(IUnknown *iface)
             IPropertyStore_Release(context->props);
         if (context->stream)
             IMFByteStream_Release(context->stream);
-        heap_free(context->url);
-        heap_free(context);
+        free(context->url);
+        free(context);
     }
 
     return refcount;
@@ -1349,23 +1334,6 @@ static const IUnknownVtbl create_object_context_vtbl =
     create_object_context_AddRef,
     create_object_context_Release,
 };
-
-static WCHAR *heap_strdupW(const WCHAR *str)
-{
-    WCHAR *ret = NULL;
-
-    if (str)
-    {
-        unsigned int size;
-
-        size = (lstrlenW(str) + 1) * sizeof(WCHAR);
-        ret = heap_alloc(size);
-        if (ret)
-            memcpy(ret, str, size);
-    }
-
-    return ret;
-}
 
 static HRESULT WINAPI winegstreamer_stream_handler_BeginCreateObject(IMFByteStreamHandler *iface, IMFByteStream *stream, const WCHAR *url, DWORD flags,
         IPropertyStore *props, IUnknown **cancel_cookie, IMFAsyncCallback *callback, IUnknown *state)
@@ -1383,8 +1351,7 @@ static HRESULT WINAPI winegstreamer_stream_handler_BeginCreateObject(IMFByteStre
     if (FAILED(hr = MFCreateAsyncResult(NULL, callback, state, &caller)))
         return hr;
 
-    context = heap_alloc(sizeof(*context));
-    if (!context)
+    if (!(context = calloc(1, sizeof(*context))))
     {
         IMFAsyncResult_Release(caller);
         return E_OUTOFMEMORY;
@@ -1400,7 +1367,7 @@ static HRESULT WINAPI winegstreamer_stream_handler_BeginCreateObject(IMFByteStre
     if (context->stream)
         IMFByteStream_AddRef(context->stream);
     if (url)
-        context->url = heap_strdupW(url);
+        context->url = wcsdup(url);
     if (!context->stream)
     {
         IMFAsyncResult_Release(caller);
@@ -1457,7 +1424,7 @@ static HRESULT WINAPI winegstreamer_stream_handler_EndCreateObject(IMFByteStream
         *object = found->object;
         hr = IMFAsyncResult_GetStatus(found->result);
         IMFAsyncResult_Release(found->result);
-        heap_free(found);
+        free(found);
     }
     else
     {
@@ -1495,7 +1462,7 @@ static HRESULT WINAPI winegstreamer_stream_handler_CancelObjectCreation(IMFByteS
         IMFAsyncResult_Release(found->result);
         if (found->object)
             IUnknown_Release(found->object);
-        heap_free(found);
+        free(found);
     }
 
     return found ? S_OK : MF_E_UNEXPECTED;
@@ -1599,8 +1566,7 @@ static HRESULT WINAPI winegstreamer_stream_handler_callback_Invoke(IMFAsyncCallb
 
     hr = winegstreamer_stream_handler_create_object(handler, context->url, context->stream, context->flags, context->props, &object, &obj_type);
 
-    handler_result = heap_alloc(sizeof(*handler_result));
-    if (handler_result)
+    if ((handler_result = malloc(sizeof(*handler_result))))
     {
         handler_result->result = caller;
         IMFAsyncResult_AddRef(handler_result->result);
@@ -1642,8 +1608,7 @@ HRESULT winegstreamer_stream_handler_create(REFIID riid, void **obj)
 
     TRACE("%s, %p.\n", debugstr_guid(riid), obj);
 
-    this = heap_alloc_zero(sizeof(*this));
-    if (!this)
+    if (!(this = calloc(1, sizeof(*this))))
         return E_OUTOFMEMORY;
 
     list_init(&this->results);

@@ -1166,23 +1166,15 @@ static void output_delayed_import_thunks( const DLLSPEC *spec )
             switch(target_cpu)
             {
             case CPU_x86:
-                output( "\tmovl $%d, %%eax\n", (idx << 16) | j );
-                output( "\tjmp %s\n", asm_name("__wine_delay_load_asm") );
-                break;
             case CPU_x86_64:
-                output( "\tmovq $%d,%%rax\n", (idx << 16) | j );
+                output( "\tmovl $%d,%%eax\n", (idx << 16) | j );
                 output( "\tjmp %s\n", asm_name("__wine_delay_load_asm") );
                 break;
             case CPU_ARM:
-            {
-                unsigned int mask, count = 0, val = (idx << 16) | j;
-
-                for (mask = 0xff; mask; mask <<= 8)
-                    if (val & mask) output( "\t%s IP,#%u\n", count++ ? "add" : "mov", val & mask );
-                if (!count) output( "\tmov IP,#0\n" );
+                output( "\tmov ip, #%u\n", j );
+                if (idx) output( "\tmovt ip, #%u\n", idx );
                 output( "\tb %s\n", asm_name("__wine_delay_load_asm") );
                 break;
-            }
             case CPU_ARM64:
                 if (idx)
                 {
@@ -1370,12 +1362,15 @@ void output_stubs( DLLSPEC *spec )
             }
             else
             {
-                output( "\tldr r0,1f\n");
-                output( "\tldr r1,1f+4\n");
+                output( "\tmovw r0,:lower16:.L__wine_spec_file_name\n");
+                output( "\tmovt r0,:upper16:.L__wine_spec_file_name\n");
+                if (exp_name)
+                {
+                    output( "\tmovw r1,:lower16:.L%s_string\n", name );
+                    output( "\tmovt r1,:upper16:.L%s_string\n", name );
+                }
+                else output( "\tmov r1,#%u\n", odp->ordinal );
                 output( "\tbl %s\n", asm_name("__wine_spec_unimplemented_stub") );
-                output( "1:\t.long .L__wine_spec_file_name\n" );
-                if (exp_name) output( "\t.long .L%s_string\n", name );
-                else output( "\t.long %u\n", odp->ordinal );
             }
             break;
         case CPU_ARM64:
@@ -1534,7 +1529,17 @@ static void output_syscall_dispatcher( int count, const char *variant )
             output( "\tmovq %%rdx,0x200(%%r12)\n" );
             output( "\tmovq %%rdx,0x208(%%r12)\n" );
             output( "\tmovq %%rdx,0x210(%%r12)\n" );
-            output( "\txsave64 (%%r12)\n" );
+            if (!strcmp( variant, "_xsavec" ))
+            {
+                output( "\tmovq %%rdx,0x218(%%r12)\n" );
+                output( "\tmovq %%rdx,0x220(%%r12)\n" );
+                output( "\tmovq %%rdx,0x228(%%r12)\n" );
+                output( "\tmovq %%rdx,0x230(%%r12)\n" );
+                output( "\tmovq %%rdx,0x238(%%r12)\n" );
+                output( "\txsavec64 (%%r12)\n" );
+            }
+            else
+                output( "\txsave64 (%%r12)\n" );
             output( "\tmovq %%rsi,%%rdx\n" );
         }
         output( "\tmovq %%gs:0x30,%%rcx\n" );
@@ -1559,7 +1564,18 @@ static void output_syscall_dispatcher( int count, const char *variant )
         output( "\tcallq *(%%r10,%%r11,8)\n" );
         output( "2:\tmovq %%gs:0x30,%%rcx\n" );
         output( "\tmovq $0,0x328(%%rcx)\n" );
-        output( "\tfxrstor64 (%%r12)\n" );
+        if (!*variant)
+        {
+            output( "\tfxrstor64 (%%r12)\n" );
+        }
+        else
+        {
+            output( "\tmovq %%rax,%%r11\n" );
+            output( "\tmovl $7,%%eax\n" );
+            output( "\txorq %%rdx,%%rdx\n" );
+            output( "\txrstor64 (%%r12)\n" );
+            output( "\tmovq %%r11,%%rax\n" );
+        }
         output( "\tmovq -0x30(%%rbp),%%r15\n" );
         output( "\tmovq -0x38(%%rbp),%%r14\n" );
         output( "\tmovq -0x40(%%rbp),%%r13\n" );
@@ -1590,6 +1606,7 @@ static void output_syscall_dispatcher( int count, const char *variant )
         output( "\tmrc p15, 0, r7, c13, c0, 2\n" ); /* NtCurrentTeb() */
         output( "\tadd r7, #0x1d8\n" );  /* arm_thread_data()->syscall_frame */
         output( "\tmrs ip, CPSR\n" );
+        output( "\tbfi ip, lr, #5, #1\n" );  /* set thumb bit */
         output( "\tstr ip, [sp, #4]\n" );
         output( "\tstr sp, [r7]\n" );  /* syscall frame */
         output( "\tldr r5, 6f+4\n");
@@ -1729,6 +1746,7 @@ void output_syscalls( DLLSPEC *spec )
         {
         case CPU_x86_64:
             output_syscall_dispatcher( count, "_xsave" );
+            output_syscall_dispatcher( count, "_xsavec" );
             break;
         default:
             break;
@@ -1800,15 +1818,21 @@ void output_syscalls( DLLSPEC *spec )
             break;
         case CPU_ARM:
             output( "\tpush {r4,lr}\n" );
-            output( "\tldr r4, 3f\n");
-            output( "\tldr ip, 2f\n");
-            if (UsePIC) output( "1:\tadd ip, pc\n" );
+            output( "\tmov r4, #%u\n", i );
+            if (UsePIC)
+            {
+                output( "\tldr ip, 2f\n");
+                output( "1:\tadd ip, pc\n" );
+            }
+            else
+            {
+                output( "\tmovw ip, :lower16:%s\n", asm_name("__wine_syscall_dispatcher") );
+                output( "\tmovt ip, :upper16:%s\n", asm_name("__wine_syscall_dispatcher") );
+            }
             output( "\tldr ip, [ip]\n");
             output( "\tblx ip\n");
             output( "\tpop {r4,pc}\n" );
             if (UsePIC) output( "2:\t.long %s-1b-%u\n", asm_name("__wine_syscall_dispatcher"), thumb_mode ? 4 : 8 );
-            else output( "2:\t.long %s\n", asm_name("__wine_syscall_dispatcher") );
-            output( "3:\t.long %u\n", i );
             break;
         case CPU_ARM64:
             output( "\tstp x29, x30, [sp,#-16]!\n" );

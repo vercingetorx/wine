@@ -1758,9 +1758,9 @@ typedef struct _SYSTEM_CPU_INFORMATION {
 #define CPU_FEATURE_SSE42         0x02000000   /* SSE42 instructions */
 #define CPU_FEATURE_AVX           0x40000000   /* AVX instructions */
 #define CPU_FEATURE_AVX2          0x80000000   /* AVX2 instructions */
-
 #define CPU_FEATURE_PAE           0x00200000
 #define CPU_FEATURE_DAZ           0x00400000
+
 #define CPU_FEATURE_ARM_VFP_32    0x00000001
 #define CPU_FEATURE_ARM_NEON      0x00000002
 #define CPU_FEATURE_ARM_V8_CRC32  0x00000004

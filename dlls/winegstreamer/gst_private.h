@@ -21,26 +21,18 @@
 #ifndef __GST_PRIVATE_INCLUDED__
 #define __GST_PRIVATE_INCLUDED__
 
+#include <assert.h>
 #include <stdarg.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
-#include <gst/gst.h>
-#include <gst/video/video.h>
-#include <gst/audio/audio.h>
 
 #define COBJMACROS
 #define NONAMELESSSTRUCT
 #define NONAMELESSUNION
-#include "windef.h"
-#include "winbase.h"
-#include "wtypes.h"
-#include "winuser.h"
 #include "dshow.h"
-#include "strmif.h"
-#include "mfobjects.h"
+#include "mfidl.h"
 #include "wine/debug.h"
-#include "wine/heap.h"
 #include "wine/strmbase.h"
 
 typedef enum
@@ -150,17 +142,18 @@ struct wg_parser_event
         struct
         {
             /* pts and duration are in 100-nanosecond units. */
-            uint64_t pts, duration;
+            ULONGLONG pts, duration;
             uint32_t size;
             bool discontinuity, preroll, delta, has_pts, has_duration;
         } buffer;
         struct
         {
-            uint64_t position, stop;
-            double rate;
+            ULONGLONG position, stop;
+            DOUBLE rate;
         } segment;
     } u;
 };
+C_ASSERT(sizeof(struct wg_parser_event) == 40);
 
 struct unix_funcs
 {

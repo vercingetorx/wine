@@ -17,19 +17,14 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#include "config.h"
-#include <gst/gst.h>
-
 #include "gst_private.h"
 
 #include "mfapi.h"
 #include "mferror.h"
-#include "mfidl.h"
 #include "ks.h"
 #include "ksmedia.h"
 
 #include "wine/debug.h"
-#include "wine/heap.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(mfplat);
 
@@ -85,7 +80,7 @@ static ULONG WINAPI audio_converter_Release(IMFTransform *iface)
     {
         transform->cs.DebugInfo->Spare[0] = 0;
         DeleteCriticalSection(&transform->cs);
-        heap_free(transform);
+        free(transform);
     }
 
     return refcount;
@@ -575,7 +570,7 @@ HRESULT audio_converter_create(REFIID riid, void **ret)
 
     TRACE("%s %p\n", debugstr_guid(riid), ret);
 
-    if (!(object = heap_alloc_zero(sizeof(*object))))
+    if (!(object = calloc(1, sizeof(*object))))
         return E_OUTOFMEMORY;
 
     object->IMFTransform_iface.lpVtbl = &audio_converter_vtbl;
