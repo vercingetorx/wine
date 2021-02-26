@@ -1438,35 +1438,6 @@ static NTSTATUS process_attach( WINE_MODREF *wm, LPVOID lpReserved )
 }
 
 
-/**********************************************************************
- *	    attach_implicitly_loaded_dlls
- *
- * Attach to the (builtin) dlls that have been implicitly loaded because
- * of a dependency at the Unix level, but not imported at the Win32 level.
- */
-static void attach_implicitly_loaded_dlls( LPVOID reserved )
-{
-    for (;;)
-    {
-        PLIST_ENTRY mark, entry;
-
-        mark = &NtCurrentTeb()->Peb->LdrData->InLoadOrderModuleList;
-        for (entry = mark->Flink; entry != mark; entry = entry->Flink)
-        {
-            LDR_DATA_TABLE_ENTRY *mod = CONTAINING_RECORD(entry, LDR_DATA_TABLE_ENTRY, InLoadOrderLinks);
-
-            if (!(mod->Flags & LDR_IMAGE_IS_DLL)) continue;
-            if (mod->Flags & (LDR_LOAD_IN_PROGRESS | LDR_PROCESS_ATTACHED)) continue;
-            TRACE( "found implicitly loaded %s, attaching to it\n",
-                   debugstr_w(mod->BaseDllName.Buffer));
-            process_attach( CONTAINING_RECORD(mod, WINE_MODREF, ldr), reserved );
-            break;  /* restart the search from the start */
-        }
-        if (entry == mark) break;  /* nothing found */
-    }
-}
-
-
 /*************************************************************************
  *		process_detach
  *
@@ -1937,20 +1908,23 @@ static NTSTATUS build_module( LPCWSTR load_path, const UNICODE_STRING *nt_name, 
 
 
 /*************************************************************************
- *		build_builtin_module
+ *		build_ntdll_module
  *
- * Build the module for a builtin library.
+ * Build the module data for the initially-loaded ntdll.
  */
-static NTSTATUS build_builtin_module( const WCHAR *load_path, const UNICODE_STRING *nt_name,
-                                      void *module, DWORD flags, WINE_MODREF **pwm )
+static void build_ntdll_module(void)
 {
-    NTSTATUS status;
-    SECTION_IMAGE_INFORMATION image_info = { 0 };
+    MEMORY_BASIC_INFORMATION meminfo;
+    UNICODE_STRING nt_name;
+    WINE_MODREF *wm;
 
-    image_info.u.s.WineBuiltin = 1;
-    status = build_module( load_path, nt_name, &module, &image_info, NULL, flags, pwm );
-    if (status && module) unix_funcs->unload_builtin_dll( module );
-    return status;
+    RtlInitUnicodeString( &nt_name, L"\\??\\C:\\windows\\system32\\ntdll.dll" );
+    NtQueryVirtualMemory( GetCurrentProcess(), build_ntdll_module, MemoryBasicInformation,
+                          &meminfo, sizeof(meminfo), NULL );
+    wm = alloc_module( meminfo.AllocationBase, &nt_name, TRUE );
+    assert( wm );
+    wm->ldr.Flags &= ~LDR_DONT_RESOLVE_REFS;
+    if (TRACE_ON(relay)) RELAY_SetupDLL( meminfo.AllocationBase );
 }
 
 
@@ -2348,7 +2322,14 @@ static NTSTATUS load_so_dll( LPCWSTR load_path, const UNICODE_STRING *nt_name,
     }
     else
     {
-        if ((status = build_builtin_module( load_path, &win_name, module, flags, &wm ))) return status;
+        SECTION_IMAGE_INFORMATION image_info = { 0 };
+
+        image_info.u.s.WineBuiltin = 1;
+        if ((status = build_module( load_path, &win_name, &module, &image_info, NULL, flags, pwm )))
+        {
+            if (module) unix_funcs->unload_builtin_dll( module );
+            return status;
+        }
         TRACE_(loaddll)( "Loaded %s at %p: builtin\n", debugstr_us(nt_name), module );
     }
     *pwm = wm;
@@ -3526,7 +3507,6 @@ void WINAPI LdrInitializeThunk( CONTEXT *context, ULONG_PTR unknown2, ULONG_PTR 
                 NtTerminateProcess( GetCurrentProcess(), status );
             }
         }
-        attach_implicitly_loaded_dlls( context );
         unix_funcs->virtual_release_address_space();
         if (wm->ldr.TlsIndex != -1) call_tls_callbacks( wm->ldr.DllBase, DLL_PROCESS_ATTACH );
         if (wm->ldr.Flags & LDR_WINE_INTERNAL) unix_funcs->init_builtin_dll( wm->ldr.DllBase );
@@ -3958,8 +3938,6 @@ static NTSTATUS process_init(void)
     WINE_MODREF *wm;
     NTSTATUS status;
     ANSI_STRING func_name;
-    UNICODE_STRING nt_name;
-    MEMORY_BASIC_INFORMATION meminfo;
     INITIAL_TEB stack;
     TEB *teb = NtCurrentTeb();
     PEB *peb = teb->Peb;
@@ -3991,7 +3969,6 @@ static NTSTATUS process_init(void)
 #endif
 
     init_unix_codepage();
-    init_directories();
     init_user_process_params();
     params = peb->ProcessParameters;
 
@@ -4059,11 +4036,7 @@ static NTSTATUS process_init(void)
     }
 #endif
 
-    RtlInitUnicodeString( &nt_name, L"\\??\\C:\\windows\\system32\\ntdll.dll" );
-    NtQueryVirtualMemory( GetCurrentProcess(), process_init, MemoryBasicInformation,
-                          &meminfo, sizeof(meminfo), NULL );
-    status = build_builtin_module( params->DllPath.Buffer, &nt_name, meminfo.AllocationBase, 0, &wm );
-    assert( !status );
+    build_ntdll_module();
 
     if ((status = load_dll( params->DllPath.Buffer, L"C:\\windows\\system32\\kernel32.dll",
                             NULL, 0, &wm )) != STATUS_SUCCESS)

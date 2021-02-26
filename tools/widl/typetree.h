@@ -96,6 +96,14 @@ static inline type_t *type_get_real_type(const type_t *type)
         return (type_t *)type;
 }
 
+static inline type_t *type_parameterized_type_get_real_type(const type_t *type)
+{
+    if (type->type_type == TYPE_PARAMETERIZED_TYPE)
+        return type_parameterized_type_get_real_type(type->details.parameterized.type);
+    else
+        return (type_t *)type;
+}
+
 static inline enum type_type type_get_type(const type_t *type)
 {
     return type_get_type_detect_alias(type_get_real_type(type));
@@ -401,6 +409,12 @@ static inline const decl_spec_t *type_pointer_get_ref(const type_t *type)
 static inline type_t *type_pointer_get_ref_type(const type_t *type)
 {
     return type_pointer_get_ref(type)->type;
+}
+
+static inline type_t *type_pointer_get_root_type(type_t *type)
+{
+    for (; type && type->type_type == TYPE_POINTER; type = type_pointer_get_ref_type(type)) {}
+    return type;
 }
 
 static inline type_t *type_bitfield_get_field(const type_t *type)
