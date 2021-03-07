@@ -10612,11 +10612,11 @@ static LRESULT LISTVIEW_Notify(LISTVIEW_INFO *infoPtr, NMHDR *lpnmhdr)
  * [I] region : update region
  *
  * RETURN:
- *  TRUE  - frame was painted
- *  FALSE - call default window proc
+ *  0  - frame was painted
  */
-static BOOL LISTVIEW_NCPaint(const LISTVIEW_INFO *infoPtr, HRGN region)
+static LRESULT LISTVIEW_NCPaint(const LISTVIEW_INFO *infoPtr, HRGN region)
 {
+    LONG exstyle = GetWindowLongW (infoPtr->hwndSelf, GWL_EXSTYLE);
     HTHEME theme = GetWindowTheme (infoPtr->hwndSelf);
     HDC dc;
     RECT r;
@@ -10624,7 +10624,7 @@ static BOOL LISTVIEW_NCPaint(const LISTVIEW_INFO *infoPtr, HRGN region)
     int cxEdge = GetSystemMetrics (SM_CXEDGE),
         cyEdge = GetSystemMetrics (SM_CYEDGE);
 
-    if (!theme)
+    if (!theme || !(exstyle & WS_EX_CLIENTEDGE))
        return DefWindowProcW (infoPtr->hwndSelf, WM_NCPAINT, (WPARAM)region, 0);
 
     GetWindowRect(infoPtr->hwndSelf, &r);
@@ -10636,7 +10636,6 @@ static BOOL LISTVIEW_NCPaint(const LISTVIEW_INFO *infoPtr, HRGN region)
     OffsetRect(&r, -r.left, -r.top);
 
     dc = GetDCEx(infoPtr->hwndSelf, region, DCX_WINDOW|DCX_INTERSECTRGN);
-    OffsetRect(&r, -r.left, -r.top);
 
     if (IsThemeBackgroundPartiallyTransparent (theme, 0, 0))
         DrawThemeParentBackground(infoPtr->hwndSelf, dc, &r);
@@ -10645,8 +10644,9 @@ static BOOL LISTVIEW_NCPaint(const LISTVIEW_INFO *infoPtr, HRGN region)
 
     /* Call default proc to get the scrollbars etc. painted */
     DefWindowProcW (infoPtr->hwndSelf, WM_NCPAINT, (WPARAM)cliprgn, 0);
+    DeleteObject(cliprgn);
 
-    return FALSE;
+    return 0;
 }
 
 /***

@@ -3776,8 +3776,6 @@ struct wined3d_device
 
     enum wined3d_feature_level feature_level;
 
-    struct wined3d_state *state;
-
     /* Internal use fields  */
     struct wined3d_device_creation_parameters create_parms;
     HWND focus_window;
@@ -4671,19 +4669,26 @@ struct wined3d_cs_queue
     BYTE data[WINED3D_CS_QUEUE_SIZE];
 };
 
-struct wined3d_cs_ops
+struct wined3d_device_context_ops
 {
-    void *(*require_space)(struct wined3d_cs *cs, size_t size, enum wined3d_cs_queue_id queue_id);
-    void (*submit)(struct wined3d_cs *cs, enum wined3d_cs_queue_id queue_id);
-    void (*finish)(struct wined3d_cs *cs, enum wined3d_cs_queue_id queue_id);
-    void (*push_constants)(struct wined3d_cs *cs, enum wined3d_push_constants p,
+    void *(*require_space)(struct wined3d_device_context *context, size_t size, enum wined3d_cs_queue_id queue_id);
+    void (*submit)(struct wined3d_device_context *context, enum wined3d_cs_queue_id queue_id);
+    void (*finish)(struct wined3d_device_context *context, enum wined3d_cs_queue_id queue_id);
+    void (*push_constants)(struct wined3d_device_context *context, enum wined3d_push_constants p,
             unsigned int start_idx, unsigned int count, const void *constants);
+};
+
+struct wined3d_device_context
+{
+    const struct wined3d_device_context_ops *ops;
+    struct wined3d_device *device;
+    struct wined3d_state *state;
 };
 
 struct wined3d_cs
 {
-    const struct wined3d_cs_ops *ops;
-    struct wined3d_device *device;
+    struct wined3d_device_context c;
+
     struct wined3d_state state;
     HMODULE wined3d_module;
     HANDLE thread;
@@ -4768,8 +4773,6 @@ void wined3d_cs_emit_set_sampler(struct wined3d_cs *cs, enum wined3d_shader_type
 void wined3d_cs_emit_set_sampler_state(struct wined3d_cs *cs, UINT sampler_idx,
         enum wined3d_sampler_state state, DWORD value) DECLSPEC_HIDDEN;
 void wined3d_cs_emit_set_scissor_rects(struct wined3d_cs *cs, unsigned int rect_count, const RECT *rects) DECLSPEC_HIDDEN;
-void wined3d_cs_emit_set_shader(struct wined3d_cs *cs, enum wined3d_shader_type type,
-        struct wined3d_shader *shader) DECLSPEC_HIDDEN;
 void wined3d_cs_emit_set_stream_output(struct wined3d_cs *cs, UINT stream_idx,
         struct wined3d_buffer *buffer, UINT offset) DECLSPEC_HIDDEN;
 void wined3d_cs_emit_set_stream_source(struct wined3d_cs *cs, UINT stream_idx,
@@ -4800,14 +4803,17 @@ HRESULT wined3d_cs_unmap(struct wined3d_cs *cs, struct wined3d_resource *resourc
 
 static inline void wined3d_cs_finish(struct wined3d_cs *cs, enum wined3d_cs_queue_id queue_id)
 {
-    cs->ops->finish(cs, queue_id);
+    cs->c.ops->finish(&cs->c, queue_id);
 }
 
 static inline void wined3d_cs_push_constants(struct wined3d_cs *cs, enum wined3d_push_constants p,
         unsigned int start_idx, unsigned int count, const void *constants)
 {
-    cs->ops->push_constants(cs, p, start_idx, count, constants);
+    cs->c.ops->push_constants(&cs->c, p, start_idx, count, constants);
 }
+
+void wined3d_device_context_emit_set_shader(struct wined3d_device_context *context, enum wined3d_shader_type type,
+        struct wined3d_shader *shader) DECLSPEC_HIDDEN;
 
 static inline void wined3d_resource_wait_idle(struct wined3d_resource *resource)
 {
