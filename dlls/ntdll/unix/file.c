@@ -1963,13 +1963,13 @@ static NTSTATUS get_mountmgr_fs_info( HANDLE handle, int fd, struct mountmgr_uni
     letter = find_dos_device( unix_name );
     free( unix_name );
 
+    memset( drive, 0, sizeof(*drive) );
     if (letter == -1)
     {
         struct stat st;
 
         fstat( fd, &st );
         drive->unix_dev = st.st_rdev ? st.st_rdev : st.st_dev;
-        drive->letter = 0;
     }
     else
         drive->letter = 'a' + letter;
@@ -4108,7 +4108,7 @@ NTSTATUS WINAPI NtQueryInformationFile( HANDLE handle, IO_STATUS_BLOCK *io,
             FILE_ID_INFORMATION *info = ptr;
 
             info->VolumeSerialNumber = 0;
-            if (!(io->u.Status = get_mountmgr_fs_info( handle, fd, &drive, sizeof(drive) )))
+            if (!get_mountmgr_fs_info( handle, fd, &drive, sizeof(drive) ))
                 info->VolumeSerialNumber = drive.serial;
             memset( &info->FileId, 0, sizeof(info->FileId) );
             *(ULONGLONG *)&info->FileId = st.st_ino;

@@ -2629,7 +2629,7 @@ VkRenderPass wined3d_context_vk_get_render_pass(struct wined3d_context_vk *conte
 void wined3d_context_vk_image_barrier(struct wined3d_context_vk *context_vk,
         VkCommandBuffer vk_command_buffer, VkPipelineStageFlags src_stage_mask, VkPipelineStageFlags dst_stage_mask,
         VkAccessFlags src_access_mask, VkAccessFlags dst_access_mask, VkImageLayout old_layout,
-        VkImageLayout new_layout, VkImage image, VkImageAspectFlags aspect_mask) DECLSPEC_HIDDEN;
+        VkImageLayout new_layout, VkImage image, const VkImageSubresourceRange *range) DECLSPEC_HIDDEN;
 HRESULT wined3d_context_vk_init(struct wined3d_context_vk *context_vk,
         struct wined3d_swapchain *swapchain) DECLSPEC_HIDDEN;
 void wined3d_context_vk_poll_command_buffers(struct wined3d_context_vk *context_vk) DECLSPEC_HIDDEN;
@@ -3344,6 +3344,7 @@ struct wined3d_adapter_ops
             const struct wined3d_dispatch_parameters *parameters);
     void (*adapter_clear_uav)(struct wined3d_context *context,
             struct wined3d_unordered_access_view *view, const struct wined3d_uvec4 *clear_value);
+    void (*adapter_generate_mipmap)(struct wined3d_context *context, struct wined3d_shader_resource_view *view);
 };
 
 struct wined3d_output
@@ -4741,16 +4742,10 @@ void wined3d_cs_emit_present(struct wined3d_cs *cs, struct wined3d_swapchain *sw
         const RECT *dst_rect, HWND dst_window_override, unsigned int swap_interval, DWORD flags) DECLSPEC_HIDDEN;
 void wined3d_cs_emit_query_issue(struct wined3d_cs *cs, struct wined3d_query *query, DWORD flags) DECLSPEC_HIDDEN;
 void wined3d_cs_emit_reset_state(struct wined3d_cs *cs) DECLSPEC_HIDDEN;
-void wined3d_cs_emit_set_blend_state(struct wined3d_cs *cs, struct wined3d_blend_state *state,
-        const struct wined3d_color *blend_factor, unsigned int sample_mask) DECLSPEC_HIDDEN;
 void wined3d_cs_emit_set_clip_plane(struct wined3d_cs *cs, UINT plane_idx,
         const struct wined3d_vec4 *plane) DECLSPEC_HIDDEN;
 void wined3d_cs_emit_set_color_key(struct wined3d_cs *cs, struct wined3d_texture *texture,
         WORD flags, const struct wined3d_color_key *color_key) DECLSPEC_HIDDEN;
-void wined3d_cs_emit_set_constant_buffer(struct wined3d_cs *cs, enum wined3d_shader_type type,
-        UINT cb_idx, struct wined3d_buffer *buffer) DECLSPEC_HIDDEN;
-void wined3d_cs_emit_set_depth_stencil_state(struct wined3d_cs *cs,
-        struct wined3d_depth_stencil_state *state, unsigned int stencil_ref) DECLSPEC_HIDDEN;
 void wined3d_cs_emit_set_depth_stencil_view(struct wined3d_cs *cs,
         struct wined3d_rendertarget_view *view) DECLSPEC_HIDDEN;
 void wined3d_cs_emit_set_index_buffer(struct wined3d_cs *cs, struct wined3d_buffer *buffer,
@@ -4760,8 +4755,6 @@ void wined3d_cs_emit_set_light_enable(struct wined3d_cs *cs, unsigned int idx, B
 void wined3d_cs_emit_set_material(struct wined3d_cs *cs, const struct wined3d_material *material) DECLSPEC_HIDDEN;
 void wined3d_cs_emit_set_predication(struct wined3d_cs *cs,
         struct wined3d_query *predicate, BOOL value) DECLSPEC_HIDDEN;
-void wined3d_cs_emit_set_rasterizer_state(struct wined3d_cs *cs,
-        struct wined3d_rasterizer_state *rasterizer_state) DECLSPEC_HIDDEN;
 void wined3d_cs_emit_set_render_state(struct wined3d_cs *cs,
         enum wined3d_render_state state, DWORD value) DECLSPEC_HIDDEN;
 void wined3d_cs_emit_set_rendertarget_view(struct wined3d_cs *cs, unsigned int view_idx,
@@ -4812,6 +4805,15 @@ static inline void wined3d_cs_push_constants(struct wined3d_cs *cs, enum wined3d
     cs->c.ops->push_constants(&cs->c, p, start_idx, count, constants);
 }
 
+void wined3d_device_context_emit_set_blend_state(struct wined3d_device_context *context,
+        struct wined3d_blend_state *state, const struct wined3d_color *blend_factor,
+        unsigned int sample_mask) DECLSPEC_HIDDEN;
+void wined3d_device_context_emit_set_constant_buffer(struct wined3d_device_context *context,
+        enum wined3d_shader_type type, UINT cb_idx, struct wined3d_buffer *buffer) DECLSPEC_HIDDEN;
+void wined3d_device_context_emit_set_depth_stencil_state(struct wined3d_device_context *context,
+        struct wined3d_depth_stencil_state *state, unsigned int stencil_ref) DECLSPEC_HIDDEN;
+void wined3d_device_context_emit_set_rasterizer_state(struct wined3d_device_context *context,
+        struct wined3d_rasterizer_state *rasterizer_state) DECLSPEC_HIDDEN;
 void wined3d_device_context_emit_set_shader(struct wined3d_device_context *context, enum wined3d_shader_type type,
         struct wined3d_shader *shader) DECLSPEC_HIDDEN;
 
@@ -5050,7 +5052,6 @@ struct wined3d_shader_resource_view
 };
 
 void wined3d_shader_resource_view_cleanup(struct wined3d_shader_resource_view *view) DECLSPEC_HIDDEN;
-void shader_resource_view_generate_mipmaps(struct wined3d_shader_resource_view *view) DECLSPEC_HIDDEN;
 
 struct wined3d_shader_resource_view_gl
 {
@@ -5067,6 +5068,8 @@ static inline struct wined3d_shader_resource_view_gl *wined3d_shader_resource_vi
 
 void wined3d_shader_resource_view_gl_bind(struct wined3d_shader_resource_view_gl *view_gl, unsigned int unit,
         struct wined3d_sampler_gl *sampler_gl, struct wined3d_context_gl *context_gl) DECLSPEC_HIDDEN;
+void wined3d_shader_resource_view_gl_generate_mipmap(struct wined3d_shader_resource_view_gl *srv_gl,
+        struct wined3d_context_gl *context_gl) DECLSPEC_HIDDEN;
 HRESULT wined3d_shader_resource_view_gl_init(struct wined3d_shader_resource_view_gl *view_gl,
         const struct wined3d_view_desc *desc, struct wined3d_resource *resource,
         void *parent, const struct wined3d_parent_ops *parent_ops) DECLSPEC_HIDDEN;
@@ -5102,6 +5105,8 @@ static inline void wined3d_shader_resource_view_vk_barrier(struct wined3d_shader
     wined3d_resource_vk_barrier(srv_vk->v.resource, context_vk, bind_mask);
 }
 
+void wined3d_shader_resource_view_vk_generate_mipmap(struct wined3d_shader_resource_view_vk *srv_vk,
+        struct wined3d_context_vk *context_vk) DECLSPEC_HIDDEN;
 HRESULT wined3d_shader_resource_view_vk_init(struct wined3d_shader_resource_view_vk *view_vk,
         const struct wined3d_view_desc *desc, struct wined3d_resource *resource,
         void *parent, const struct wined3d_parent_ops *parent_ops) DECLSPEC_HIDDEN;

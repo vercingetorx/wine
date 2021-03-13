@@ -669,23 +669,22 @@ static bool wined3d_null_image_vk_init(struct wined3d_null_image_vk *image, stru
         return false;
     }
 
-    wined3d_context_vk_image_barrier(context_vk, vk_command_buffer,
-            VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, VK_ACCESS_TRANSFER_WRITE_BIT,
-            VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-            image->vk_image, VK_IMAGE_ASPECT_COLOR_BIT);
-
     range.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
     range.baseMipLevel = 0;
     range.levelCount = 1;
     range.baseArrayLayer = 0;
     range.layerCount = layer_count;
+
+    wined3d_context_vk_image_barrier(context_vk, vk_command_buffer,
+            VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, VK_ACCESS_TRANSFER_WRITE_BIT,
+            VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, image->vk_image, &range);
+
     VK_CALL(vkCmdClearColorImage(vk_command_buffer, image->vk_image,
             VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &colour, 1, &range));
 
     wined3d_context_vk_image_barrier(context_vk, vk_command_buffer,
             VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, 0,
-            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-            image->vk_image, VK_IMAGE_ASPECT_COLOR_BIT);
+            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, image->vk_image, &range);
 
     TRACE("Created NULL image 0x%s, memory 0x%s.\n",
             wine_dbgstr_longlong(image->vk_image), wine_dbgstr_longlong(image->vk_memory));
@@ -1740,25 +1739,10 @@ static void resolve_depth_buffer(struct wined3d_device *device)
 void CDECL wined3d_device_set_blend_state(struct wined3d_device *device,
         struct wined3d_blend_state *blend_state, const struct wined3d_color *blend_factor, unsigned int sample_mask)
 {
-    struct wined3d_state *state = device->cs->c.state;
-    struct wined3d_blend_state *prev;
-
     TRACE("device %p, blend_state %p, blend_factor %s, sample_mask %#x.\n",
             device, blend_state, debug_color(blend_factor), sample_mask);
 
-    prev = state->blend_state;
-    if (prev == blend_state && !memcmp(blend_factor, &state->blend_factor, sizeof(*blend_factor))
-            && sample_mask == state->sample_mask)
-        return;
-
-    if (blend_state)
-        wined3d_blend_state_incref(blend_state);
-    state->blend_state = blend_state;
-    state->blend_factor = *blend_factor;
-    state->sample_mask = sample_mask;
-    wined3d_cs_emit_set_blend_state(device->cs, blend_state, blend_factor, sample_mask);
-    if (prev)
-        wined3d_blend_state_decref(prev);
+    wined3d_device_context_set_blend_state(&device->cs->c, blend_state, blend_factor, sample_mask);
 }
 
 struct wined3d_blend_state * CDECL wined3d_device_get_blend_state(const struct wined3d_device *device,
@@ -1776,22 +1760,9 @@ struct wined3d_blend_state * CDECL wined3d_device_get_blend_state(const struct w
 void CDECL wined3d_device_set_depth_stencil_state(struct wined3d_device *device,
         struct wined3d_depth_stencil_state *depth_stencil_state, unsigned int stencil_ref)
 {
-    struct wined3d_state *state = device->cs->c.state;
-    struct wined3d_depth_stencil_state *prev;
-
     TRACE("device %p, depth_stencil_state %p, stencil_ref %u.\n", device, depth_stencil_state, stencil_ref);
 
-    prev = state->depth_stencil_state;
-    if (prev == depth_stencil_state && state->stencil_ref == stencil_ref)
-        return;
-
-    if (depth_stencil_state)
-        wined3d_depth_stencil_state_incref(depth_stencil_state);
-    state->depth_stencil_state = depth_stencil_state;
-    state->stencil_ref = stencil_ref;
-    wined3d_cs_emit_set_depth_stencil_state(device->cs, depth_stencil_state, stencil_ref);
-    if (prev)
-        wined3d_depth_stencil_state_decref(prev);
+    wined3d_device_context_set_depth_stencil_state(&device->cs->c, depth_stencil_state, stencil_ref);
 }
 
 struct wined3d_depth_stencil_state * CDECL wined3d_device_get_depth_stencil_state(const struct wined3d_device *device,
@@ -1808,21 +1779,9 @@ struct wined3d_depth_stencil_state * CDECL wined3d_device_get_depth_stencil_stat
 void CDECL wined3d_device_set_rasterizer_state(struct wined3d_device *device,
         struct wined3d_rasterizer_state *rasterizer_state)
 {
-    struct wined3d_state *state = device->cs->c.state;
-    struct wined3d_rasterizer_state *prev;
-
     TRACE("device %p, rasterizer_state %p.\n", device, rasterizer_state);
 
-    prev = state->rasterizer_state;
-    if (prev == rasterizer_state)
-        return;
-
-    if (rasterizer_state)
-        wined3d_rasterizer_state_incref(rasterizer_state);
-    state->rasterizer_state = rasterizer_state;
-    wined3d_cs_emit_set_rasterizer_state(device->cs, rasterizer_state);
-    if (prev)
-        wined3d_rasterizer_state_decref(prev);
+    wined3d_device_context_set_rasterizer_state(&device->cs->c, rasterizer_state);
 }
 
 struct wined3d_rasterizer_state * CDECL wined3d_device_get_rasterizer_state(struct wined3d_device *device)
@@ -1926,6 +1885,7 @@ void CDECL wined3d_device_get_scissor_rects(const struct wined3d_device *device,
 
 void CDECL wined3d_device_set_state(struct wined3d_device *device, struct wined3d_state *state)
 {
+    struct wined3d_device_context *context = &device->cs->c;
     const struct wined3d_light_info *light;
     unsigned int i, j;
 
@@ -1959,11 +1919,9 @@ void CDECL wined3d_device_set_state(struct wined3d_device *device, struct wined3
 
     for (i = 0; i < WINED3D_SHADER_TYPE_COUNT; ++i)
     {
-        wined3d_device_context_emit_set_shader(&device->cs->c, i, state->shader[i]);
+        wined3d_device_context_emit_set_shader(context, i, state->shader[i]);
         for (j = 0; j < MAX_CONSTANT_BUFFERS; ++j)
-        {
-            wined3d_cs_emit_set_constant_buffer(device->cs, i, j, state->cb[i][j]);
-        }
+            wined3d_device_context_emit_set_constant_buffer(context, i, j, state->cb[i][j]);
         for (j = 0; j < MAX_SAMPLER_OBJECTS; ++j)
         {
             wined3d_cs_emit_set_sampler(device->cs, i, j, state->sampler[i][j]);
@@ -2042,9 +2000,9 @@ void CDECL wined3d_device_set_state(struct wined3d_device *device, struct wined3
         wined3d_cs_emit_set_render_state(device->cs, i, state->render_states[i]);
     }
 
-    wined3d_cs_emit_set_blend_state(device->cs, state->blend_state, &state->blend_factor, state->sample_mask);
-    wined3d_cs_emit_set_depth_stencil_state(device->cs, state->depth_stencil_state, state->stencil_ref);
-    wined3d_cs_emit_set_rasterizer_state(device->cs, state->rasterizer_state);
+    wined3d_device_context_emit_set_blend_state(context, state->blend_state, &state->blend_factor, state->sample_mask);
+    wined3d_device_context_emit_set_depth_stencil_state(context, state->depth_stencil_state, state->stencil_ref);
+    wined3d_device_context_emit_set_rasterizer_state(context, state->rasterizer_state);
 }
 
 struct wined3d_state * CDECL wined3d_device_get_state(struct wined3d_device *device)
@@ -2052,6 +2010,13 @@ struct wined3d_state * CDECL wined3d_device_get_state(struct wined3d_device *dev
     TRACE("device %p.\n", device);
 
     return device->cs->c.state;
+}
+
+struct wined3d_device_context * CDECL wined3d_device_get_immediate_context(struct wined3d_device *device)
+{
+    TRACE("device %p.\n", device);
+
+    return &device->cs->c;
 }
 
 void CDECL wined3d_device_set_vertex_declaration(struct wined3d_device *device,
@@ -2101,6 +2066,97 @@ void CDECL wined3d_device_context_set_shader(struct wined3d_device_context *cont
         wined3d_shader_decref(prev);
 }
 
+void CDECL wined3d_device_context_set_constant_buffer(struct wined3d_device_context *context,
+        enum wined3d_shader_type type, unsigned int idx, struct wined3d_buffer *buffer)
+{
+    struct wined3d_state *state = context->state;
+    struct wined3d_buffer *prev;
+
+    TRACE("context %p, type %#x, idx %u, buffer %p.\n", context, type, idx, buffer);
+
+    if (idx >= MAX_CONSTANT_BUFFERS)
+    {
+        WARN("Invalid constant buffer index %u.\n", idx);
+        return;
+    }
+
+    prev = state->cb[type][idx];
+    if (buffer == prev)
+        return;
+
+    if (buffer)
+        wined3d_buffer_incref(buffer);
+    state->cb[type][idx] = buffer;
+    wined3d_device_context_emit_set_constant_buffer(context, type, idx, buffer);
+    if (prev)
+        wined3d_buffer_decref(prev);
+}
+
+void CDECL wined3d_device_context_set_blend_state(struct wined3d_device_context *context,
+        struct wined3d_blend_state *blend_state, const struct wined3d_color *blend_factor, unsigned int sample_mask)
+{
+    struct wined3d_state *state = context->state;
+    struct wined3d_blend_state *prev;
+
+    TRACE("context %p, blend_state %p, blend_factor %p, sample_mask %#x.\n",
+            context, blend_state, blend_factor, sample_mask);
+
+    prev = state->blend_state;
+    if (prev == blend_state && !memcmp(blend_factor, &state->blend_factor, sizeof(*blend_factor))
+            && sample_mask == state->sample_mask)
+        return;
+
+    if (blend_state)
+        wined3d_blend_state_incref(blend_state);
+    state->blend_state = blend_state;
+    state->blend_factor = *blend_factor;
+    state->sample_mask = sample_mask;
+    wined3d_device_context_emit_set_blend_state(context, blend_state, blend_factor, sample_mask);
+    if (prev)
+        wined3d_blend_state_decref(prev);
+}
+
+void CDECL wined3d_device_context_set_depth_stencil_state(struct wined3d_device_context *context,
+        struct wined3d_depth_stencil_state *depth_stencil_state, unsigned int stencil_ref)
+{
+    struct wined3d_state *state = context->state;
+    struct wined3d_depth_stencil_state *prev;
+
+    TRACE("context %p, depth_stencil_state %p, stencil_ref %u.\n", context, depth_stencil_state, stencil_ref);
+
+    prev = state->depth_stencil_state;
+    if (prev == depth_stencil_state && state->stencil_ref == stencil_ref)
+        return;
+
+    if (depth_stencil_state)
+        wined3d_depth_stencil_state_incref(depth_stencil_state);
+    state->depth_stencil_state = depth_stencil_state;
+    state->stencil_ref = stencil_ref;
+    wined3d_device_context_emit_set_depth_stencil_state(context, depth_stencil_state, stencil_ref);
+    if (prev)
+        wined3d_depth_stencil_state_decref(prev);
+}
+
+void CDECL wined3d_device_context_set_rasterizer_state(struct wined3d_device_context *context,
+        struct wined3d_rasterizer_state *rasterizer_state)
+{
+    struct wined3d_state *state = context->state;
+    struct wined3d_rasterizer_state *prev;
+
+    TRACE("context %p, rasterizer_state %p.\n", context, rasterizer_state);
+
+    prev = state->rasterizer_state;
+    if (prev == rasterizer_state)
+        return;
+
+    if (rasterizer_state)
+        wined3d_rasterizer_state_incref(rasterizer_state);
+    state->rasterizer_state = rasterizer_state;
+    wined3d_device_context_emit_set_rasterizer_state(context, rasterizer_state);
+    if (prev)
+        wined3d_rasterizer_state_decref(prev);
+}
+
 void CDECL wined3d_device_set_vertex_shader(struct wined3d_device *device, struct wined3d_shader *shader)
 {
     TRACE("device %p, shader %p.\n", device, shader);
@@ -2118,27 +2174,9 @@ struct wined3d_shader * CDECL wined3d_device_get_vertex_shader(const struct wine
 void CDECL wined3d_device_set_constant_buffer(struct wined3d_device *device,
         enum wined3d_shader_type type, UINT idx, struct wined3d_buffer *buffer)
 {
-    struct wined3d_state *state = device->cs->c.state;
-    struct wined3d_buffer *prev;
-
     TRACE("device %p, type %#x, idx %u, buffer %p.\n", device, type, idx, buffer);
 
-    if (idx >= MAX_CONSTANT_BUFFERS)
-    {
-        WARN("Invalid constant buffer index %u.\n", idx);
-        return;
-    }
-
-    prev = state->cb[type][idx];
-    if (buffer == prev)
-        return;
-
-    if (buffer)
-        wined3d_buffer_incref(buffer);
-    state->cb[type][idx] = buffer;
-    wined3d_cs_emit_set_constant_buffer(device->cs, type, idx, buffer);
-    if (prev)
-        wined3d_buffer_decref(prev);
+    return wined3d_device_context_set_constant_buffer(&device->cs->c, type, idx, buffer);
 }
 
 struct wined3d_buffer * CDECL wined3d_device_get_constant_buffer(const struct wined3d_device *device,

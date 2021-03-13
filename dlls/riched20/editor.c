@@ -2744,11 +2744,8 @@ ME_KeyDown(ME_TextEditor *editor, WORD nKey)
   return FALSE;
 }
 
-static LRESULT ME_Char(ME_TextEditor *editor, WPARAM charCode,
-                       LPARAM flags, BOOL unicode)
+static LRESULT handle_wm_char( ME_TextEditor *editor, WCHAR wstr, LPARAM flags )
 {
-  WCHAR wstr;
-
   if (editor->bMouseCaptured)
     return 0;
 
@@ -2756,14 +2753,6 @@ static LRESULT ME_Char(ME_TextEditor *editor, WPARAM charCode,
   {
     MessageBeep(MB_ICONERROR);
     return 0; /* FIXME really 0 ? */
-  }
-
-  if (unicode)
-      wstr = (WCHAR)charCode;
-  else
-  {
-      CHAR charA = charCode;
-      MultiByteToWideChar(CP_ACP, 0, &charA, 1, &wstr, 1);
   }
 
   if (editor->bEmulateVersion10 && wstr == '\r')
@@ -3894,14 +3883,11 @@ LRESULT ME_HandleMessage(ME_TextEditor *editor, UINT msg, WPARAM wParam,
   }
   case EM_REPLACESEL:
   {
-    int len = 0;
-    LONG codepage = unicode ? CP_UNICODE : CP_ACP;
-    LPWSTR wszText = ME_ToUnicode(codepage, (void *)lParam, &len);
+    WCHAR *text = (WCHAR *)lParam;
+    int len = text ? lstrlenW( text ) : 0;
 
-    TRACE("EM_REPLACESEL - %s\n", debugstr_w(wszText));
-
-    ME_ReplaceSel(editor, !!wParam, wszText, len);
-    ME_EndToUnicode(codepage, wszText);
+    TRACE( "EM_REPLACESEL - %s\n", debugstr_w( text ) );
+    ME_ReplaceSel( editor, !!wParam, text, len );
     return len;
   }
   case EM_SCROLLCARET:
@@ -3953,7 +3939,7 @@ LRESULT ME_HandleMessage(ME_TextEditor *editor, UINT msg, WPARAM wParam,
         ME_StreamInRTFString(editor, 0, (char *)lParam);
       }
       else
-        ME_SetText(editor, (void*)lParam, unicode);
+        ME_SetText( editor, (void*)lParam, TRUE );
     }
     else
       TRACE("WM_SETTEXT - NULL\n");
@@ -3983,10 +3969,8 @@ LRESULT ME_HandleMessage(ME_TextEditor *editor, UINT msg, WPARAM wParam,
   case WM_GETTEXTLENGTH:
   {
     GETTEXTLENGTHEX how;
-
-    /* CR/LF conversion required in 2.0 mode, verbatim in 1.0 mode */
     how.flags = GTL_CLOSE | (editor->bEmulateVersion10 ? 0 : GTL_USECRLF) | GTL_NUMCHARS;
-    how.codepage = unicode ? CP_UNICODE : CP_ACP;
+    how.codepage = CP_UNICODE;
     return ME_GetTextLengthEx(editor, &how);
   }
   case EM_GETTEXTLENGTHEX:
@@ -3994,9 +3978,9 @@ LRESULT ME_HandleMessage(ME_TextEditor *editor, UINT msg, WPARAM wParam,
   case WM_GETTEXT:
   {
     GETTEXTEX ex;
-    ex.cb = wParam * (unicode ? sizeof(WCHAR) : sizeof(CHAR));
+    ex.cb = wParam * sizeof(WCHAR);
     ex.flags = GT_USECRLF;
-    ex.codepage = unicode ? CP_UNICODE : CP_ACP;
+    ex.codepage = CP_UNICODE;
     ex.lpDefaultChar = NULL;
     ex.lpUsedDefChar = NULL;
     return ME_GetTextEx(editor, &ex, lParam);
@@ -4030,15 +4014,14 @@ LRESULT ME_HandleMessage(ME_TextEditor *editor, UINT msg, WPARAM wParam,
     int nEnd = rng->chrg.cpMax;
     int textlength = ME_GetTextLength(editor);
 
-    TRACE("EM_GETTEXTRANGE min=%d max=%d unicode=%d textlength=%d\n",
-          rng->chrg.cpMin, rng->chrg.cpMax, unicode, textlength);
+    TRACE( "EM_GETTEXTRANGE min = %d max = %d textlength = %d\n", rng->chrg.cpMin, rng->chrg.cpMax, textlength );
     if (nStart < 0) return 0;
     if ((nStart == 0 && nEnd == -1) || nEnd > textlength)
       nEnd = textlength;
     if (nStart >= nEnd) return 0;
 
     cursor_from_char_ofs( editor, nStart, &start );
-    return ME_GetTextRange(editor, rng->lpstrText, &start, nEnd - nStart, unicode);
+    return ME_GetTextRange( editor, rng->lpstrText, &start, nEnd - nStart, TRUE );
   }
   case EM_GETLINE:
   {
@@ -4185,46 +4168,12 @@ LRESULT ME_HandleMessage(ME_TextEditor *editor, UINT msg, WPARAM wParam,
     return editor->nTextLimit;
   }
   case EM_FINDTEXT:
-  {
-    LRESULT r;
-    if(!unicode){
-      FINDTEXTA *ft = (FINDTEXTA *)lParam;
-      int nChars = MultiByteToWideChar(CP_ACP, 0, ft->lpstrText, -1, NULL, 0);
-      WCHAR *tmp;
-
-      if ((tmp = heap_alloc(nChars * sizeof(*tmp))) != NULL)
-        MultiByteToWideChar(CP_ACP, 0, ft->lpstrText, -1, tmp, nChars);
-      r = ME_FindText(editor, wParam, &ft->chrg, tmp, NULL);
-      heap_free(tmp);
-    }else{
-      FINDTEXTW *ft = (FINDTEXTW *)lParam;
-      r = ME_FindText(editor, wParam, &ft->chrg, ft->lpstrText, NULL);
-    }
-    return r;
-  }
-  case EM_FINDTEXTEX:
-  {
-    LRESULT r;
-    if(!unicode){
-      FINDTEXTEXA *ex = (FINDTEXTEXA *)lParam;
-      int nChars = MultiByteToWideChar(CP_ACP, 0, ex->lpstrText, -1, NULL, 0);
-      WCHAR *tmp;
-
-      if ((tmp = heap_alloc(nChars * sizeof(*tmp))) != NULL)
-        MultiByteToWideChar(CP_ACP, 0, ex->lpstrText, -1, tmp, nChars);
-      r = ME_FindText(editor, wParam, &ex->chrg, tmp, &ex->chrgText);
-      heap_free(tmp);
-    }else{
-      FINDTEXTEXW *ex = (FINDTEXTEXW *)lParam;
-      r = ME_FindText(editor, wParam, &ex->chrg, ex->lpstrText, &ex->chrgText);
-    }
-    return r;
-  }
   case EM_FINDTEXTW:
   {
     FINDTEXTW *ft = (FINDTEXTW *)lParam;
     return ME_FindText(editor, wParam, &ft->chrg, ft->lpstrText, NULL);
   }
+  case EM_FINDTEXTEX:
   case EM_FINDTEXTEXW:
   {
     FINDTEXTEXW *ex = (FINDTEXTEXW *)lParam;
@@ -4277,9 +4226,6 @@ LRESULT ME_HandleMessage(ME_TextEditor *editor, UINT msg, WPARAM wParam,
   }
   case WM_CREATE:
     return ME_WmCreate(editor, lParam, unicode);
-  case WM_DESTROY:
-    ME_DestroyEditor(editor);
-    return 0;
   case WM_SETCURSOR:
   {
     POINT cursor_pos;
@@ -4382,7 +4328,7 @@ LRESULT ME_HandleMessage(ME_TextEditor *editor, UINT msg, WPARAM wParam,
     if ((editor->nEventMask & ENM_KEYEVENTS) &&
         !ME_FilterEvent(editor, msg, &wParam, &lParam))
       return 0;
-    return ME_Char(editor, wParam, lParam, unicode);
+    return handle_wm_char( editor, wParam, lParam );
   case WM_UNICHAR:
     if (unicode)
     {
@@ -4392,11 +4338,11 @@ LRESULT ME_HandleMessage(ME_TextEditor *editor, UINT msg, WPARAM wParam,
             if(wParam > 0xffff) /* convert to surrogates */
             {
                 wParam -= 0x10000;
-                ME_Char(editor, (wParam >> 10) + 0xd800, 0, TRUE);
-                ME_Char(editor, (wParam & 0x03ff) + 0xdc00, 0, TRUE);
-            } else {
-              ME_Char(editor, wParam, 0, TRUE);
+                handle_wm_char( editor, (wParam >> 10) + 0xd800, 0 );
+                handle_wm_char( editor, (wParam & 0x03ff) + 0xdc00, 0 );
             }
+            else
+                handle_wm_char( editor, wParam, 0 );
         }
         return 0;
     }

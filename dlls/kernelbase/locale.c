@@ -159,6 +159,7 @@ static const struct { UINT cp; const WCHAR *name; } codepage_names[] =
     { 20127, L"US-ASCII (7bit)" },
     { 20866, L"Russian KOI8" },
     { 20932, L"EUC-JP" },
+    { 20949, L"Korean Wansung" },
     { 21866, L"Ukrainian KOI8" },
     { 28591, L"ISO 8859-1 Latin 1" },
     { 28592, L"ISO 8859-2 Latin 2 (East European)" },
@@ -533,6 +534,7 @@ static const struct geoinfo geoinfodata[] =
     { 161832015, L"BL", L"BLM", 10039880, 652 }, /* Saint Barthélemy */
     { 161832256, L"UM", L"UMI", 27114, 581 }, /* U.S. Minor Outlying Islands */
     { 161832257, L"XX", L"XX", 10026358, 419, LOCATION_REGION }, /* Latin America and the Caribbean */
+    { 161832258, L"BG", L"BES", 10039880, 535 }, /* Bonaire, Sint Eustatius and Saba */
 };
 
 /* NLS normalization file */
@@ -5740,6 +5742,12 @@ BOOL WINAPI DECLSPEC_HOTPATCH SetUserGeoID( GEOID id )
         const WCHAR *name = geoinfo->kind == LOCATION_NATION ? L"Nation" : L"Region";
         swprintf( bufferW, ARRAY_SIZE(bufferW), L"%u", geoinfo->id );
         RegSetValueExW( hkey, name, 0, REG_SZ, (BYTE *)bufferW, (lstrlenW(bufferW) + 1) * sizeof(WCHAR) );
+
+        if (geoinfo->kind == LOCATION_NATION || geoinfo->kind == LOCATION_BOTH)
+            lstrcpyW( bufferW, geoinfo->iso2W );
+        else
+            swprintf( bufferW, ARRAY_SIZE(bufferW), L"%03u", geoinfo->uncode );
+        RegSetValueExW( hkey, L"Name", 0, REG_SZ, (BYTE *)bufferW, (lstrlenW(bufferW) + 1) * sizeof(WCHAR) );
         RegCloseKey( hkey );
     }
     return TRUE;
@@ -5876,4 +5884,94 @@ INT WINAPI DECLSPEC_HOTPATCH WideCharToMultiByte( UINT codepage, DWORD flags, LP
     }
     TRACE( "cp %d %s -> %s, ret = %d\n", codepage, debugstr_wn(src, srclen), debugstr_an(dst, ret), ret );
     return ret;
+}
+
+
+/***********************************************************************
+ *	GetUserDefaultGeoName  (kernelbase.@)
+ */
+INT WINAPI GetUserDefaultGeoName(LPWSTR geo_name, int count)
+{
+    const struct geoinfo *geoinfo;
+    WCHAR buffer[32];
+    LSTATUS status;
+    DWORD size;
+    HKEY key;
+
+    TRACE( "geo_name %p, count %d.\n", geo_name, count );
+
+    if (count && !geo_name)
+    {
+        SetLastError( ERROR_INVALID_PARAMETER );
+        return 0;
+    }
+    if (!(status = RegOpenKeyExW( intl_key, L"Geo", 0, KEY_ALL_ACCESS, &key )))
+    {
+        size = sizeof(buffer);
+        status = RegQueryValueExW( key, L"Name", NULL, NULL, (BYTE *)buffer, &size );
+        RegCloseKey( key );
+    }
+    if (status)
+    {
+        if ((geoinfo = get_geoinfo_ptr( GetUserGeoID( GEOCLASS_NATION ))) && geoinfo->id != 39070)
+            lstrcpyW( buffer, geoinfo->iso2W );
+        else
+            lstrcpyW( buffer, L"001" );
+    }
+    size = lstrlenW( buffer ) + 1;
+    if (count < size)
+    {
+        if (!count)
+            return size;
+        SetLastError( ERROR_INSUFFICIENT_BUFFER );
+        return 0;
+    }
+    lstrcpyW( geo_name, buffer );
+    return size;
+}
+
+
+/***********************************************************************
+ *	SetUserDefaultGeoName  (kernelbase.@)
+ */
+BOOL WINAPI SetUserGeoName(PWSTR geo_name)
+{
+    unsigned int i;
+    WCHAR *endptr;
+    int uncode;
+
+    TRACE( "geo_name %s.\n", debugstr_w( geo_name ));
+
+    if (!geo_name)
+    {
+        SetLastError( ERROR_INVALID_PARAMETER );
+        return FALSE;
+    }
+
+    if (lstrlenW( geo_name ) == 3)
+    {
+        uncode = wcstol( geo_name, &endptr, 10 );
+        if (!uncode || endptr != geo_name + 3)
+        {
+            SetLastError( ERROR_INVALID_PARAMETER );
+            return FALSE;
+        }
+        for (i = 0; i < ARRAY_SIZE(geoinfodata); ++i)
+            if (geoinfodata[i].uncode == uncode)
+                break;
+    }
+    else
+    {
+        if (!lstrcmpiW( geo_name, L"XX" ))
+            return SetUserGeoID( 39070 );
+        for (i = 0; i < ARRAY_SIZE(geoinfodata); ++i)
+            if (!lstrcmpiW( geo_name, geoinfodata[i].iso2W ))
+                break;
+    }
+    if (i == ARRAY_SIZE(geoinfodata))
+    {
+        SetLastError( ERROR_INVALID_PARAMETER );
+        return FALSE;
+    }
+    return SetUserGeoID( geoinfodata[i].id );
 }
