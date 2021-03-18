@@ -29,12 +29,16 @@
 
 #ifdef __i386__
 static const enum cpu_type client_cpu = CPU_x86;
+static const WORD current_machine = IMAGE_FILE_MACHINE_I386;
 #elif defined(__x86_64__)
 static const enum cpu_type client_cpu = CPU_x86_64;
+static const WORD current_machine = IMAGE_FILE_MACHINE_AMD64;
 #elif defined(__arm__)
 static const enum cpu_type client_cpu = CPU_ARM;
+static const WORD current_machine = IMAGE_FILE_MACHINE_ARMNT;
 #elif defined(__aarch64__)
 static const enum cpu_type client_cpu = CPU_ARM64;
+static const WORD current_machine = IMAGE_FILE_MACHINE_ARM64;
 #endif
 
 struct debug_info
@@ -173,8 +177,9 @@ extern void *anon_mmap_alloc( size_t size, int prot ) DECLSPEC_HIDDEN;
 extern void virtual_init(void) DECLSPEC_HIDDEN;
 extern ULONG_PTR get_system_affinity_mask(void) DECLSPEC_HIDDEN;
 extern void virtual_get_system_info( SYSTEM_BASIC_INFORMATION *info ) DECLSPEC_HIDDEN;
+extern NTSTATUS virtual_map_builtin_module( HANDLE mapping, void **module ) DECLSPEC_HIDDEN;
 extern NTSTATUS virtual_create_builtin_view( void *module, const UNICODE_STRING *nt_name,
-                                             pe_image_info_t *info ) DECLSPEC_HIDDEN;
+                                             pe_image_info_t *info, void *so_handle ) DECLSPEC_HIDDEN;
 extern TEB *virtual_alloc_first_teb(void) DECLSPEC_HIDDEN;
 extern NTSTATUS virtual_alloc_teb( TEB **ret_teb ) DECLSPEC_HIDDEN;
 extern void virtual_free_teb( TEB *teb ) DECLSPEC_HIDDEN;
@@ -196,6 +201,9 @@ extern void virtual_set_force_exec( BOOL enable ) DECLSPEC_HIDDEN;
 extern void virtual_set_large_address_space(void) DECLSPEC_HIDDEN;
 extern void virtual_fill_image_information( const pe_image_info_t *pe_info,
                                             SECTION_IMAGE_INFORMATION *info ) DECLSPEC_HIDDEN;
+extern void *get_builtin_so_handle( void *module ) DECLSPEC_HIDDEN;
+extern NTSTATUS set_builtin_unix_handle( void *module, void *handle, void *entry ) DECLSPEC_HIDDEN;
+extern NTSTATUS CDECL init_unix_lib( void *module, DWORD reason, const void *ptr_in, void *ptr_out ) DECLSPEC_HIDDEN;
 
 extern NTSTATUS get_thread_ldt_entry( HANDLE handle, void *data, ULONG len, ULONG *ret_len ) DECLSPEC_HIDDEN;
 extern BOOL get_thread_times( int unix_pid, int unix_tid, LARGE_INTEGER *kernel_time,
@@ -379,6 +387,8 @@ static inline void context_init_xstate( CONTEXT *context, void *xstate_buffer )
 }
 #endif
 
+extern enum loadorder CDECL get_load_order( const WCHAR *app_name, const UNICODE_STRING *nt_name ) DECLSPEC_HIDDEN;
+
 static inline size_t ntdll_wcslen( const WCHAR *str )
 {
     const WCHAR *s = str;
@@ -431,6 +441,20 @@ static inline WCHAR *ntdll_wcspbrk( const WCHAR *str, const WCHAR *accept )
     return NULL;
 }
 
+static inline SIZE_T ntdll_wcsspn( const WCHAR *str, const WCHAR *accept )
+{
+    const WCHAR *ptr;
+    for (ptr = str; *ptr; ptr++) if (!ntdll_wcschr( accept, *ptr )) break;
+    return ptr - str;
+}
+
+static inline SIZE_T ntdll_wcscspn( const WCHAR *str, const WCHAR *reject )
+{
+    const WCHAR *ptr;
+    for (ptr = str; *ptr; ptr++) if (ntdll_wcschr( reject, *ptr )) break;
+    return ptr - str;
+}
+
 static inline WCHAR ntdll_towupper( WCHAR ch )
 {
     return ch + uctable[uctable[uctable[ch >> 8] + ((ch >> 4) & 0x0f)] + (ch & 0x0f)];
@@ -475,6 +499,8 @@ static inline int ntdll_wcsnicmp( const WCHAR *str1, const WCHAR *str2, int n )
 #define wcschr(str,ch)     ntdll_wcschr(str,ch)
 #define wcsrchr(str,ch)    ntdll_wcsrchr(str,ch)
 #define wcspbrk(str,ac)    ntdll_wcspbrk(str,ac)
+#define wcsspn(str,ac)     ntdll_wcsspn(str,ac)
+#define wcscspn(str,rej)   ntdll_wcscspn(str,rej)
 #define wcsicmp(s1, s2)    ntdll_wcsicmp(s1,s2)
 #define wcsnicmp(s1, s2,n) ntdll_wcsnicmp(s1,s2,n)
 #define wcsupr(str)        ntdll_wcsupr(str)

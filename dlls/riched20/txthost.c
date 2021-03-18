@@ -38,15 +38,51 @@ struct host
     LONG ref;
     ITextServices *text_srv;
     ME_TextEditor *editor; /* to be removed */
-    HWND window;
-    BOOL emulate_10;
+    HWND window, parent;
+    unsigned int emulate_10 : 1;
+    unsigned int dialog_mode : 1;
+    unsigned int want_return : 1;
+    unsigned int sel_bar : 1;
+    unsigned int client_edge : 1;
+    unsigned int use_set_rect : 1;
     PARAFORMAT2 para_fmt;
+    DWORD props, scrollbars, event_mask;
+    RECT client_rect, set_rect;
 };
 
 static const ITextHostVtbl textHostVtbl;
 
 static BOOL listbox_registered;
 static BOOL combobox_registered;
+
+static void host_init_props( struct host *host )
+{
+    DWORD style;
+
+    style = GetWindowLongW( host->window, GWL_STYLE );
+
+    host->scrollbars = style & (WS_VSCROLL | WS_HSCROLL | ES_AUTOVSCROLL |
+                                ES_AUTOHSCROLL | ES_DISABLENOSCROLL);
+    if (style & WS_VSCROLL) host->scrollbars |= ES_AUTOVSCROLL;
+    if ((style & WS_HSCROLL) && !host->emulate_10) host->scrollbars |= ES_AUTOHSCROLL;
+
+    host->props = TXTBIT_RICHTEXT | TXTBIT_ALLOWBEEP;
+    if (style & ES_MULTILINE)     host->props |= TXTBIT_MULTILINE;
+    if (style & ES_READONLY)      host->props |= TXTBIT_READONLY;
+    if (style & ES_PASSWORD)      host->props |= TXTBIT_USEPASSWORD;
+    if (!(style & ES_NOHIDESEL))  host->props |= TXTBIT_HIDESELECTION;
+    if (style & ES_SAVESEL)       host->props |= TXTBIT_SAVESELECTION;
+    if (style & ES_VERTICAL)      host->props |= TXTBIT_VERTICAL;
+    if (style & ES_NOOLEDRAGDROP) host->props |= TXTBIT_DISABLEDRAG;
+
+    if (!(host->scrollbars & ES_AUTOHSCROLL)) host->props |= TXTBIT_WORDWRAP;
+
+    host->sel_bar     = !!(style & ES_SELECTIONBAR);
+    host->want_return = !!(style & ES_WANTRETURN);
+
+    style = GetWindowLongW( host->window, GWL_EXSTYLE );
+    host->client_edge = !!(style & WS_EX_CLIENTEDGE);
+}
 
 struct host *host_create( HWND hwnd, CREATESTRUCTW *cs, BOOL emulate_10 )
 {
@@ -58,7 +94,9 @@ struct host *host_create( HWND hwnd, CREATESTRUCTW *cs, BOOL emulate_10 )
     texthost->ITextHost_iface.lpVtbl = &textHostVtbl;
     texthost->ref = 1;
     texthost->window = hwnd;
+    texthost->parent = cs->hwndParent;
     texthost->emulate_10 = emulate_10;
+    texthost->dialog_mode = 0;
     memset( &texthost->para_fmt, 0, sizeof(texthost->para_fmt) );
     texthost->para_fmt.cbSize = sizeof(texthost->para_fmt);
     texthost->para_fmt.dwMask = PFM_ALIGNMENT;
@@ -68,6 +106,11 @@ struct host *host_create( HWND hwnd, CREATESTRUCTW *cs, BOOL emulate_10 )
     if (cs->style & ES_CENTER)
         texthost->para_fmt.wAlignment = PFA_CENTER;
     texthost->editor = NULL;
+    host_init_props( texthost );
+    texthost->event_mask = 0;
+    texthost->use_set_rect = 0;
+    SetRectEmpty( &texthost->set_rect );
+    GetClientRect( hwnd, &texthost->client_rect );
 
     return texthost;
 }
@@ -267,8 +310,16 @@ DEFINE_THISCALL_WRAPPER(ITextHostImpl_TxGetClientRect,8)
 DECLSPEC_HIDDEN HRESULT __thiscall ITextHostImpl_TxGetClientRect( ITextHost *iface, RECT *rect )
 {
     struct host *host = impl_from_ITextHost( iface );
-    int ret = GetClientRect( host->window, rect );
-    return ret ? S_OK : E_FAIL;
+
+    if (!host->use_set_rect)
+    {
+        *rect = host->client_rect;
+        if (host->client_edge) rect->top += 1;
+        InflateRect( rect, -1, 0 );
+    }
+    else *rect = host->set_rect;
+
+    return S_OK;
 }
 
 DEFINE_THISCALL_WRAPPER(ITextHostImpl_TxGetViewInset,8)
@@ -313,27 +364,11 @@ DECLSPEC_HIDDEN HRESULT __thiscall ITextHostImpl_TxGetMaxLength( ITextHost *ifac
 }
 
 DEFINE_THISCALL_WRAPPER(ITextHostImpl_TxGetScrollBars,8)
-DECLSPEC_HIDDEN HRESULT __thiscall ITextHostImpl_TxGetScrollBars( ITextHost *iface, DWORD *scrollbar )
+DECLSPEC_HIDDEN HRESULT __thiscall ITextHostImpl_TxGetScrollBars( ITextHost *iface, DWORD *scrollbars )
 {
     struct host *host = impl_from_ITextHost( iface );
-    const DWORD mask = WS_VSCROLL|
-                       WS_HSCROLL|
-                       ES_AUTOVSCROLL|
-                       ES_AUTOHSCROLL|
-                       ES_DISABLENOSCROLL;
-    if (host->editor)
-    {
-        *scrollbar = host->editor->styleFlags & mask;
-    }
-    else
-    {
-        DWORD style = GetWindowLongW( host->window, GWL_STYLE );
-        if (style & WS_VSCROLL)
-            style |= ES_AUTOVSCROLL;
-        if (!host->emulate_10 && (style & WS_HSCROLL))
-            style |= ES_AUTOHSCROLL;
-        *scrollbar = style & mask;
-    }
+
+    *scrollbars = host->scrollbars;
     return S_OK;
 }
 
@@ -373,67 +408,8 @@ DEFINE_THISCALL_WRAPPER(ITextHostImpl_TxGetPropertyBits,12)
 DECLSPEC_HIDDEN HRESULT __thiscall ITextHostImpl_TxGetPropertyBits( ITextHost *iface, DWORD mask, DWORD *bits )
 {
     struct host *host = impl_from_ITextHost( iface );
-    DWORD style;
-    DWORD dwBits = 0;
 
-    if (host->editor)
-    {
-        style = host->editor->styleFlags;
-        if (host->editor->mode & TM_RICHTEXT)
-            dwBits |= TXTBIT_RICHTEXT;
-        if (host->editor->bWordWrap)
-            dwBits |= TXTBIT_WORDWRAP;
-        if (style & ECO_AUTOWORDSELECTION)
-            dwBits |= TXTBIT_AUTOWORDSEL;
-    }
-    else
-    {
-        DWORD dwScrollBar;
-
-        style = GetWindowLongW( host->window, GWL_STYLE );
-        ITextHostImpl_TxGetScrollBars(iface, &dwScrollBar);
-
-        dwBits |= TXTBIT_RICHTEXT|TXTBIT_AUTOWORDSEL;
-        if (!(dwScrollBar & ES_AUTOHSCROLL))
-            dwBits |= TXTBIT_WORDWRAP;
-    }
-
-    /* Bits that correspond to window styles. */
-    if (style & ES_MULTILINE)
-        dwBits |= TXTBIT_MULTILINE;
-    if (style & ES_READONLY)
-        dwBits |= TXTBIT_READONLY;
-    if (style & ES_PASSWORD)
-        dwBits |= TXTBIT_USEPASSWORD;
-    if (!(style & ES_NOHIDESEL))
-        dwBits |= TXTBIT_HIDESELECTION;
-    if (style & ES_SAVESEL)
-        dwBits |= TXTBIT_SAVESELECTION;
-    if (style & ES_VERTICAL)
-        dwBits |= TXTBIT_VERTICAL;
-    if (style & ES_NOOLEDRAGDROP)
-        dwBits |= TXTBIT_DISABLEDRAG;
-
-    dwBits |= TXTBIT_ALLOWBEEP;
-
-    /* The following bits are always FALSE because they are probably only
-     * needed for ITextServices_OnTxPropertyBitsChange:
-     *   TXTBIT_VIEWINSETCHANGE
-     *   TXTBIT_BACKSTYLECHANGE
-     *   TXTBIT_MAXLENGTHCHANGE
-     *   TXTBIT_CHARFORMATCHANGE
-     *   TXTBIT_PARAFORMATCHANGE
-     *   TXTBIT_SHOWACCELERATOR
-     *   TXTBIT_EXTENTCHANGE
-     *   TXTBIT_SELBARCHANGE
-     *   TXTBIT_SCROLLBARCHANGE
-     *   TXTBIT_CLIENTRECTCHANGE
-     *
-     * Documented by MSDN as not supported:
-     *   TXTBIT_USECURRENTBKG
-     */
-
-    *bits = dwBits & mask;
+    *bits = host->props & mask;
     return S_OK;
 }
 
@@ -514,8 +490,7 @@ DECLSPEC_HIDDEN HRESULT __thiscall ITextHostImpl_TxGetSelectionBarWidth( ITextHo
 {
     struct host *host = impl_from_ITextHost( iface );
 
-    DWORD style = host->editor ? host->editor->styleFlags : GetWindowLongW( host->window, GWL_STYLE );
-    *width = (style & ES_SELECTIONBAR) ? 225 : 0; /* in HIMETRIC */
+    *width = host->sel_bar ? 225 : 0; /* in HIMETRIC */
     return S_OK;
 }
 
@@ -743,14 +718,38 @@ static BOOL create_windowed_editor( HWND hwnd, CREATESTRUCTW *create, BOOL emula
     IUnknown_QueryInterface( unk, &IID_ITextServices, (void **)&host->text_srv );
     IUnknown_Release( unk );
 
-    host->editor->exStyleFlags = GetWindowLongW( hwnd, GWL_EXSTYLE );
-    host->editor->styleFlags |= GetWindowLongW( hwnd, GWL_STYLE ) & ES_WANTRETURN;
     host->editor->hWnd = hwnd; /* FIXME: Remove editor's dependence on hWnd */
     host->editor->hwndParent = create->hwndParent;
 
     SetWindowLongPtrW( hwnd, 0, (LONG_PTR)host );
 
     return TRUE;
+}
+
+static HRESULT get_lineA( ITextServices *text_srv, WPARAM wparam, LPARAM lparam, LRESULT *res )
+{
+    LRESULT len = USHRT_MAX;
+    WORD sizeA;
+    HRESULT hr;
+    WCHAR *buf;
+
+    *res = 0;
+    sizeA = *(WORD *)lparam;
+    *(WORD *)lparam = 0;
+    if (!sizeA) return S_OK;
+    buf = heap_alloc( len * sizeof(WCHAR) );
+    if (!buf) return E_OUTOFMEMORY;
+    *(WORD *)buf = len;
+    hr = ITextServices_TxSendMessage( text_srv, EM_GETLINE, wparam, (LPARAM)buf, &len );
+    if (hr == S_OK && len)
+    {
+        len = WideCharToMultiByte( CP_ACP, 0, buf, len, (char *)lparam, sizeA, NULL, NULL );
+        if (!len && GetLastError() == ERROR_INSUFFICIENT_BUFFER) len = sizeA;
+        if (len < sizeA) ((char *)lparam)[len] = '\0';
+        *res = len;
+    }
+    heap_free( buf );
+    return hr;
 }
 
 static HRESULT get_text_rangeA( struct host *host, TEXTRANGEA *rangeA, LRESULT *res )
@@ -786,12 +785,143 @@ static HRESULT get_text_rangeA( struct host *host, TEXTRANGEA *rangeA, LRESULT *
     return hr;
 }
 
+static HRESULT set_options( struct host *host, DWORD op, DWORD value, LRESULT *res )
+{
+    DWORD style, old_options, new_options, change, props_mask = 0;
+    DWORD mask = ECO_AUTOWORDSELECTION | ECO_AUTOVSCROLL | ECO_AUTOHSCROLL | ECO_NOHIDESEL | ECO_READONLY |
+        ECO_WANTRETURN | ECO_SAVESEL | ECO_SELECTIONBAR | ECO_VERTICAL;
+
+    new_options = old_options = SendMessageW( host->window, EM_GETOPTIONS, 0, 0 );
+
+    switch (op)
+    {
+    case ECOOP_SET:
+        new_options = value;
+        break;
+    case ECOOP_OR:
+        new_options |= value;
+        break;
+    case ECOOP_AND:
+        new_options &= value;
+        break;
+    case ECOOP_XOR:
+        new_options ^= value;
+    }
+    new_options &= mask;
+
+    change = (new_options ^ old_options);
+
+    if (change & ECO_AUTOWORDSELECTION)
+    {
+        host->props ^= TXTBIT_AUTOWORDSEL;
+        props_mask |= TXTBIT_AUTOWORDSEL;
+    }
+    if (change & ECO_AUTOVSCROLL)
+    {
+        host->scrollbars ^= WS_VSCROLL;
+        props_mask |= TXTBIT_SCROLLBARCHANGE;
+    }
+    if (change & ECO_AUTOHSCROLL)
+    {
+        host->scrollbars ^= WS_HSCROLL;
+        props_mask |= TXTBIT_SCROLLBARCHANGE;
+    }
+    if (change & ECO_NOHIDESEL)
+    {
+        host->props ^= TXTBIT_HIDESELECTION;
+        props_mask |= TXTBIT_HIDESELECTION;
+    }
+    if (change & ECO_READONLY)
+    {
+        host->props ^= TXTBIT_READONLY;
+        props_mask |= TXTBIT_READONLY;
+    }
+    if (change & ECO_SAVESEL)
+    {
+        host->props ^= TXTBIT_SAVESELECTION;
+        props_mask |= TXTBIT_SAVESELECTION;
+    }
+    if (change & ECO_SELECTIONBAR)
+    {
+        host->sel_bar ^= 1;
+        props_mask |= TXTBIT_SELBARCHANGE;
+        if (host->use_set_rect)
+        {
+            int width = SELECTIONBAR_WIDTH;
+            host->set_rect.left += host->sel_bar ? width : -width;
+            props_mask |= TXTBIT_CLIENTRECTCHANGE;
+        }
+    }
+    if (change & ECO_VERTICAL)
+    {
+        host->props ^= TXTBIT_VERTICAL;
+        props_mask |= TXTBIT_VERTICAL;
+    }
+    if (change & ECO_WANTRETURN) host->want_return ^= 1;
+
+    if (props_mask)
+        ITextServices_OnTxPropertyBitsChange( host->text_srv, props_mask, host->props & props_mask );
+
+    *res = new_options;
+
+    mask &= ~ECO_AUTOWORDSELECTION; /* doesn't correspond to a window style */
+    style = GetWindowLongW( host->window, GWL_STYLE );
+    style = (style & ~mask) | (*res & mask);
+    SetWindowLongW( host->window, GWL_STYLE, style );
+    return S_OK;
+}
+
+/* handle dialog mode VK_RETURN. Returns TRUE if message has been processed */
+static BOOL handle_dialog_enter( struct host *host )
+{
+    BOOL ctrl_is_down = GetKeyState( VK_CONTROL ) & 0x8000;
+
+    if (ctrl_is_down) return TRUE;
+
+    if (host->want_return) return FALSE;
+
+    if (host->parent)
+    {
+        DWORD id = SendMessageW( host->parent, DM_GETDEFID, 0, 0 );
+        if (HIWORD( id ) == DC_HASDEFID)
+        {
+            HWND ctrl = GetDlgItem( host->parent, LOWORD( id ));
+            if (ctrl)
+            {
+                SendMessageW( host->parent, WM_NEXTDLGCTL, (WPARAM)ctrl, TRUE );
+                PostMessageW( ctrl, WM_KEYDOWN, VK_RETURN, 0 );
+            }
+        }
+    }
+    return TRUE;
+}
+
+static LRESULT send_msg_filter( struct host *host, UINT msg, WPARAM *wparam, LPARAM *lparam )
+{
+    MSGFILTER msgf;
+    LRESULT res;
+
+    if (!host->parent) return 0;
+    msgf.nmhdr.hwndFrom = host->window;
+    msgf.nmhdr.idFrom = GetWindowLongW( host->window, GWLP_ID );
+    msgf.nmhdr.code = EN_MSGFILTER;
+    msgf.msg = msg;
+    msgf.wParam = *wparam;
+    msgf.lParam = *lparam;
+    if ((res = SendMessageW( host->parent, WM_NOTIFY, msgf.nmhdr.idFrom, (LPARAM)&msgf )))
+        return res;
+    *wparam = msgf.wParam;
+    *lparam = msgf.lParam;
+
+    return 0;
+}
+
 static LRESULT RichEditWndProc_common( HWND hwnd, UINT msg, WPARAM wparam,
                                        LPARAM lparam, BOOL unicode )
 {
     struct host *host;
     ME_TextEditor *editor;
-    HRESULT hr;
+    HRESULT hr = S_OK;
     LRESULT res = 0;
 
     TRACE( "enter hwnd %p msg %04x (%s) %lx %lx, unicode %d\n",
@@ -810,6 +940,15 @@ static LRESULT RichEditWndProc_common( HWND hwnd, UINT msg, WPARAM wparam,
         else return DefWindowProcW( hwnd, msg, wparam, lparam );
     }
 
+    if ((((host->event_mask & ENM_KEYEVENTS) && msg >= WM_KEYFIRST && msg <= WM_KEYLAST) ||
+         ((host->event_mask & ENM_MOUSEEVENTS) && msg >= WM_MOUSEFIRST && msg <= WM_MOUSELAST)) &&
+        send_msg_filter( host, msg, &wparam, &lparam ))
+    {
+        TRACE( "exit (filtered) hwnd %p msg %04x (%s) %lx %lx -> %lu\n",
+               hwnd, msg, get_msg_name(msg), wparam, lparam, res );
+        return res;
+    }
+
     editor = host->editor;
     switch (msg)
     {
@@ -818,7 +957,31 @@ static LRESULT RichEditWndProc_common( HWND hwnd, UINT msg, WPARAM wparam,
         WCHAR wc = wparam;
 
         if (!unicode) MultiByteToWideChar( CP_ACP, 0, (char *)&wparam, 1, &wc, 1 );
+        if (wparam == '\r' && host->dialog_mode && host->emulate_10 && handle_dialog_enter( host )) break;
         hr = ITextServices_TxSendMessage( host->text_srv, msg, wc, lparam, &res );
+        break;
+    }
+
+    case WM_CREATE:
+    {
+        CREATESTRUCTW *createW = (CREATESTRUCTW *)lparam;
+        CREATESTRUCTA *createA = (CREATESTRUCTA *)lparam;
+        void *text;
+        WCHAR *textW = NULL;
+        LONG codepage = unicode ? CP_UNICODE : CP_ACP;
+        int len;
+
+        ITextServices_OnTxPropertyBitsChange( host->text_srv, TXTBIT_CLIENTRECTCHANGE, 0 );
+
+        if (lparam)
+        {
+            text = unicode ? (void *)createW->lpszName : (void *)createA->lpszName;
+            textW = ME_ToUnicode( codepage, text, &len );
+        }
+        ITextServices_TxSetText( host->text_srv, textW );
+        if (lparam) ME_EndToUnicode( codepage, textW );
+
+        hr = ITextServices_TxSendMessage( host->text_srv, msg, wparam, lparam, &res );
         break;
     }
     case WM_DESTROY:
@@ -871,6 +1034,49 @@ static LRESULT RichEditWndProc_common( HWND hwnd, UINT msg, WPARAM wparam,
         }
         break;
     }
+    case WM_GETDLGCODE:
+        if (lparam) host->dialog_mode = TRUE;
+
+        res = DLGC_WANTCHARS | DLGC_WANTTAB | DLGC_WANTARROWS;
+        if (host->props & TXTBIT_MULTILINE) res |= DLGC_WANTMESSAGE;
+        if (!(host->props & TXTBIT_SAVESELECTION)) res |= DLGC_HASSETSEL;
+        break;
+
+    case EM_GETLINE:
+        if (unicode) hr = ITextServices_TxSendMessage( host->text_srv, msg, wparam, lparam, &res );
+        else hr = get_lineA( host->text_srv, wparam, lparam, &res );
+        break;
+
+    case EM_GETRECT:
+        hr = ITextHost_TxGetClientRect( &host->ITextHost_iface, (RECT *)lparam );
+        break;
+
+    case EM_GETSELTEXT:
+    {
+        TEXTRANGEA range;
+
+        if (unicode) hr = ITextServices_TxSendMessage( host->text_srv, msg, wparam, lparam, &res );
+        else
+        {
+            ITextServices_TxSendMessage( host->text_srv, EM_EXGETSEL, 0, (LPARAM)&range.chrg, &res );
+            range.lpstrText = (char *)lparam;
+            range.lpstrText[0] = '\0';
+            hr = get_text_rangeA( host, &range, &res );
+        }
+        break;
+    }
+    case EM_GETOPTIONS:
+        if (host->props & TXTBIT_READONLY) res |= ECO_READONLY;
+        if (!(host->props & TXTBIT_HIDESELECTION)) res |= ECO_NOHIDESEL;
+        if (host->props & TXTBIT_SAVESELECTION) res |= ECO_SAVESEL;
+        if (host->props & TXTBIT_AUTOWORDSEL) res |= ECO_AUTOWORDSELECTION;
+        if (host->props & TXTBIT_VERTICAL) res |= ECO_VERTICAL;
+        if (host->scrollbars & ES_AUTOHSCROLL) res |= ECO_AUTOHSCROLL;
+        if (host->scrollbars & ES_AUTOVSCROLL) res |= ECO_AUTOVSCROLL;
+        if (host->want_return) res |= ECO_WANTRETURN;
+        if (host->sel_bar) res |= ECO_SELECTIONBAR;
+        break;
+
     case WM_GETTEXT:
     {
         GETTEXTEX params;
@@ -895,6 +1101,25 @@ static LRESULT RichEditWndProc_common( HWND hwnd, UINT msg, WPARAM wparam,
     case EM_GETTEXTRANGE:
         if (unicode) hr = ITextServices_TxSendMessage( host->text_srv, msg, wparam, lparam, &res );
         else hr = get_text_rangeA( host, (TEXTRANGEA *)lparam, &res );
+        break;
+
+    case WM_KEYDOWN:
+        switch (LOWORD( wparam ))
+        {
+        case VK_ESCAPE:
+            if (host->dialog_mode && host->parent)
+                PostMessageW( host->parent, WM_CLOSE, 0, 0 );
+            break;
+        case VK_TAB:
+            if (host->dialog_mode && host->parent)
+                SendMessageW( host->parent, WM_NEXTDLGCTL, GetKeyState( VK_SHIFT ) & 0x8000, 0 );
+            break;
+        case VK_RETURN:
+            if (host->dialog_mode && !host->emulate_10 && handle_dialog_enter( host )) break;
+            /* fall through */
+        default:
+            hr = ITextServices_TxSendMessage( host->text_srv, msg, wparam, lparam, &res );
+        }
         break;
 
     case WM_PAINT:
@@ -956,29 +1181,43 @@ static LRESULT RichEditWndProc_common( HWND hwnd, UINT msg, WPARAM wparam,
         res = len;
         break;
     }
-    case EM_SETOPTIONS:
-    {
-        DWORD style;
-        const DWORD mask = ECO_VERTICAL | ECO_AUTOHSCROLL | ECO_AUTOVSCROLL |
-            ECO_NOHIDESEL | ECO_READONLY | ECO_WANTRETURN |
-            ECO_SELECTIONBAR;
+    case EM_SETEVENTMASK:
+        host->event_mask = lparam;
+        hr = ITextServices_TxSendMessage( host->text_srv, msg, wparam, lparam, &res );
+        break;
 
-        res = ME_HandleMessage( editor, msg, wparam, lparam, unicode, &hr );
-        style = GetWindowLongW( hwnd, GWL_STYLE );
-        style = (style & ~mask) | (res & mask);
-        SetWindowLongW( hwnd, GWL_STYLE, style );
-        return res;
-    }
+    case EM_SETOPTIONS:
+        hr = set_options( host, wparam, lparam, &res );
+        break;
+
     case EM_SETREADONLY:
     {
-        DWORD style;
+        DWORD op = wparam ? ECOOP_OR : ECOOP_AND;
+        DWORD mask = wparam ? ECO_READONLY : ~ECO_READONLY;
 
-        res = ME_HandleMessage( editor, msg, wparam, lparam, unicode, &hr );
-        style = GetWindowLongW( hwnd, GWL_STYLE );
-        style &= ~ES_READONLY;
-        if (wparam) style |= ES_READONLY;
-        SetWindowLongW( hwnd, GWL_STYLE, style );
-        return res;
+        SendMessageW( hwnd, EM_SETOPTIONS, op, mask );
+        return 1;
+    }
+    case EM_SETRECT:
+    case EM_SETRECTNP:
+    {
+        RECT *rc = (RECT *)lparam;
+
+        if (!rc) host->use_set_rect = 0;
+        else
+        {
+            if (wparam >= 2) break;
+            host->set_rect = *rc;
+            if (host->client_edge)
+            {
+                InflateRect( &host->set_rect, 1, 0 );
+                host->set_rect.top -= 1;
+            }
+            if (!wparam) IntersectRect( &host->set_rect, &host->set_rect, &host->client_rect );
+            host->use_set_rect = 1;
+        }
+        ITextServices_OnTxPropertyBitsChange( host->text_srv, TXTBIT_CLIENTRECTCHANGE, 0 );
+        break;
     }
     case WM_SETTEXT:
     {
@@ -992,8 +1231,47 @@ static LRESULT RichEditWndProc_common( HWND hwnd, UINT msg, WPARAM wparam,
         if (text != (WCHAR *)lparam) ME_EndToUnicode( CP_ACP, text );
         break;
     }
+    case EM_SHOWSCROLLBAR:
+    {
+        DWORD mask = 0, new;
+
+        if (wparam == SB_HORZ) mask = WS_HSCROLL;
+        else if (wparam == SB_VERT) mask = WS_VSCROLL;
+        else if (wparam == SB_BOTH) mask = WS_HSCROLL | WS_VSCROLL;
+
+        if (mask)
+        {
+            new = lparam ? mask : 0;
+            if ((host->scrollbars & mask) != new)
+            {
+                host->scrollbars &= ~mask;
+                host->scrollbars |= new;
+                ITextServices_OnTxPropertyBitsChange( host->text_srv, TXTBIT_SCROLLBARCHANGE, 0 );
+            }
+        }
+
+        res = 0;
+        break;
+    }
+    case WM_WINDOWPOSCHANGED:
+    {
+        RECT client;
+        WINDOWPOS *winpos = (WINDOWPOS *)lparam;
+
+        hr = S_FALSE; /* call defwndproc */
+        if (winpos->flags & SWP_NOCLIENTSIZE) break;
+        GetClientRect( hwnd, &client );
+        if (host->use_set_rect)
+        {
+            host->set_rect.right += client.right - host->client_rect.right;
+            host->set_rect.bottom += client.bottom - host->client_rect.bottom;
+        }
+        host->client_rect = client;
+        ITextServices_OnTxPropertyBitsChange( host->text_srv, TXTBIT_CLIENTRECTCHANGE, 0 );
+        break;
+    }
     default:
-        res = ME_HandleMessage( editor, msg, wparam, lparam, unicode, &hr );
+        hr = ITextServices_TxSendMessage( host->text_srv, msg, wparam, lparam, &res );
     }
 
     if (hr == S_FALSE)

@@ -76,7 +76,6 @@
 @ cdecl wined3d_device_get_domain_shader(ptr)
 @ cdecl wined3d_device_get_ds_resource_view(ptr long)
 @ cdecl wined3d_device_get_ds_sampler(ptr long)
-@ cdecl wined3d_device_get_feature_level(ptr)
 @ cdecl wined3d_device_get_gamma_ramp(ptr long ptr)
 @ cdecl wined3d_device_get_geometry_shader(ptr)
 @ cdecl wined3d_device_get_gs_resource_view(ptr long)
@@ -171,7 +170,11 @@
 @ cdecl wined3d_device_context_set_constant_buffer(ptr long long ptr)
 @ cdecl wined3d_device_context_set_depth_stencil_state(ptr ptr long)
 @ cdecl wined3d_device_context_set_rasterizer_state(ptr ptr)
+@ cdecl wined3d_device_context_set_sampler(ptr long long ptr)
+@ cdecl wined3d_device_context_set_scissor_rects(ptr long ptr)
 @ cdecl wined3d_device_context_set_shader(ptr long ptr)
+@ cdecl wined3d_device_context_set_shader_resource_view(ptr long long ptr)
+@ cdecl wined3d_device_context_set_viewports(ptr long ptr)
 
 @ cdecl wined3d_output_find_closest_matching_mode(ptr ptr)
 @ cdecl wined3d_output_get_adapter(ptr)
@@ -246,8 +249,9 @@
 @ cdecl wined3d_shader_resource_view_get_parent(ptr)
 @ cdecl wined3d_shader_resource_view_incref(ptr)
 
-@ cdecl wined3d_state_create(ptr ptr)
+@ cdecl wined3d_state_create(ptr ptr long ptr)
 @ cdecl wined3d_state_destroy(ptr)
+@ cdecl wined3d_state_get_feature_level(ptr)
 
 @ cdecl wined3d_stateblock_apply(ptr ptr)
 @ cdecl wined3d_stateblock_capture(ptr ptr)

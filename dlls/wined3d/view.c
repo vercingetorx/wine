@@ -1197,7 +1197,7 @@ static void shader_resource_view_gl_bind_and_dirtify(struct wined3d_shader_resou
 void wined3d_shader_resource_view_gl_generate_mipmap(struct wined3d_shader_resource_view_gl *view_gl,
         struct wined3d_context_gl *context_gl)
 {
-    unsigned int i, j, layer_count, level_count, base_level, max_level;
+    unsigned int i, j, layer_count, level_count, base_level, base_layer;
     const struct wined3d_gl_info *gl_info = context_gl->gl_info;
     struct wined3d_texture_gl *texture_gl;
     struct gl_texture *gl_tex;
@@ -1209,14 +1209,16 @@ void wined3d_shader_resource_view_gl_generate_mipmap(struct wined3d_shader_resou
     layer_count = view_gl->v.desc.u.texture.layer_count;
     level_count = view_gl->v.desc.u.texture.level_count;
     base_level = view_gl->v.desc.u.texture.level_idx;
-    max_level = base_level + level_count - 1;
+    base_layer = view_gl->v.desc.u.texture.layer_idx;
 
     texture_gl = wined3d_texture_gl(texture_from_resource(view_gl->v.resource));
     srgb = !!(texture_gl->t.flags & WINED3D_TEXTURE_IS_SRGB);
     location = srgb ? WINED3D_LOCATION_TEXTURE_SRGB : WINED3D_LOCATION_TEXTURE_RGB;
     for (i = 0; i < layer_count; ++i)
     {
-        wined3d_texture_load_location(&texture_gl->t, i * level_count + base_level, &context_gl->c, location);
+        if (!wined3d_texture_load_location(&texture_gl->t,
+                (base_layer + i) * level_count + base_level, &context_gl->c, location))
+            ERR("Failed to load source layer %u.\n", base_layer + i);
     }
 
     if (view_gl->gl_view.name)
@@ -1227,7 +1229,7 @@ void wined3d_shader_resource_view_gl_generate_mipmap(struct wined3d_shader_resou
     {
         wined3d_texture_gl_bind_and_dirtify(texture_gl, context_gl, srgb);
         gl_info->gl_ops.gl.p_glTexParameteri(texture_gl->target, GL_TEXTURE_BASE_LEVEL, base_level);
-        gl_info->gl_ops.gl.p_glTexParameteri(texture_gl->target, GL_TEXTURE_MAX_LEVEL, max_level);
+        gl_info->gl_ops.gl.p_glTexParameteri(texture_gl->target, GL_TEXTURE_MAX_LEVEL, base_level + level_count - 1);
     }
 
     if (gl_info->supported[ARB_SAMPLER_OBJECTS])
@@ -1245,10 +1247,12 @@ void wined3d_shader_resource_view_gl_generate_mipmap(struct wined3d_shader_resou
 
     for (i = 0; i < layer_count; ++i)
     {
-        for (j = base_level + 1; j <= max_level; ++j)
+        for (j = 1; j < level_count; ++j)
         {
-            wined3d_texture_validate_location(&texture_gl->t, i * level_count + j, location);
-            wined3d_texture_invalidate_location(&texture_gl->t, i * level_count + j, ~location);
+            wined3d_texture_validate_location(&texture_gl->t,
+                    (base_layer + i) * level_count + base_level + j, location);
+            wined3d_texture_invalidate_location(&texture_gl->t,
+                    (base_layer + i) * level_count + base_level + j, ~location);
         }
     }
 
@@ -1369,14 +1373,20 @@ void wined3d_shader_resource_view_vk_generate_mipmap(struct wined3d_shader_resou
         }
         else
         {
+            region.srcSubresource.mipLevel = ++vk_src_range.baseMipLevel;
+            region.dstSubresource.mipLevel = ++vk_dst_range.baseMipLevel;
+
             wined3d_context_vk_image_barrier(context_vk, vk_command_buffer,
                     VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
                     VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT,
                     VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                    texture_vk->vk_image, &vk_src_range);
+            wined3d_context_vk_image_barrier(context_vk, vk_command_buffer,
+                    VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                    vk_access_mask_from_bind_flags(texture_vk->t.resource.bind_flags),
+                    VK_ACCESS_TRANSFER_WRITE_BIT,
+                    texture_vk->layout, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                     texture_vk->vk_image, &vk_dst_range);
-
-            region.srcSubresource.mipLevel = ++vk_src_range.baseMipLevel;
-            region.dstSubresource.mipLevel = ++vk_dst_range.baseMipLevel;
         }
     }
 

@@ -780,8 +780,6 @@ typedef struct
     unsigned int   checksum;
     unsigned int   dbg_offset;
     unsigned int   dbg_size;
-    client_cpu_t   cpu;
-    int            __pad;
 } pe_image_info_t;
 #define IMAGE_FLAGS_ComPlusNativeReady        0x01
 #define IMAGE_FLAGS_ComPlusILOnly             0x02
@@ -1917,7 +1915,10 @@ struct get_mapping_info_reply
     mem_size_t   size;
     unsigned int flags;
     obj_handle_t shared_file;
+    data_size_t  total;
     /* VARARG(image,pe_image_info); */
+    /* VARARG(name,unicode_str); */
+    char __pad_28[4];
 };
 
 
@@ -6228,7 +6229,7 @@ union generic_reply
 
 /* ### protocol_version begin ### */
 
-#define SERVER_PROTOCOL_VERSION 684
+#define SERVER_PROTOCOL_VERSION 686
 
 /* ### protocol_version end ### */
 

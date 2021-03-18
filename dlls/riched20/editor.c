@@ -2132,22 +2132,11 @@ static int ME_GetTextEx(ME_TextEditor *editor, GETTEXTEX *ex, LPARAM pText)
     }
 }
 
-static int ME_GetTextRange(ME_TextEditor *editor, WCHAR *strText,
-                           const ME_Cursor *start, int nLen, BOOL unicode)
+static int get_text_range( ME_TextEditor *editor, WCHAR *buffer,
+                           const ME_Cursor *start, int len )
 {
-    if (!strText) return 0;
-    if (unicode) {
-      return ME_GetTextW(editor, strText, INT_MAX, start, nLen, FALSE, FALSE);
-    } else {
-      int nChars;
-      WCHAR *p = heap_alloc((nLen+1) * sizeof(*p));
-      if (!p) return 0;
-      nChars = ME_GetTextW(editor, p, nLen, start, nLen, FALSE, FALSE);
-      WideCharToMultiByte(CP_ACP, 0, p, nChars+1, (char *)strText,
-                          nLen+1, NULL, NULL);
-      heap_free(p);
-      return nChars;
-    }
+    if (!buffer) return 0;
+    return ME_GetTextW( editor, buffer, INT_MAX, start, len, FALSE, FALSE );
 }
 
 int set_selection( ME_TextEditor *editor, int to, int from )
@@ -2290,10 +2279,9 @@ static BOOL paste_special(ME_TextEditor *editor, UINT cf, REPASTESPECIAL *ps, BO
     IDataObject *data;
 
     /* Protect read-only edit control from modification */
-    if (editor->styleFlags & ES_READONLY)
+    if (editor->props & TXTBIT_READONLY)
     {
-        if (!check_only)
-            MessageBeep(MB_ICONERROR);
+        if (!check_only) MessageBeep(MB_ICONERROR);
         return FALSE;
     }
 
@@ -2365,7 +2353,7 @@ HRESULT editor_copy_or_cut( ME_TextEditor *editor, BOOL cut, ME_Cursor *start, i
 {
     HRESULT hr;
 
-    if (cut && (editor->styleFlags & ES_READONLY))
+    if (cut && (editor->props & TXTBIT_READONLY))
     {
         return E_ACCESSDENIED;
     }
@@ -2396,28 +2384,6 @@ static BOOL copy_or_cut( ME_TextEditor *editor, BOOL cut )
     return SUCCEEDED( hr );
 }
 
-/* helper to send a msg filter notification */
-static BOOL
-ME_FilterEvent(ME_TextEditor *editor, UINT msg, WPARAM* wParam, LPARAM* lParam)
-{
-    MSGFILTER msgf;
-
-    if (!editor->hWnd || !editor->hwndParent) return FALSE;
-    msgf.nmhdr.hwndFrom = editor->hWnd;
-    msgf.nmhdr.idFrom = GetWindowLongW(editor->hWnd, GWLP_ID);
-    msgf.nmhdr.code = EN_MSGFILTER;
-    msgf.msg = msg;
-    msgf.wParam = *wParam;
-    msgf.lParam = *lParam;
-    if (SendMessageW(editor->hwndParent, WM_NOTIFY, msgf.nmhdr.idFrom, (LPARAM)&msgf))
-        return FALSE;
-    *wParam = msgf.wParam;
-    *lParam = msgf.lParam;
-    msgf.wParam = *wParam;
-
-    return TRUE;
-}
-
 static void ME_UpdateSelectionLinkAttribute(ME_TextEditor *editor)
 {
   ME_Paragraph *start_para, *end_para;
@@ -2445,42 +2411,16 @@ static void ME_UpdateSelectionLinkAttribute(ME_TextEditor *editor)
 
 static BOOL handle_enter(ME_TextEditor *editor)
 {
-    BOOL ctrl_is_down = GetKeyState(VK_CONTROL) & 0x8000;
     BOOL shift_is_down = GetKeyState(VK_SHIFT) & 0x8000;
 
-    if (editor->bDialogMode)
-    {
-        if (ctrl_is_down)
-            return TRUE;
-
-        if (!(editor->styleFlags & ES_WANTRETURN))
-        {
-            if (editor->hwndParent)
-            {
-                DWORD dw;
-                dw = SendMessageW(editor->hwndParent, DM_GETDEFID, 0, 0);
-                if (HIWORD(dw) == DC_HASDEFID)
-                {
-                    HWND hwDefCtrl = GetDlgItem(editor->hwndParent, LOWORD(dw));
-                    if (hwDefCtrl)
-                    {
-                        SendMessageW(editor->hwndParent, WM_NEXTDLGCTL, (WPARAM)hwDefCtrl, TRUE);
-                        PostMessageW(hwDefCtrl, WM_KEYDOWN, VK_RETURN, 0);
-                    }
-                }
-            }
-            return TRUE;
-        }
-    }
-
-    if (editor->styleFlags & ES_MULTILINE)
+    if (editor->props & TXTBIT_MULTILINE)
     {
         ME_Cursor cursor = editor->pCursors[0];
         ME_Paragraph *para = cursor.para;
         int from, to;
         ME_Style *style, *eop_style;
 
-        if (editor->styleFlags & ES_READONLY)
+        if (editor->props & TXTBIT_READONLY)
         {
             MessageBeep(MB_ICONERROR);
             return TRUE;
@@ -2642,7 +2582,7 @@ ME_KeyDown(ME_TextEditor *editor, WORD nKey)
     case VK_DELETE:
       editor->nUDArrowX = -1;
       /* FIXME backspace and delete aren't the same, they act different wrt paragraph style of the merged paragraph */
-      if (editor->styleFlags & ES_READONLY)
+      if (editor->props & TXTBIT_READONLY)
         return FALSE;
       if (ME_IsSelection(editor))
       {
@@ -2681,14 +2621,6 @@ ME_KeyDown(ME_TextEditor *editor, WORD nKey)
       if (!editor->bEmulateVersion10)
           return handle_enter(editor);
       break;
-    case VK_ESCAPE:
-      if (editor->bDialogMode && editor->hwndParent)
-        PostMessageW(editor->hwndParent, WM_CLOSE, 0, 0);
-      return TRUE;
-    case VK_TAB:
-      if (editor->bDialogMode && editor->hwndParent)
-        SendMessageW(editor->hwndParent, WM_NEXTDLGCTL, shift_is_down, 0);
-      return TRUE;
     case 'A':
       if (ctrl_is_down)
       {
@@ -2749,7 +2681,7 @@ static LRESULT handle_wm_char( ME_TextEditor *editor, WCHAR wstr, LPARAM flags )
   if (editor->bMouseCaptured)
     return 0;
 
-  if (editor->styleFlags & ES_READONLY)
+  if (editor->props & TXTBIT_READONLY)
   {
     MessageBeep(MB_ICONERROR);
     return 0; /* FIXME really 0 ? */
@@ -2977,14 +2909,6 @@ static BOOL ME_SetCursor(ME_TextEditor *editor)
   return TRUE;
 }
 
-static void ME_SetDefaultFormatRect(ME_TextEditor *editor)
-{
-  ITextHost_TxGetClientRect(editor->texthost, &editor->rcFormat);
-  editor->rcFormat.top += editor->exStyleFlags & WS_EX_CLIENTEDGE ? 1 : 0;
-  editor->rcFormat.left += 1 + editor->selofs;
-  editor->rcFormat.right -= 1;
-}
-
 static LONG ME_GetSelectionType(ME_TextEditor *editor)
 {
     LONG sel_type = SEL_EMPTY;
@@ -3046,8 +2970,8 @@ ME_TextEditor *ME_MakeEditor(ITextHost *texthost, BOOL bEmulateVersion10)
 {
   ME_TextEditor *ed = heap_alloc(sizeof(*ed));
   int i;
-  DWORD props;
   LONG selbarwidth;
+  HRESULT hr;
 
   ed->hWnd = NULL;
   ed->hwndParent = NULL;
@@ -3055,19 +2979,12 @@ ME_TextEditor *ME_MakeEditor(ITextHost *texthost, BOOL bEmulateVersion10)
   ed->texthost = texthost;
   ed->reOle = NULL;
   ed->bEmulateVersion10 = bEmulateVersion10;
-  ed->styleFlags = 0;
-  ed->exStyleFlags = 0;
   ed->total_rows = 0;
-  ITextHost_TxGetPropertyBits(texthost,
-                              (TXTBIT_RICHTEXT|TXTBIT_MULTILINE|
-                               TXTBIT_READONLY|TXTBIT_USEPASSWORD|
-                               TXTBIT_HIDESELECTION|TXTBIT_SAVESELECTION|
-                               TXTBIT_AUTOWORDSEL|TXTBIT_VERTICAL|
-                               TXTBIT_WORDWRAP|TXTBIT_DISABLEDRAG),
-                              &props);
-  ITextHost_TxGetScrollBars(texthost, &ed->styleFlags);
-  ed->styleFlags &= (WS_VSCROLL|WS_HSCROLL|ES_AUTOVSCROLL|
-                     ES_AUTOHSCROLL|ES_DISABLENOSCROLL);
+  ITextHost_TxGetPropertyBits( texthost, TXTBIT_RICHTEXT | TXTBIT_MULTILINE | TXTBIT_READONLY |
+                               TXTBIT_USEPASSWORD | TXTBIT_HIDESELECTION | TXTBIT_SAVESELECTION |
+                               TXTBIT_AUTOWORDSEL | TXTBIT_VERTICAL | TXTBIT_WORDWRAP | TXTBIT_DISABLEDRAG,
+                               &ed->props );
+  ITextHost_TxGetScrollBars( texthost, &ed->scrollbars );
   ed->pBuffer = ME_MakeText();
   ed->nZoomNumerator = ed->nZoomDenominator = 0;
   ed->nAvailWidth = 0; /* wrap to client area */
@@ -3105,10 +3022,9 @@ ME_TextEditor *ME_MakeEditor(ITextHost *texthost, BOOL bEmulateVersion10)
   ed->pfnWordBreak = NULL;
   ed->lpOleCallback = NULL;
   ed->mode = TM_MULTILEVELUNDO | TM_MULTICODEPAGE;
-  ed->mode |= (props & TXTBIT_RICHTEXT) ? TM_RICHTEXT : TM_PLAINTEXT;
+  ed->mode |= (ed->props & TXTBIT_RICHTEXT) ? TM_RICHTEXT : TM_PLAINTEXT;
   ed->AutoURLDetect_bEnable = FALSE;
   ed->bHaveFocus = FALSE;
-  ed->bDialogMode = FALSE;
   ed->bMouseCaptured = FALSE;
   ed->caret_hidden = FALSE;
   ed->caret_height = 0;
@@ -3121,39 +3037,17 @@ ME_TextEditor *ME_MakeEditor(ITextHost *texthost, BOOL bEmulateVersion10)
 
   ME_CheckCharOffsets(ed);
   SetRectEmpty(&ed->rcFormat);
-  ed->bDefaultFormatRect = TRUE;
-  ITextHost_TxGetSelectionBarWidth(ed->texthost, &selbarwidth);
-  if (selbarwidth) {
-    /* FIXME: Convert selbarwidth from HIMETRIC to pixels */
-    ed->selofs = SELECTIONBAR_WIDTH;
-    ed->styleFlags |= ES_SELECTIONBAR;
-  } else {
-    ed->selofs = 0;
-  }
+  hr = ITextHost_TxGetSelectionBarWidth( ed->texthost, &selbarwidth );
+  /* FIXME: Convert selbarwidth from HIMETRIC to pixels */
+  if (hr == S_OK && selbarwidth) ed->selofs = SELECTIONBAR_WIDTH;
+  else ed->selofs = 0;
   ed->nSelectionType = stPosition;
 
   ed->cPasswordMask = 0;
-  if (props & TXTBIT_USEPASSWORD)
+  if (ed->props & TXTBIT_USEPASSWORD)
     ITextHost_TxGetPasswordChar(texthost, &ed->cPasswordMask);
 
-  if (props & TXTBIT_AUTOWORDSEL)
-    ed->styleFlags |= ECO_AUTOWORDSELECTION;
-  if (props & TXTBIT_MULTILINE) {
-    ed->styleFlags |= ES_MULTILINE;
-    ed->bWordWrap = (props & TXTBIT_WORDWRAP) != 0;
-  } else {
-    ed->bWordWrap = FALSE;
-  }
-  if (props & TXTBIT_READONLY)
-    ed->styleFlags |= ES_READONLY;
-  if (!(props & TXTBIT_HIDESELECTION))
-    ed->styleFlags |= ES_NOHIDESEL;
-  if (props & TXTBIT_SAVESELECTION)
-    ed->styleFlags |= ES_SAVESEL;
-  if (props & TXTBIT_VERTICAL)
-    ed->styleFlags |= ES_VERTICAL;
-  if (props & TXTBIT_DISABLEDRAG)
-    ed->styleFlags |= ES_NOOLEDRAGDROP;
+  ed->bWordWrap = (ed->props & TXTBIT_WORDWRAP) && (ed->props & TXTBIT_MULTILINE);
 
   ed->notified_cr.cpMin = ed->notified_cr.cpMax = 0;
 
@@ -3313,49 +3207,30 @@ static void ME_SetText(ME_TextEditor *editor, void *text, BOOL unicode)
   ME_EndToUnicode(codepage, wszText);
 }
 
-static LRESULT ME_WmCreate(ME_TextEditor *editor, LPARAM lParam, BOOL unicode)
+static LRESULT ME_WmCreate( ME_TextEditor *editor )
 {
-  CREATESTRUCTW *createW = (CREATESTRUCTW*)lParam;
-  CREATESTRUCTA *createA = (CREATESTRUCTA*)lParam;
-  void *text = NULL;
   INT max;
 
-  if (lParam)
-    text = unicode ? (void*)createW->lpszName : (void*)createA->lpszName;
-
-  ME_SetDefaultFormatRect(editor);
-
-  max = (editor->styleFlags & ES_DISABLENOSCROLL) ? 1 : 0;
-  if (~editor->styleFlags & ES_DISABLENOSCROLL || editor->styleFlags & WS_VSCROLL)
+  max = (editor->scrollbars & ES_DISABLENOSCROLL) ? 1 : 0;
+  if (~editor->scrollbars & ES_DISABLENOSCROLL || editor->scrollbars & WS_VSCROLL)
     ITextHost_TxSetScrollRange(editor->texthost, SB_VERT, 0, max, TRUE);
 
-  if (~editor->styleFlags & ES_DISABLENOSCROLL || editor->styleFlags & WS_HSCROLL)
+  if (~editor->scrollbars & ES_DISABLENOSCROLL || editor->scrollbars & WS_HSCROLL)
     ITextHost_TxSetScrollRange(editor->texthost, SB_HORZ, 0, max, TRUE);
 
-  if (editor->styleFlags & ES_DISABLENOSCROLL)
+  if (editor->scrollbars & ES_DISABLENOSCROLL)
   {
-    if (editor->styleFlags & WS_VSCROLL)
+    if (editor->scrollbars & WS_VSCROLL)
     {
       ITextHost_TxEnableScrollBar(editor->texthost, SB_VERT, ESB_DISABLE_BOTH);
       ITextHost_TxShowScrollBar(editor->texthost, SB_VERT, TRUE);
     }
-    if (editor->styleFlags & WS_HSCROLL)
+    if (editor->scrollbars & WS_HSCROLL)
     {
       ITextHost_TxEnableScrollBar(editor->texthost, SB_HORZ, ESB_DISABLE_BOTH);
       ITextHost_TxShowScrollBar(editor->texthost, SB_HORZ, TRUE);
     }
   }
-
-  if (text)
-  {
-    ME_SetText(editor, text, unicode);
-    ME_SetCursorToStart(editor, &editor->pCursors[0]);
-    ME_SetCursorToStart(editor, &editor->pCursors[1]);
-  }
-
-  ME_CommitUndo(editor);
-  ME_WrapMarkedParagraphs(editor);
-  update_caret(editor);
   return 0;
 }
 
@@ -3420,8 +3295,8 @@ static LRESULT handle_EM_SETCHARFORMAT( ME_TextEditor *editor, WPARAM flags, con
  * The LRESULT that is returned is a return value for window procs,
  * and the phresult parameter is the COM return code needed by the
  * text services interface. */
-LRESULT ME_HandleMessage(ME_TextEditor *editor, UINT msg, WPARAM wParam,
-                         LPARAM lParam, BOOL unicode, HRESULT* phresult)
+LRESULT editor_handle_message( ME_TextEditor *editor, UINT msg, WPARAM wParam,
+                               LPARAM lParam, HRESULT* phresult )
 {
   *phresult = S_OK;
 
@@ -3456,18 +3331,6 @@ LRESULT ME_HandleMessage(ME_TextEditor *editor, UINT msg, WPARAM wParam,
    return ME_StreamIn(editor, wParam, (EDITSTREAM*)lParam, TRUE);
   case EM_STREAMOUT:
    return ME_StreamOut(editor, wParam, (EDITSTREAM *)lParam);
-  case WM_GETDLGCODE:
-  {
-    UINT code = DLGC_WANTCHARS|DLGC_WANTTAB|DLGC_WANTARROWS;
-
-    if (lParam)
-      editor->bDialogMode = TRUE;
-    if (editor->styleFlags & ES_MULTILINE)
-      code |= DLGC_WANTMESSAGE;
-    if (!(editor->styleFlags & ES_SAVESEL))
-      code |= DLGC_HASSETSEL;
-    return code;
-  }
   case EM_EMPTYUNDOBUFFER:
     ME_EmptyUndoStack(editor);
     return 0;
@@ -3509,15 +3372,6 @@ LRESULT ME_HandleMessage(ME_TextEditor *editor, UINT msg, WPARAM wParam,
     return ME_Undo(editor);
   case EM_REDO:
     return ME_Redo(editor);
-  case EM_GETOPTIONS:
-  {
-    /* these flags are equivalent to the ES_* counterparts */
-    DWORD mask = ECO_VERTICAL | ECO_AUTOHSCROLL | ECO_AUTOVSCROLL |
-                 ECO_NOHIDESEL | ECO_READONLY | ECO_WANTRETURN | ECO_SELECTIONBAR;
-    DWORD settings = editor->styleFlags & mask;
-
-    return settings;
-  }
   case EM_SETFONTSIZE:
   {
       CHARFORMAT2W cf;
@@ -3559,68 +3413,6 @@ LRESULT ME_HandleMessage(ME_TextEditor *editor, UINT msg, WPARAM wParam,
 
       return TRUE;
   }
-  case EM_SETOPTIONS:
-  {
-    /* these flags are equivalent to ES_* counterparts, except for
-     * ECO_AUTOWORDSELECTION that doesn't have an ES_* counterpart,
-     * but is still stored in editor->styleFlags. */
-    const DWORD mask = ECO_VERTICAL | ECO_AUTOHSCROLL | ECO_AUTOVSCROLL |
-                       ECO_NOHIDESEL | ECO_READONLY | ECO_WANTRETURN |
-                       ECO_SELECTIONBAR | ECO_AUTOWORDSELECTION;
-    DWORD settings = mask & editor->styleFlags;
-    DWORD oldSettings = settings;
-    DWORD changedSettings;
-
-    switch(wParam)
-    {
-      case ECOOP_SET:
-        settings = lParam;
-        break;
-      case ECOOP_OR:
-        settings |= lParam;
-        break;
-      case ECOOP_AND:
-        settings &= lParam;
-        break;
-      case ECOOP_XOR:
-        settings ^= lParam;
-    }
-    changedSettings = oldSettings ^ settings;
-
-    if (changedSettings) {
-      editor->styleFlags = (editor->styleFlags & ~mask) | (settings & mask);
-
-      if (changedSettings & ECO_SELECTIONBAR)
-      {
-        ITextHost_TxInvalidateRect(editor->texthost, &editor->rcFormat, TRUE);
-        if (settings & ECO_SELECTIONBAR) {
-          assert(!editor->selofs);
-          editor->selofs = SELECTIONBAR_WIDTH;
-          editor->rcFormat.left += editor->selofs;
-        } else {
-          editor->rcFormat.left -= editor->selofs;
-          editor->selofs = 0;
-        }
-        ME_RewrapRepaint(editor);
-      }
-
-      if ((changedSettings & settings & ES_NOHIDESEL) && !editor->bHaveFocus)
-          ME_InvalidateSelection( editor );
-
-      if (changedSettings & settings & ECO_VERTICAL)
-        FIXME("ECO_VERTICAL not implemented yet!\n");
-      if (changedSettings & settings & ECO_AUTOHSCROLL)
-        FIXME("ECO_AUTOHSCROLL not implemented yet!\n");
-      if (changedSettings & settings & ECO_AUTOVSCROLL)
-        FIXME("ECO_AUTOVSCROLL not implemented yet!\n");
-      if (changedSettings & settings & ECO_WANTRETURN)
-        FIXME("ECO_WANTRETURN not implemented yet!\n");
-      if (changedSettings & settings & ECO_AUTOWORDSELECTION)
-        FIXME("ECO_AUTOWORDSELECTION not implemented yet!\n");
-    }
-
-    return settings;
-  }
   case EM_SETSEL:
   {
     return set_selection( editor, wParam, lParam );
@@ -3649,39 +3441,6 @@ LRESULT ME_HandleMessage(ME_TextEditor *editor, UINT msg, WPARAM wParam,
     CHARRANGE range = *(CHARRANGE *)lParam;
 
     return set_selection( editor, range.cpMin, range.cpMax );
-  }
-  case EM_SHOWSCROLLBAR:
-  {
-    DWORD flags;
-
-    switch (wParam)
-    {
-      case SB_HORZ:
-        flags = WS_HSCROLL;
-        break;
-      case SB_VERT:
-        flags = WS_VSCROLL;
-        break;
-      case SB_BOTH:
-        flags = WS_HSCROLL|WS_VSCROLL;
-        break;
-      default:
-        return 0;
-    }
-
-    if (lParam) {
-      editor->styleFlags |= flags;
-      if (flags & WS_HSCROLL)
-        ITextHost_TxShowScrollBar(editor->texthost, SB_HORZ,
-                          editor->nTotalWidth > editor->sizeWindow.cx);
-      if (flags & WS_VSCROLL)
-        ITextHost_TxShowScrollBar(editor->texthost, SB_VERT,
-                          editor->nTotalLength > editor->sizeWindow.cy);
-    } else {
-      editor->styleFlags &= ~flags;
-      ITextHost_TxShowScrollBar(editor->texthost, wParam, FALSE);
-    }
-    return 0;
   }
   case EM_SETTEXTEX:
   {
@@ -3790,14 +3549,6 @@ LRESULT ME_HandleMessage(ME_TextEditor *editor, UINT msg, WPARAM wParam,
     
     return 0;
   }
-  case EM_SETREADONLY:
-  {
-    if (wParam)
-      editor->styleFlags |= ES_READONLY;
-    else
-      editor->styleFlags &= ~ES_READONLY;
-    return 1;
-  }
   case EM_SETEVENTMASK:
   {
     DWORD nOldMask = editor->nEventMask;
@@ -3867,7 +3618,7 @@ LRESULT ME_HandleMessage(ME_TextEditor *editor, UINT msg, WPARAM wParam,
   }
   case EM_LINESCROLL:
   {
-    if (!(editor->styleFlags & ES_MULTILINE))
+    if (!(editor->props & TXTBIT_MULTILINE))
       return FALSE;
     ME_ScrollDown( editor, lParam * get_default_line_height( editor ) );
     return TRUE;
@@ -3991,8 +3742,7 @@ LRESULT ME_HandleMessage(ME_TextEditor *editor, UINT msg, WPARAM wParam,
   {
     int nFrom, nTo, nStartCur = ME_GetSelectionOfs(editor, &nFrom, &nTo);
     ME_Cursor *from = &editor->pCursors[nStartCur];
-    return ME_GetTextRange(editor, (WCHAR *)lParam, from,
-                           nTo - nFrom, unicode);
+    return get_text_range( editor, (WCHAR *)lParam, from, nTo - nFrom );
   }
   case EM_GETSCROLLPOS:
   {
@@ -4021,7 +3771,7 @@ LRESULT ME_HandleMessage(ME_TextEditor *editor, UINT msg, WPARAM wParam,
     if (nStart >= nEnd) return 0;
 
     cursor_from_char_ofs( editor, nStart, &start );
-    return ME_GetTextRange( editor, rng->lpstrText, &start, nEnd - nStart, TRUE );
+    return get_text_range( editor, rng->lpstrText, &start, nEnd - nStart );
   }
   case EM_GETLINE:
   {
@@ -4030,11 +3780,9 @@ LRESULT ME_HandleMessage(ME_TextEditor *editor, UINT msg, WPARAM wParam,
     const unsigned int nMaxChars = *(WORD *) lParam;
     unsigned int nCharsLeft = nMaxChars;
     char *dest = (char *) lParam;
-    BOOL wroteNull = FALSE;
     ME_Cursor start, end;
 
-    TRACE("EM_GETLINE: row=%d, nMaxChars=%d (%s)\n", (int) wParam, nMaxChars,
-          unicode ? "Unicode" : "Ansi");
+    TRACE( "EM_GETLINE: row=%d, nMaxChars=%d\n", (int)wParam, nMaxChars );
 
     row = row_from_row_number( editor, wParam );
     if (row == NULL) return 0;
@@ -4052,30 +3800,18 @@ LRESULT ME_HandleMessage(ME_TextEditor *editor, UINT msg, WPARAM wParam,
       str = get_text( run, ofs );
       nCopy = min( nCharsLeft, len );
 
-      if (unicode)
-        memcpy(dest, str, nCopy * sizeof(WCHAR));
-      else
-        nCopy = WideCharToMultiByte(CP_ACP, 0, str, nCopy, dest,
-                                    nCharsLeft, NULL, NULL);
-      dest += nCopy * (unicode ? sizeof(WCHAR) : 1);
+      memcpy(dest, str, nCopy * sizeof(WCHAR));
+      dest += nCopy * sizeof(WCHAR);
       nCharsLeft -= nCopy;
       if (run == end.run) break;
       run = row_next_run( row, run );
     }
 
     /* append line termination, space allowing */
-    if (nCharsLeft > 0)
-    {
-      if (unicode)
-        *((WCHAR *)dest) = '\0';
-      else
-        *dest = '\0';
-      nCharsLeft--;
-      wroteNull = TRUE;
-    }
+    if (nCharsLeft > 0) *((WCHAR *)dest) = '\0';
 
     TRACE("EM_GETLINE: got %u characters\n", nMaxChars - nCharsLeft);
-    return nMaxChars - nCharsLeft - (wroteNull ? 1 : 0);
+    return nMaxChars - nCharsLeft;
   }
   case EM_GETLINECOUNT:
   {
@@ -4225,7 +3961,7 @@ LRESULT ME_HandleMessage(ME_TextEditor *editor, UINT msg, WPARAM wParam,
     return (wParam >= 0x40000) ? 0 : MAKELONG( pt.x, pt.y );
   }
   case WM_CREATE:
-    return ME_WmCreate(editor, lParam, unicode);
+    return ME_WmCreate( editor );
   case WM_SETCURSOR:
   {
     POINT cursor_pos;
@@ -4238,9 +3974,6 @@ LRESULT ME_HandleMessage(ME_TextEditor *editor, UINT msg, WPARAM wParam,
   case WM_LBUTTONDOWN:
   {
     ME_CommitUndo(editor); /* End coalesced undos for typed characters */
-    if ((editor->nEventMask & ENM_MOUSEEVENTS) &&
-        !ME_FilterEvent(editor, msg, &wParam, &lParam))
-      return 0;
     ITextHost_TxSetFocus(editor->texthost);
     ME_LButtonDown(editor, (short)LOWORD(lParam), (short)HIWORD(lParam),
                    ME_CalculateClickCount(editor, msg, wParam, lParam));
@@ -4251,9 +3984,6 @@ LRESULT ME_HandleMessage(ME_TextEditor *editor, UINT msg, WPARAM wParam,
     break;
   }
   case WM_MOUSEMOVE:
-    if ((editor->nEventMask & ENM_MOUSEEVENTS) &&
-        !ME_FilterEvent(editor, msg, &wParam, &lParam))
-      return 0;
     if (editor->bMouseCaptured)
       ME_MouseMove(editor, (short)LOWORD(lParam), (short)HIWORD(lParam));
     else
@@ -4269,9 +3999,6 @@ LRESULT ME_HandleMessage(ME_TextEditor *editor, UINT msg, WPARAM wParam,
     }
     if (editor->nSelectionType == stDocument)
       editor->nSelectionType = stPosition;
-    if ((editor->nEventMask & ENM_MOUSEEVENTS) &&
-        !ME_FilterEvent(editor, msg, &wParam, &lParam))
-      return 0;
     else
     {
       ME_SetCursor(editor);
@@ -4282,9 +4009,6 @@ LRESULT ME_HandleMessage(ME_TextEditor *editor, UINT msg, WPARAM wParam,
   case WM_RBUTTONDOWN:
   case WM_RBUTTONDBLCLK:
     ME_CommitUndo(editor); /* End coalesced undos for typed characters */
-    if ((editor->nEventMask & ENM_MOUSEEVENTS) &&
-        !ME_FilterEvent(editor, msg, &wParam, &lParam))
-      return 0;
     ME_LinkNotify(editor, msg, wParam, lParam);
     goto do_default;
   case WM_CONTEXTMENU:
@@ -4296,7 +4020,7 @@ LRESULT ME_HandleMessage(ME_TextEditor *editor, UINT msg, WPARAM wParam,
     create_caret(editor);
     update_caret(editor);
     ME_SendOldNotify(editor, EN_SETFOCUS);
-    if (!editor->bHideSelection && !(editor->styleFlags & ES_NOHIDESEL))
+    if (!editor->bHideSelection && (editor->props & TXTBIT_HIDESELECTION))
         ME_InvalidateSelection( editor );
     return 0;
   case WM_KILLFOCUS:
@@ -4306,47 +4030,32 @@ LRESULT ME_HandleMessage(ME_TextEditor *editor, UINT msg, WPARAM wParam,
     hide_caret(editor);
     DestroyCaret();
     ME_SendOldNotify(editor, EN_KILLFOCUS);
-    if (!editor->bHideSelection && !(editor->styleFlags & ES_NOHIDESEL))
+    if (!editor->bHideSelection && (editor->props & TXTBIT_HIDESELECTION))
         ME_InvalidateSelection( editor );
     return 0;
   case WM_COMMAND:
     TRACE("editor wnd command = %d\n", LOWORD(wParam));
     return 0;
-  case WM_KEYUP:
-    if ((editor->nEventMask & ENM_KEYEVENTS) &&
-        !ME_FilterEvent(editor, msg, &wParam, &lParam))
-      return 0;
-    goto do_default;
   case WM_KEYDOWN:
-    if ((editor->nEventMask & ENM_KEYEVENTS) &&
-        !ME_FilterEvent(editor, msg, &wParam, &lParam))
-      return 0;
     if (ME_KeyDown(editor, LOWORD(wParam)))
       return 0;
     goto do_default;
   case WM_CHAR:
-    if ((editor->nEventMask & ENM_KEYEVENTS) &&
-        !ME_FilterEvent(editor, msg, &wParam, &lParam))
-      return 0;
     return handle_wm_char( editor, wParam, lParam );
   case WM_UNICHAR:
-    if (unicode)
-    {
-        if(wParam == UNICODE_NOCHAR) return TRUE;
-        if(wParam <= 0x000fffff)
-        {
-            if(wParam > 0xffff) /* convert to surrogates */
-            {
-                wParam -= 0x10000;
-                handle_wm_char( editor, (wParam >> 10) + 0xd800, 0 );
-                handle_wm_char( editor, (wParam & 0x03ff) + 0xdc00, 0 );
-            }
-            else
-                handle_wm_char( editor, wParam, 0 );
-        }
-        return 0;
-    }
-    break;
+      if (wParam == UNICODE_NOCHAR) return TRUE;
+      if (wParam <= 0x000fffff)
+      {
+          if (wParam > 0xffff) /* convert to surrogates */
+          {
+              wParam -= 0x10000;
+              handle_wm_char( editor, (wParam >> 10) + 0xd800, 0 );
+              handle_wm_char( editor, (wParam & 0x03ff) + 0xdc00, 0 );
+          }
+          else
+              handle_wm_char( editor, wParam, 0 );
+      }
+      return 0;
   case EM_STOPGROUPTYPING:
     ME_CommitUndo(editor); /* End coalesced undos for typed characters */
     return 0;
@@ -4434,16 +4143,8 @@ LRESULT ME_HandleMessage(ME_TextEditor *editor, UINT msg, WPARAM wParam,
   }
   case WM_MOUSEWHEEL:
   {
-    int delta;
-    BOOL ctrl_is_down;
-
-    if ((editor->nEventMask & ENM_MOUSEEVENTS) &&
-        !ME_FilterEvent(editor, msg, &wParam, &lParam))
-      return 0;
-
-    ctrl_is_down = GetKeyState(VK_CONTROL) & 0x8000;
-
-    delta = GET_WHEEL_DELTA_WPARAM(wParam);
+    int delta = GET_WHEEL_DELTA_WPARAM( wParam );
+    BOOL ctrl_is_down = GetKeyState( VK_CONTROL ) & 0x8000;
 
     /* if scrolling changes direction, ignore left overs */
     if ((delta < 0 && editor->wheel_remain < 0) ||
@@ -4478,78 +4179,9 @@ LRESULT ME_HandleMessage(ME_TextEditor *editor, UINT msg, WPARAM wParam,
     }
     break;
   }
-  case EM_GETRECT:
-  {
-    *((RECT *)lParam) = editor->rcFormat;
-    if (editor->bDefaultFormatRect)
-      ((RECT *)lParam)->left -= editor->selofs;
-    return 0;
-  }
-  case EM_SETRECT:
-  case EM_SETRECTNP:
-  {
-    if (lParam)
-    {
-      int border = 0;
-      RECT clientRect;
-      RECT *rc = (RECT *)lParam;
-
-      border = editor->exStyleFlags & WS_EX_CLIENTEDGE ? 1 : 0;
-      ITextHost_TxGetClientRect(editor->texthost, &clientRect);
-      if (wParam == 0)
-      {
-        editor->rcFormat.top = max(0, rc->top - border);
-        editor->rcFormat.left = max(0, rc->left - border);
-        editor->rcFormat.bottom = min(clientRect.bottom, rc->bottom);
-        editor->rcFormat.right = min(clientRect.right, rc->right + border);
-      } else if (wParam == 1) {
-        /* MSDN incorrectly says a wParam value of 1 causes the
-         * lParam rect to be used as a relative offset,
-         * however, the tests show it just prevents min/max bound
-         * checking. */
-        editor->rcFormat.top = rc->top - border;
-        editor->rcFormat.left = rc->left - border;
-        editor->rcFormat.bottom = rc->bottom;
-        editor->rcFormat.right = rc->right + border;
-      } else {
-        return 0;
-      }
-      editor->bDefaultFormatRect = FALSE;
-    }
-    else
-    {
-      ME_SetDefaultFormatRect(editor);
-      editor->bDefaultFormatRect = TRUE;
-    }
-    editor_mark_rewrap_all( editor );
-    ME_WrapMarkedParagraphs(editor);
-    ME_UpdateScrollBar(editor);
-    if (msg != EM_SETRECTNP)
-      ME_Repaint(editor);
-    return 0;
-  }
   case EM_REQUESTRESIZE:
     ME_SendRequestResize(editor, TRUE);
     return 0;
-  case WM_SETREDRAW:
-    goto do_default;
-  case WM_WINDOWPOSCHANGED:
-  {
-    RECT clientRect;
-    WINDOWPOS *winpos = (WINDOWPOS *)lParam;
-
-    if (winpos->flags & SWP_NOCLIENTSIZE) goto do_default;
-    ITextHost_TxGetClientRect(editor->texthost, &clientRect);
-    if (editor->bDefaultFormatRect) {
-      ME_SetDefaultFormatRect(editor);
-    } else {
-      editor->rcFormat.right += clientRect.right - editor->prevClientRect.right;
-      editor->rcFormat.bottom += clientRect.bottom - editor->prevClientRect.bottom;
-    }
-    editor->prevClientRect = clientRect;
-    ME_RewrapRepaint(editor);
-    goto do_default;
-  }
   /* IME messages to make richedit controls IME aware */
   case WM_IME_SETCONTEXT:
   case WM_IME_CONTROL:
@@ -4677,7 +4309,7 @@ LRESULT ME_HandleMessage(ME_TextEditor *editor, UINT msg, WPARAM wParam,
   case EM_SETTARGETDEVICE:
     if (wParam == 0)
     {
-      BOOL new = (lParam == 0 && (editor->styleFlags & ES_MULTILINE));
+      BOOL new = (lParam == 0 && (editor->props & TXTBIT_MULTILINE));
       if (editor->nAvailWidth || editor->bWordWrap != new)
       {
         editor->bWordWrap = new;
@@ -4686,7 +4318,7 @@ LRESULT ME_HandleMessage(ME_TextEditor *editor, UINT msg, WPARAM wParam,
       }
     } else {
       int width = max(0, lParam);
-      if ((editor->styleFlags & ES_MULTILINE) &&
+      if ((editor->props & TXTBIT_MULTILINE) &&
           (!editor->bWordWrap || editor->nAvailWidth != width))
       {
         editor->nAvailWidth = width;

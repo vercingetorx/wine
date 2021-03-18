@@ -383,8 +383,8 @@ typedef struct tagME_TextEditor
   BOOL bEmulateVersion10;
   ME_TextBuffer *pBuffer;
   ME_Cursor *pCursors;
-  DWORD styleFlags;
-  DWORD exStyleFlags;
+  DWORD props;
+  DWORD scrollbars;
   int nCursors;
   SIZE sizeWindow;
   int nTotalLength, nLastTotalLength;
@@ -406,9 +406,7 @@ typedef struct tagME_TextEditor
   ME_Paragraph *last_sel_start_para, *last_sel_end_para;
   ME_FontCacheItem pFontCache[HFONT_CACHE_SIZE];
   int nZoomNumerator, nZoomDenominator;
-  RECT prevClientRect;
   RECT rcFormat;
-  BOOL bDefaultFormatRect;
   BOOL bWordWrap;
   int nTextLimit;
   EDITWORDBREAKPROCW pfnWordBreak;
@@ -422,7 +420,6 @@ typedef struct tagME_TextEditor
   BOOL AutoURLDetect_bEnable;
   WCHAR cPasswordMask;
   BOOL bHaveFocus;
-  BOOL bDialogMode; /* Indicates that we are inside a dialog window */
   /*for IME */
   int imeStartIndex;
   DWORD selofs; /* The size of the selection bar on the left side of control */

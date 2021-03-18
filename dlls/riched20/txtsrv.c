@@ -130,16 +130,16 @@ static ULONG WINAPI fnTextSrv_Release(ITextServices *iface)
 }
 
 DEFINE_THISCALL_WRAPPER(fnTextSrv_TxSendMessage,20)
-DECLSPEC_HIDDEN HRESULT __thiscall fnTextSrv_TxSendMessage(ITextServices *iface, UINT msg, WPARAM wparam,
-                                                           LPARAM lparam, LRESULT *plresult)
+DECLSPEC_HIDDEN HRESULT __thiscall fnTextSrv_TxSendMessage( ITextServices *iface, UINT msg, WPARAM wparam,
+                                                            LPARAM lparam, LRESULT *result )
 {
-   struct text_services *services = impl_from_ITextServices( iface );
-   HRESULT hresult;
-   LRESULT lresult;
+    struct text_services *services = impl_from_ITextServices( iface );
+    HRESULT hr;
+    LRESULT res;
 
-   lresult = ME_HandleMessage( services->editor, msg, wparam, lparam, TRUE, &hresult );
-   if (plresult) *plresult = lresult;
-   return hresult;
+    res = editor_handle_message( services->editor, msg, wparam, lparam, &hr );
+    if (result) *result = res;
+    return hr;
 }
 
 DEFINE_THISCALL_WRAPPER(fnTextSrv_TxDraw,52)
@@ -165,7 +165,7 @@ DECLSPEC_HIDDEN HRESULT __thiscall fnTextSrv_TxGetHScroll( ITextServices *iface,
     if (max_pos) *max_pos = services->editor->horz_si.nMax;
     if (pos) *pos = services->editor->horz_si.nPos;
     if (page) *page = services->editor->horz_si.nPage;
-    if (enabled) *enabled = (services->editor->styleFlags & WS_HSCROLL) != 0;
+    if (enabled) *enabled = (services->editor->scrollbars & WS_HSCROLL) != 0;
     return S_OK;
 }
 
@@ -179,7 +179,7 @@ DECLSPEC_HIDDEN HRESULT __thiscall fnTextSrv_TxGetVScroll( ITextServices *iface,
     if (max_pos) *max_pos = services->editor->vert_si.nMax;
     if (pos) *pos = services->editor->vert_si.nPos;
     if (page) *page = services->editor->vert_si.nPage;
-    if (enabled) *enabled = (services->editor->styleFlags & WS_VSCROLL) != 0;
+    if (enabled) *enabled = (services->editor->scrollbars & WS_VSCROLL) != 0;
     return S_OK;
 }
 
@@ -204,6 +204,25 @@ DECLSPEC_HIDDEN HRESULT __thiscall fnTextSrv_TxQueryHitPoint(ITextServices *ifac
 
     FIXME( "%p: STUB\n", services );
     return E_NOTIMPL;
+}
+
+static HRESULT update_client_rect( struct text_services *services, const RECT *client )
+{
+    RECT rect;
+    HRESULT hr = S_OK;
+
+    if (!client)
+    {
+        hr = ITextHost_TxGetClientRect( services->host, &rect );
+        client = &rect;
+    }
+
+    if (SUCCEEDED( hr ))
+    {
+        services->editor->rcFormat = *client;
+        services->editor->rcFormat.left += services->editor->selofs;
+    }
+    return hr;
 }
 
 DEFINE_THISCALL_WRAPPER(fnTextSrv_OnTxInplaceActivate,8)
@@ -322,12 +341,58 @@ DECLSPEC_HIDDEN HRESULT __thiscall fnTextSrv_TxGetDropTarget(ITextServices *ifac
 }
 
 DEFINE_THISCALL_WRAPPER(fnTextSrv_OnTxPropertyBitsChange,12)
-DECLSPEC_HIDDEN HRESULT __thiscall fnTextSrv_OnTxPropertyBitsChange(ITextServices *iface, DWORD dwMask, DWORD dwBits)
+DECLSPEC_HIDDEN HRESULT __thiscall fnTextSrv_OnTxPropertyBitsChange( ITextServices *iface, DWORD mask, DWORD bits )
 {
     struct text_services *services = impl_from_ITextServices( iface );
+    DWORD scrollbars;
+    HRESULT hr;
+    BOOL repaint = FALSE;
 
-    FIXME( "%p: STUB\n", services );
-    return E_NOTIMPL;
+    TRACE( "%p, mask %08x, bits %08x\n", services, mask, bits );
+
+    services->editor->props = (services->editor->props & ~mask) | (bits & mask);
+
+    if (mask & TXTBIT_SCROLLBARCHANGE)
+    {
+        hr = ITextHost_TxGetScrollBars( services->host, &scrollbars );
+        if (SUCCEEDED( hr ))
+        {
+            if ((services->editor->scrollbars ^ scrollbars) & WS_HSCROLL)
+                ITextHost_TxShowScrollBar( services->host, SB_HORZ, (scrollbars & WS_HSCROLL) &&
+                                           services->editor->nTotalWidth > services->editor->sizeWindow.cx );
+            if ((services->editor->scrollbars ^ scrollbars) & WS_VSCROLL)
+                ITextHost_TxShowScrollBar( services->host, SB_VERT, (scrollbars & WS_VSCROLL) &&
+                                           services->editor->nTotalLength > services->editor->sizeWindow.cy );
+            services->editor->scrollbars = scrollbars;
+        }
+    }
+
+    if ((mask & TXTBIT_HIDESELECTION) && !services->editor->bHaveFocus) ME_InvalidateSelection( services->editor );
+
+    if (mask & TXTBIT_SELBARCHANGE)
+    {
+        LONG width;
+
+        hr = ITextHost_TxGetSelectionBarWidth( services->host, &width );
+        if (hr == S_OK)
+        {
+            ITextHost_TxInvalidateRect( services->host, &services->editor->rcFormat, TRUE );
+            services->editor->rcFormat.left -= services->editor->selofs;
+            services->editor->selofs = width ? SELECTIONBAR_WIDTH : 0; /* FIXME: convert from HIMETRIC */
+            services->editor->rcFormat.left += services->editor->selofs;
+            repaint = TRUE;
+        }
+    }
+
+    if (mask & TXTBIT_CLIENTRECTCHANGE)
+    {
+        hr = update_client_rect( services, NULL );
+        if (SUCCEEDED( hr )) repaint = TRUE;
+    }
+
+    if (repaint) ME_RewrapRepaint( services->editor );
+
+    return S_OK;
 }
 
 DEFINE_THISCALL_WRAPPER(fnTextSrv_TxGetCachedSize,12)

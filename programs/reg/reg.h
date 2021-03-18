@@ -24,19 +24,39 @@
 #define MAX_SUBKEY_LEN   257
 
 /* reg.c */
+struct reg_type_rels {
+    DWORD type;
+    const WCHAR *name;
+};
+
+extern const struct reg_type_rels type_rels[8];
+
 void *heap_xalloc(size_t size);
 void *heap_xrealloc(void *buf, size_t size);
 void output_writeconsole(const WCHAR *str, DWORD wlen);
 void WINAPIV output_message(unsigned int id, ...);
+void WINAPIV output_string(const WCHAR *fmt, ...);
 BOOL ask_confirm(unsigned int msgid, WCHAR *reg_info);
 HKEY path_get_rootkey(const WCHAR *path);
 WCHAR *build_subkey_path(WCHAR *path, DWORD path_len, WCHAR *subkey_name, DWORD subkey_len);
 BOOL parse_registry_key(const WCHAR *key, HKEY *root, WCHAR **path, WCHAR **long_key);
 
-/* import.c */
-int reg_import(const WCHAR *filename);
+/* add.c */
+int reg_add(HKEY root, WCHAR *path, WCHAR *value_name, BOOL value_empty,
+            WCHAR *type, WCHAR separator, WCHAR *data, BOOL force);
+
+/* delete.c */
+int reg_delete(HKEY root, WCHAR *path, WCHAR *key_name, WCHAR *value_name,
+               BOOL value_empty, BOOL value_all, BOOL force);
 
 /* export.c */
 int reg_export(int argc, WCHAR *argv[]);
+
+/* import.c */
+int reg_import(const WCHAR *filename);
+
+/* query.c */
+int reg_query(HKEY root, WCHAR *path, WCHAR *key_name, WCHAR *value_name,
+              BOOL value_empty, BOOL recurse);
 
 #endif /* __REG_H__ */
