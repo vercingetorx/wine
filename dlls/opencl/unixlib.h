@@ -39,7 +39,6 @@ struct opencl_funcs
     cl_int (WINAPI *pclGetDeviceInfo)( cl_device_id device, cl_device_info param_name, size_t param_value_size, void* param_value, size_t* param_value_size_ret );
     cl_int (WINAPI *pclGetEventInfo)( cl_event event, cl_event_info param_name, size_t param_value_size, void* param_value, size_t* param_value_size_ret );
     cl_int (WINAPI *pclGetEventProfilingInfo)( cl_event event, cl_profiling_info param_name, size_t param_value_size, void* param_value, size_t* param_value_size_ret );
-    void* (WINAPI *pclGetExtensionFunctionAddress)( const char* func_name );
     cl_int (WINAPI *pclGetImageInfo)( cl_mem image, cl_image_info param_name, size_t param_value_size, void* param_value, size_t* param_value_size_ret );
     cl_int (WINAPI *pclGetKernelInfo)( cl_kernel kernel, cl_kernel_info param_name, size_t param_value_size, void* param_value, size_t* param_value_size_ret );
     cl_int (WINAPI *pclGetKernelWorkGroupInfo)( cl_kernel kernel, cl_device_id device, cl_kernel_work_group_info param_name, size_t param_value_size, void* param_value, size_t* param_value_size_ret );
@@ -64,7 +63,6 @@ struct opencl_funcs
     cl_int (WINAPI *pclRetainMemObject)( cl_mem memobj );
     cl_int (WINAPI *pclRetainProgram)( cl_program program );
     cl_int (WINAPI *pclRetainSampler)( cl_sampler sampler );
-    cl_int (WINAPI *pclSetCommandQueueProperty)( cl_command_queue command_queue, cl_command_queue_properties properties, cl_bool enable, cl_command_queue_properties* old_properties );
     cl_int (WINAPI *pclSetKernelArg)( cl_kernel kernel, cl_uint arg_index, size_t arg_size, const void* arg_value );
     cl_int (WINAPI *pclUnloadCompiler)( void  );
     cl_int (WINAPI *pclWaitForEvents)( cl_uint num_events, const cl_event* event_list );

@@ -392,8 +392,6 @@ typedef struct tagME_TextEditor
   int nAvailWidth; /* 0 = wrap to client area, else wrap width in twips */
   int nUDArrowX;
   int total_rows;
-  COLORREF rgbBackColor;
-  HBRUSH hbrBackground;
   int nEventMask;
   int nModifyStep;
   struct list undo_stack;
@@ -418,7 +416,7 @@ typedef struct tagME_TextEditor
   int mode;
   BOOL bHideSelection;
   BOOL AutoURLDetect_bEnable;
-  WCHAR cPasswordMask;
+  WCHAR password_char;
   BOOL bHaveFocus;
   /*for IME */
   int imeStartIndex;
@@ -430,6 +428,8 @@ typedef struct tagME_TextEditor
 
   /* Cache previously set scrollbar info */
   SCROLLINFO vert_si, horz_si;
+  unsigned int vert_sb_enabled : 1;
+  unsigned int horz_sb_enabled : 1;
 
   int caret_height;
   BOOL caret_hidden;

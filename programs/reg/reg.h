@@ -19,6 +19,8 @@
 #ifndef __REG_H__
 #define __REG_H__
 
+#include <windows.h>
+#include <wine/heap.h>
 #include "resource.h"
 
 #define MAX_SUBKEY_LEN   257
@@ -40,6 +42,7 @@ BOOL ask_confirm(unsigned int msgid, WCHAR *reg_info);
 HKEY path_get_rootkey(const WCHAR *path);
 WCHAR *build_subkey_path(WCHAR *path, DWORD path_len, WCHAR *subkey_name, DWORD subkey_len);
 BOOL parse_registry_key(const WCHAR *key, HKEY *root, WCHAR **path, WCHAR **long_key);
+BOOL is_switch(const WCHAR *s, const WCHAR c);
 
 /* add.c */
 int reg_add(HKEY root, WCHAR *path, WCHAR *value_name, BOOL value_empty,
@@ -50,10 +53,10 @@ int reg_delete(HKEY root, WCHAR *path, WCHAR *key_name, WCHAR *value_name,
                BOOL value_empty, BOOL value_all, BOOL force);
 
 /* export.c */
-int reg_export(int argc, WCHAR *argv[]);
+int reg_export(int argc, WCHAR *argvW[]);
 
 /* import.c */
-int reg_import(const WCHAR *filename);
+int reg_import(int argc, WCHAR *argvW[]);
 
 /* query.c */
 int reg_query(HKEY root, WCHAR *path, WCHAR *key_name, WCHAR *value_name,

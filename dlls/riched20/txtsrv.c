@@ -184,14 +184,21 @@ DECLSPEC_HIDDEN HRESULT __thiscall fnTextSrv_TxGetVScroll( ITextServices *iface,
 }
 
 DEFINE_THISCALL_WRAPPER(fnTextSrv_OnTxSetCursor,40)
-DECLSPEC_HIDDEN HRESULT __thiscall fnTextSrv_OnTxSetCursor(ITextServices *iface, DWORD dwDrawAspect, LONG lindex,
-                                                           void *pvAspect, DVTARGETDEVICE *ptd, HDC hdcDraw,
-                                                           HDC hicTargetDev, LPCRECT lprcClient, INT x, INT y)
+DECLSPEC_HIDDEN HRESULT __thiscall fnTextSrv_OnTxSetCursor( ITextServices *iface, DWORD aspect, LONG index,
+                                                            void *aspect_info, DVTARGETDEVICE *td, HDC draw,
+                                                            HDC target, const RECT *client, INT x, INT y )
 {
     struct text_services *services = impl_from_ITextServices( iface );
 
-    FIXME( "%p: STUB\n", services );
-    return E_NOTIMPL;
+    TRACE( "%p: %d, %d, %p, %p, draw %p target %p client %s pos (%d, %d)\n", services, aspect, index, aspect_info, td, draw,
+           target, wine_dbgstr_rect( client ), x, y );
+
+    if (aspect != DVASPECT_CONTENT || index || aspect_info || td || draw || target || client)
+        FIXME( "Ignoring most params\n" );
+
+    link_notify( services->editor, WM_SETCURSOR, 0, MAKELPARAM( x, y ) );
+    editor_set_cursor( services->editor, x, y );
+    return S_OK;
 }
 
 DEFINE_THISCALL_WRAPPER(fnTextSrv_TxQueryHitPoint,44)
@@ -225,8 +232,8 @@ static HRESULT update_client_rect( struct text_services *services, const RECT *c
     return hr;
 }
 
-DEFINE_THISCALL_WRAPPER(fnTextSrv_OnTxInplaceActivate,8)
-DECLSPEC_HIDDEN HRESULT __thiscall fnTextSrv_OnTxInplaceActivate(ITextServices *iface, LPCRECT prcClient)
+DEFINE_THISCALL_WRAPPER(fnTextSrv_OnTxInPlaceActivate,8)
+DECLSPEC_HIDDEN HRESULT __thiscall fnTextSrv_OnTxInPlaceActivate(ITextServices *iface, LPCRECT prcClient)
 {
     struct text_services *services = impl_from_ITextServices( iface );
 
@@ -234,8 +241,8 @@ DECLSPEC_HIDDEN HRESULT __thiscall fnTextSrv_OnTxInplaceActivate(ITextServices *
     return E_NOTIMPL;
 }
 
-DEFINE_THISCALL_WRAPPER(fnTextSrv_OnTxInplaceDeactivate,4)
-DECLSPEC_HIDDEN HRESULT __thiscall fnTextSrv_OnTxInplaceDeactivate(ITextServices *iface)
+DEFINE_THISCALL_WRAPPER(fnTextSrv_OnTxInPlaceDeactivate,4)
+DECLSPEC_HIDDEN HRESULT __thiscall fnTextSrv_OnTxInPlaceDeactivate(ITextServices *iface)
 {
     struct text_services *services = impl_from_ITextServices( iface );
 
@@ -351,6 +358,8 @@ DECLSPEC_HIDDEN HRESULT __thiscall fnTextSrv_OnTxPropertyBitsChange( ITextServic
     TRACE( "%p, mask %08x, bits %08x\n", services, mask, bits );
 
     services->editor->props = (services->editor->props & ~mask) | (bits & mask);
+    if (mask & (TXTBIT_WORDWRAP | TXTBIT_MULTILINE))
+        services->editor->bWordWrap = (services->editor->props & TXTBIT_WORDWRAP) && (services->editor->props & TXTBIT_MULTILINE);
 
     if (mask & TXTBIT_SCROLLBARCHANGE)
     {
@@ -388,6 +397,13 @@ DECLSPEC_HIDDEN HRESULT __thiscall fnTextSrv_OnTxPropertyBitsChange( ITextServic
     {
         hr = update_client_rect( services, NULL );
         if (SUCCEEDED( hr )) repaint = TRUE;
+    }
+
+    if (mask & TXTBIT_USEPASSWORD)
+    {
+        if (bits & TXTBIT_USEPASSWORD) ITextHost_TxGetPasswordChar( services->host, &services->editor->password_char );
+        else services->editor->password_char = 0;
+        repaint = TRUE;
     }
 
     if (repaint) ME_RewrapRepaint( services->editor );
@@ -434,8 +450,8 @@ DEFINE_STDCALL_WRAPPER(5, ITextServices_TxGetHScroll)
 DEFINE_STDCALL_WRAPPER(6, ITextServices_TxGetVScroll)
 DEFINE_STDCALL_WRAPPER(7, ITextServices_OnTxSetCursor)
 DEFINE_STDCALL_WRAPPER(8, ITextServices_TxQueryHitPoint)
-DEFINE_STDCALL_WRAPPER(9, ITextServices_OnTxInplaceActivate)
-DEFINE_STDCALL_WRAPPER(10, ITextServices_OnTxInplaceDeactivate)
+DEFINE_STDCALL_WRAPPER(9, ITextServices_OnTxInPlaceActivate)
+DEFINE_STDCALL_WRAPPER(10, ITextServices_OnTxInPlaceDeactivate)
 DEFINE_STDCALL_WRAPPER(11, ITextServices_OnTxUIActivate)
 DEFINE_STDCALL_WRAPPER(12, ITextServices_OnTxUIDeactivate)
 DEFINE_STDCALL_WRAPPER(13, ITextServices_TxGetText)
@@ -458,8 +474,8 @@ const ITextServicesVtbl text_services_stdcall_vtbl =
     STDCALL(ITextServices_TxGetVScroll),
     STDCALL(ITextServices_OnTxSetCursor),
     STDCALL(ITextServices_TxQueryHitPoint),
-    STDCALL(ITextServices_OnTxInplaceActivate),
-    STDCALL(ITextServices_OnTxInplaceDeactivate),
+    STDCALL(ITextServices_OnTxInPlaceActivate),
+    STDCALL(ITextServices_OnTxInPlaceDeactivate),
     STDCALL(ITextServices_OnTxUIActivate),
     STDCALL(ITextServices_OnTxUIDeactivate),
     STDCALL(ITextServices_TxGetText),
@@ -485,8 +501,8 @@ static const ITextServicesVtbl textservices_vtbl =
     THISCALL(fnTextSrv_TxGetVScroll),
     THISCALL(fnTextSrv_OnTxSetCursor),
     THISCALL(fnTextSrv_TxQueryHitPoint),
-    THISCALL(fnTextSrv_OnTxInplaceActivate),
-    THISCALL(fnTextSrv_OnTxInplaceDeactivate),
+    THISCALL(fnTextSrv_OnTxInPlaceActivate),
+    THISCALL(fnTextSrv_OnTxInPlaceDeactivate),
     THISCALL(fnTextSrv_OnTxUIActivate),
     THISCALL(fnTextSrv_OnTxUIDeactivate),
     THISCALL(fnTextSrv_TxGetText),

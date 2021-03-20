@@ -80,11 +80,14 @@ static const char * const cpu_names[] = { "x86", "x86_64", "PowerPC", "ARM", "AR
 
 static UINT process_error_mode;
 
-static client_cpu_t get_machine_cpu( WORD machine )
+static client_cpu_t get_machine_cpu( pe_image_info_t *pe_info )
 {
-    switch (machine)
+    switch (pe_info->machine)
     {
-    case IMAGE_FILE_MACHINE_I386:  return CPU_x86;
+    case IMAGE_FILE_MACHINE_I386:
+        if ((is_win64 || is_wow64) && (pe_info->image_flags & IMAGE_FLAGS_ComPlusNativeReady))
+            return CPU_x86_64;
+        return CPU_x86;
     case IMAGE_FILE_MACHINE_AMD64: return CPU_x86_64;
     case IMAGE_FILE_MACHINE_ARMNT: return CPU_ARM;
     case IMAGE_FILE_MACHINE_ARM64: return CPU_ARM64;
@@ -281,13 +284,12 @@ static startup_info_t *create_startup_info( const RTL_USER_PROCESS_PARAMETERS *p
  */
 static BOOL is_builtin_path( UNICODE_STRING *path, BOOL *is_64bit )
 {
-    static const WCHAR systemW[] = {'\\','?','?','\\','c',':','\\','w','i','n','d','o','w','s','\\',
-                                    's','y','s','t','e','m','3','2','\\'};
     static const WCHAR wow64W[] = {'\\','?','?','\\','c',':','\\','w','i','n','d','o','w','s','\\',
                                    's','y','s','w','o','w','6','4'};
 
     *is_64bit = is_win64;
-    if (path->Length > sizeof(systemW) && !wcsnicmp( path->Buffer, systemW, ARRAY_SIZE(systemW) ))
+    if (path->Length > wcslen(system_dir) * sizeof(WCHAR) &&
+        !wcsnicmp( path->Buffer, system_dir, wcslen(system_dir) ))
     {
 #ifndef _WIN64
         if (NtCurrentTeb64() && NtCurrentTeb64()->TlsSlots[WOW64_TLS_FILESYSREDIR]) *is_64bit = TRUE;
@@ -680,7 +682,7 @@ void DECLSPEC_NORETURN exec_process( NTSTATUS status )
     SERVER_START_REQ( exec_process )
     {
         req->socket_fd = socketfd[1];
-        req->cpu       = get_machine_cpu( pe_info.machine );
+        req->cpu       = get_machine_cpu( &pe_info );
         status = wine_server_call( req );
     }
     SERVER_END_REQ;
@@ -964,7 +966,7 @@ NTSTATUS WINAPI NtCreateUserProcess( HANDLE *process_handle_ptr, HANDLE *thread_
         req->create_flags   = params->DebugFlags; /* hack: creation flags stored in DebugFlags for now */
         req->socket_fd      = socketfd[1];
         req->access         = process_access;
-        req->cpu            = get_machine_cpu( pe_info.machine );
+        req->cpu            = get_machine_cpu( &pe_info );
         req->info_size      = startup_info_size;
         req->handles_size   = handles_size;
         wine_server_add_data( req, objattr, attr_len );
@@ -991,7 +993,7 @@ NTSTATUS WINAPI NtCreateUserProcess( HANDLE *process_handle_ptr, HANDLE *thread_
             break;
         case STATUS_INVALID_IMAGE_FORMAT:
             ERR( "%s not supported on this installation (%s binary)\n",
-                 debugstr_us(&path), cpu_names[get_machine_cpu(pe_info.machine)] );
+                 debugstr_us(&path), cpu_names[get_machine_cpu(&pe_info)] );
             break;
         }
         goto done;

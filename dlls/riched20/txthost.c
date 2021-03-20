@@ -28,7 +28,6 @@
 #include "wine/debug.h"
 #include "editstr.h"
 #include "rtf.h"
-#include "res.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(richedit);
 
@@ -45,9 +44,12 @@ struct host
     unsigned int sel_bar : 1;
     unsigned int client_edge : 1;
     unsigned int use_set_rect : 1;
+    unsigned int use_back_colour : 1;
     PARAFORMAT2 para_fmt;
     DWORD props, scrollbars, event_mask;
     RECT client_rect, set_rect;
+    COLORREF back_colour;
+    WCHAR password_char;
 };
 
 static const ITextHostVtbl textHostVtbl;
@@ -60,6 +62,10 @@ static void host_init_props( struct host *host )
     DWORD style;
 
     style = GetWindowLongW( host->window, GWL_STYLE );
+
+    /* text services assumes the scrollbars are originally not shown, so hide them.
+       However with ES_DISABLENOSCROLL it'll immediately show them, so don't bother */
+    if (!(style & ES_DISABLENOSCROLL)) ShowScrollBar( host->window, SB_BOTH, FALSE );
 
     host->scrollbars = style & (WS_VSCROLL | WS_HSCROLL | ES_AUTOVSCROLL |
                                 ES_AUTOHSCROLL | ES_DISABLENOSCROLL);
@@ -111,6 +117,8 @@ struct host *host_create( HWND hwnd, CREATESTRUCTW *cs, BOOL emulate_10 )
     texthost->use_set_rect = 0;
     SetRectEmpty( &texthost->set_rect );
     GetClientRect( hwnd, &texthost->client_rect );
+    texthost->use_back_colour = 0;
+    texthost->password_char = (texthost->props & TXTBIT_USEPASSWORD) ? '*' : 0;
 
     return texthost;
 }
@@ -346,6 +354,9 @@ DECLSPEC_HIDDEN HRESULT __thiscall ITextHostImpl_TxGetParaFormat( ITextHost *ifa
 DEFINE_THISCALL_WRAPPER(ITextHostImpl_TxGetSysColor,8)
 DECLSPEC_HIDDEN COLORREF __thiscall ITextHostImpl_TxGetSysColor( ITextHost *iface, int index )
 {
+    struct host *host = impl_from_ITextHost( iface );
+
+    if (index == COLOR_WINDOW && host->use_back_colour) return host->back_colour;
     return GetSysColor( index );
 }
 
@@ -375,8 +386,10 @@ DECLSPEC_HIDDEN HRESULT __thiscall ITextHostImpl_TxGetScrollBars( ITextHost *ifa
 DEFINE_THISCALL_WRAPPER(ITextHostImpl_TxGetPasswordChar,8)
 DECLSPEC_HIDDEN HRESULT __thiscall ITextHostImpl_TxGetPasswordChar( ITextHost *iface, WCHAR *c )
 {
-    *c = '*';
-    return S_OK;
+    struct host *host = impl_from_ITextHost( iface );
+
+    *c = host->password_char;
+    return *c ? S_OK : S_FALSE;
 }
 
 DEFINE_THISCALL_WRAPPER(ITextHostImpl_TxGetAcceleratorPos,8)
@@ -980,8 +993,6 @@ static LRESULT RichEditWndProc_common( HWND hwnd, UINT msg, WPARAM wparam,
         }
         ITextServices_TxSetText( host->text_srv, textW );
         if (lparam) ME_EndToUnicode( codepage, textW );
-
-        hr = ITextServices_TxSendMessage( host->text_srv, msg, wparam, lparam, &res );
         break;
     }
     case WM_DESTROY:
@@ -992,9 +1003,14 @@ static LRESULT RichEditWndProc_common( HWND hwnd, UINT msg, WPARAM wparam,
     {
         HDC hdc = (HDC)wparam;
         RECT rc;
+        HBRUSH brush;
 
         if (GetUpdateRect( editor->hWnd, &rc, TRUE ))
-            FillRect( hdc, &rc, editor->hbrBackground );
+        {
+            brush = CreateSolidBrush( ITextHost_TxGetSysColor( &host->ITextHost_iface, COLOR_WINDOW ) );
+            FillRect( hdc, &rc, brush );
+            DeleteObject( brush );
+        }
         return 1;
     }
     case EM_FINDTEXT:
@@ -1045,6 +1061,10 @@ static LRESULT RichEditWndProc_common( HWND hwnd, UINT msg, WPARAM wparam,
     case EM_GETLINE:
         if (unicode) hr = ITextServices_TxSendMessage( host->text_srv, msg, wparam, lparam, &res );
         else hr = get_lineA( host->text_srv, wparam, lparam, &res );
+        break;
+
+    case EM_GETPASSWORDCHAR:
+        ITextHost_TxGetPasswordChar( &host->ITextHost_iface, (WCHAR *)&res );
         break;
 
     case EM_GETRECT:
@@ -1127,13 +1147,13 @@ static LRESULT RichEditWndProc_common( HWND hwnd, UINT msg, WPARAM wparam,
         HDC hdc;
         RECT rc;
         PAINTSTRUCT ps;
-        HBRUSH old_brush;
+        HBRUSH brush = CreateSolidBrush( ITextHost_TxGetSysColor( &host->ITextHost_iface, COLOR_WINDOW ) );
 
         update_caret( editor );
         hdc = BeginPaint( editor->hWnd, &ps );
         if (!editor->bEmulateVersion10 || (editor->nEventMask & ENM_UPDATE))
             ME_SendOldNotify( editor, EN_UPDATE );
-        old_brush = SelectObject( hdc, editor->hbrBackground );
+        brush = SelectObject( hdc, brush );
 
         /* Erase area outside of the formatting rectangle */
         if (ps.rcPaint.top < editor->rcFormat.top)
@@ -1166,7 +1186,7 @@ static LRESULT RichEditWndProc_common( HWND hwnd, UINT msg, WPARAM wparam,
         }
 
         ME_PaintContent( editor, hdc, &ps.rcPaint );
-        SelectObject( hdc, old_brush );
+        DeleteObject( SelectObject( hdc, brush ) );
         EndPaint( editor->hWnd, &ps );
         return 0;
     }
@@ -1181,6 +1201,27 @@ static LRESULT RichEditWndProc_common( HWND hwnd, UINT msg, WPARAM wparam,
         res = len;
         break;
     }
+    case EM_SETBKGNDCOLOR:
+        res = ITextHost_TxGetSysColor( &host->ITextHost_iface, COLOR_WINDOW );
+        host->use_back_colour = !wparam;
+        if (host->use_back_colour) host->back_colour = lparam;
+        InvalidateRect( hwnd, NULL, TRUE );
+        break;
+
+    case WM_SETCURSOR:
+    {
+        POINT pos;
+        RECT rect;
+
+        if (hwnd != (HWND)wparam) break;
+        GetCursorPos( &pos );
+        ScreenToClient( hwnd, &pos );
+        ITextHost_TxGetClientRect( &host->ITextHost_iface, &rect );
+        if (PtInRect( &rect, pos ))
+            ITextServices_OnTxSetCursor( host->text_srv, DVASPECT_CONTENT, 0, NULL, NULL, NULL, NULL, NULL, pos.x, pos.y );
+        else ITextHost_TxSetCursor( &host->ITextHost_iface, LoadCursorW( NULL, MAKEINTRESOURCEW( IDC_ARROW ) ), FALSE );
+        break;
+    }
     case EM_SETEVENTMASK:
         host->event_mask = lparam;
         hr = ITextServices_TxSendMessage( host->text_srv, msg, wparam, lparam, &res );
@@ -1188,6 +1229,14 @@ static LRESULT RichEditWndProc_common( HWND hwnd, UINT msg, WPARAM wparam,
 
     case EM_SETOPTIONS:
         hr = set_options( host, wparam, lparam, &res );
+        break;
+
+    case EM_SETPASSWORDCHAR:
+        if (wparam == host->password_char) break;
+        host->password_char = wparam;
+        if (wparam) host->props |= TXTBIT_USEPASSWORD;
+        else host->props &= ~TXTBIT_USEPASSWORD;
+        ITextServices_OnTxPropertyBitsChange( host->text_srv, TXTBIT_USEPASSWORD, host->props & TXTBIT_USEPASSWORD );
         break;
 
     case EM_SETREADONLY:
@@ -1434,10 +1483,10 @@ BOOL WINAPI DllMain( HINSTANCE instance, DWORD reason, void *reserved )
     switch (reason)
     {
     case DLL_PROCESS_ATTACH:
+        dll_instance = instance;
         DisableThreadLibraryCalls( instance );
         me_heap = HeapCreate( 0, 0x10000, 0 );
         if (!register_classes( instance )) return FALSE;
-        cursor_reverse = LoadCursorW( instance, MAKEINTRESOURCEW( OCR_REVERSE ) );
         LookupInit();
         break;
 

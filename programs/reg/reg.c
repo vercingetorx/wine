@@ -16,11 +16,9 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#include <windows.h>
 #include <stdlib.h>
-#include <wine/debug.h>
-#include <wine/heap.h>
 #include "reg.h"
+#include <wine/debug.h>
 
 WINE_DEFAULT_DEBUG_CHANNEL(reg);
 
@@ -289,7 +287,7 @@ BOOL parse_registry_key(const WCHAR *key, HKEY *root, WCHAR **path, WCHAR **long
     return TRUE;
 }
 
-static BOOL is_switch(const WCHAR *s, const WCHAR c)
+BOOL is_switch(const WCHAR *s, const WCHAR c)
 {
     if (lstrlenW(s) > 2)
         return FALSE;
@@ -302,17 +300,14 @@ static BOOL is_switch(const WCHAR *s, const WCHAR c)
 
 static BOOL is_help_switch(const WCHAR *s)
 {
-    if (is_switch(s, '?') || is_switch(s, 'h'))
-        return TRUE;
-
-    return FALSE;
+    return (is_switch(s, '?') || is_switch(s, 'h'));
 }
 
 enum operations {
     REG_ADD,
     REG_DELETE,
-    REG_IMPORT,
     REG_EXPORT,
+    REG_IMPORT,
     REG_QUERY,
     REG_INVALID
 };
@@ -323,16 +318,16 @@ static enum operations get_operation(const WCHAR *str, int *op_help)
 
     static const WCHAR add[] = {'a','d','d',0};
     static const WCHAR delete[] = {'d','e','l','e','t','e',0};
-    static const WCHAR import[] = {'i','m','p','o','r','t',0};
     static const WCHAR export[] = {'e','x','p','o','r','t',0};
+    static const WCHAR import[] = {'i','m','p','o','r','t',0};
     static const WCHAR query[] = {'q','u','e','r','y',0};
 
     static const struct op_info op_array[] =
     {
         { add,     REG_ADD,     STRING_ADD_USAGE },
         { delete,  REG_DELETE,  STRING_DELETE_USAGE },
-        { import,  REG_IMPORT,  STRING_IMPORT_USAGE },
         { export,  REG_EXPORT,  STRING_EXPORT_USAGE },
+        { import,  REG_IMPORT,  STRING_IMPORT_USAGE },
         { query,   REG_QUERY,   STRING_QUERY_USAGE },
         { NULL,    -1,          0 }
     };
@@ -354,7 +349,6 @@ static enum operations get_operation(const WCHAR *str, int *op_help)
 int __cdecl wmain(int argc, WCHAR *argvW[])
 {
     int i, op, op_help, ret;
-    BOOL show_op_help = FALSE;
     static const WCHAR switchVAW[] = {'v','a',0};
     static const WCHAR switchVEW[] = {'v','e',0};
     WCHAR *key_name, *path, *value_name = NULL, *type = NULL, *data = NULL, separator = '\0';
@@ -382,27 +376,24 @@ int __cdecl wmain(int argc, WCHAR *argvW[])
         output_message(STRING_REG_HELP);
         return 1;
     }
-
-    if (argc > 2)
-        show_op_help = is_help_switch(argvW[2]);
-
-    if (argc == 2 || ((show_op_help || op == REG_IMPORT) && argc > 3))
+    else if (argc == 2) /* Valid operation, no arguments supplied */
     {
         output_message(STRING_INVALID_SYNTAX);
         output_message(STRING_FUNC_HELP, wcsupr(argvW[1]));
         return 1;
     }
-    else if (show_op_help)
+
+    if (is_help_switch(argvW[2]))
     {
         output_message(op_help);
         return 0;
     }
 
-    if (op == REG_IMPORT)
-        return reg_import(argvW[2]);
-
     if (op == REG_EXPORT)
         return reg_export(argc, argvW);
+
+    if (op == REG_IMPORT)
+        return reg_import(argc, argvW);
 
     if (!parse_registry_key(argvW[2], &root, &path, &key_name))
         return 1;

@@ -868,6 +868,13 @@ enum wined3d_shader_type
     WINED3D_SHADER_TYPE_INVALID = WINED3D_SHADER_TYPE_COUNT,
 };
 
+enum wined3d_pipeline
+{
+    WINED3D_PIPELINE_GRAPHICS,
+    WINED3D_PIPELINE_COMPUTE,
+    WINED3D_PIPELINE_COUNT,
+};
+
 #define WINED3DCOLORWRITEENABLE_RED                             (1u << 0)
 #define WINED3DCOLORWRITEENABLE_GREEN                           (1u << 1)
 #define WINED3DCOLORWRITEENABLE_BLUE                            (1u << 2)
@@ -2556,6 +2563,8 @@ void __cdecl wined3d_device_context_set_depth_stencil_state(struct wined3d_devic
         struct wined3d_depth_stencil_state *depth_stencil_state, unsigned int stencil_ref);
 void __cdecl wined3d_device_context_set_rasterizer_state(struct wined3d_device_context *context,
         struct wined3d_rasterizer_state *rasterizer_state);
+HRESULT __cdecl wined3d_device_context_set_rendertarget_view(struct wined3d_device_context *context,
+        unsigned int view_idx, struct wined3d_rendertarget_view *view, BOOL set_viewport);
 void __cdecl wined3d_device_context_set_sampler(struct wined3d_device_context *context,
         enum wined3d_shader_type type, unsigned int idx, struct wined3d_sampler *sampler);
 void __cdecl wined3d_device_context_set_scissor_rects(struct wined3d_device_context *context, unsigned int rect_count,
@@ -2564,6 +2573,9 @@ void __cdecl wined3d_device_context_set_shader(struct wined3d_device_context *co
         enum wined3d_shader_type type, struct wined3d_shader *shader);
 void __cdecl wined3d_device_context_set_shader_resource_view(struct wined3d_device_context *context,
         enum wined3d_shader_type type, unsigned int idx, struct wined3d_shader_resource_view *view);
+void __cdecl wined3d_device_context_set_unordered_access_view(struct wined3d_device_context *context,
+        enum wined3d_pipeline pipeline, unsigned int idx, struct wined3d_unordered_access_view *uav,
+        unsigned int initial_count);
 void __cdecl wined3d_device_context_set_viewports(struct wined3d_device_context *context, unsigned int viewport_count,
         const struct wined3d_viewport *viewports);
 

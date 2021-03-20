@@ -233,6 +233,7 @@
 #include "shlwapi.h"
 #include "rtf.h"
 #include "imm.h"
+#include "res.h"
 
 #define STACK_SIZE_DEFAULT  100
 #define STACK_SIZE_MAX     1000
@@ -243,7 +244,7 @@ WINE_DEFAULT_DEBUG_CHANNEL(richedit);
 
 static BOOL ME_UpdateLinkAttribute(ME_TextEditor *editor, ME_Cursor *start, int nChars);
 
-HCURSOR cursor_reverse = NULL;
+HINSTANCE dll_instance = NULL;
 BOOL me_debug = FALSE;
 HANDLE me_heap = NULL;
 
@@ -2375,7 +2376,7 @@ static BOOL copy_or_cut( ME_TextEditor *editor, BOOL cut )
     int start_cursor = ME_GetSelectionOfs( editor, &offs, &count );
     ME_Cursor *sel_start = &editor->pCursors[start_cursor];
 
-    if (editor->cPasswordMask) return FALSE;
+    if (editor->password_char) return FALSE;
 
     count -= offs;
     hr = editor_copy_or_cut( editor, cut, sel_start, count, NULL );
@@ -2817,96 +2818,52 @@ static BOOL is_link( ME_Run *run )
     return (run->style->fmt.dwMask & CFM_LINK) && (run->style->fmt.dwEffects & CFE_LINK);
 }
 
-static BOOL ME_SetCursor(ME_TextEditor *editor)
+void editor_set_cursor( ME_TextEditor *editor, int x, int y )
 {
-  ME_Cursor cursor;
-  POINT pt;
-  BOOL isExact;
-  SCROLLBARINFO sbi;
-  DWORD messagePos = GetMessagePos();
-  pt.x = (short)LOWORD(messagePos);
-  pt.y = (short)HIWORD(messagePos);
+    ME_Cursor pos;
+    BOOL is_exact;
+    static HCURSOR cursor_arrow, cursor_hand, cursor_ibeam, cursor_reverse;
+    HCURSOR cursor;
 
-  if (editor->hWnd)
-  {
-    sbi.cbSize = sizeof(sbi);
-    GetScrollBarInfo(editor->hWnd, OBJID_HSCROLL, &sbi);
-    if (!(sbi.rgstate[0] & (STATE_SYSTEM_INVISIBLE|STATE_SYSTEM_OFFSCREEN)) &&
-        PtInRect(&sbi.rcScrollBar, pt))
+    if (!cursor_arrow)
     {
-        ITextHost_TxSetCursor(editor->texthost,
-                              LoadCursorW(NULL, (WCHAR*)IDC_ARROW), FALSE);
-        return TRUE;
+        cursor_arrow = LoadCursorW( NULL, MAKEINTRESOURCEW( IDC_ARROW ) );
+        cursor_hand = LoadCursorW( NULL, MAKEINTRESOURCEW( IDC_HAND ) );
+        cursor_ibeam = LoadCursorW( NULL, MAKEINTRESOURCEW( IDC_IBEAM ) );
+        cursor_reverse = LoadCursorW( dll_instance, MAKEINTRESOURCEW( OCR_REVERSE ) );
     }
-    sbi.cbSize = sizeof(sbi);
-    GetScrollBarInfo(editor->hWnd, OBJID_VSCROLL, &sbi);
-    if (!(sbi.rgstate[0] & (STATE_SYSTEM_INVISIBLE|STATE_SYSTEM_OFFSCREEN)) &&
-        PtInRect(&sbi.rcScrollBar, pt))
+
+    cursor = cursor_ibeam;
+
+    if ((editor->nSelectionType == stLine && editor->bMouseCaptured) ||
+        (!editor->bEmulateVersion10 && y < editor->rcFormat.top && x < editor->rcFormat.left))
+        cursor = cursor_reverse;
+    else if (y < editor->rcFormat.top || y > editor->rcFormat.bottom)
     {
-        ITextHost_TxSetCursor(editor->texthost,
-                              LoadCursorW(NULL, (WCHAR*)IDC_ARROW), FALSE);
-        return TRUE;
+        if (editor->bEmulateVersion10) cursor = cursor_arrow;
+        else cursor = cursor_ibeam;
     }
-  }
-  ITextHost_TxScreenToClient(editor->texthost, &pt);
+    else if (x < editor->rcFormat.left) cursor = cursor_reverse;
+    else
+    {
+        ME_CharFromPos( editor, x, y, &pos, &is_exact );
+        if (is_exact)
+        {
+            ME_Run *run = pos.run;
 
-  if (editor->nSelectionType == stLine && editor->bMouseCaptured)
-  {
-      ITextHost_TxSetCursor( editor->texthost, cursor_reverse, FALSE );
-      return TRUE;
-  }
-  if (!editor->bEmulateVersion10 /* v4.1 */ &&
-      pt.y < editor->rcFormat.top &&
-      pt.x < editor->rcFormat.left)
-  {
-      ITextHost_TxSetCursor( editor->texthost, cursor_reverse, FALSE );
-      return TRUE;
-  }
-  if (pt.y < editor->rcFormat.top || pt.y > editor->rcFormat.bottom)
-  {
-      if (editor->bEmulateVersion10) /* v1.0 - 3.0 */
-          ITextHost_TxSetCursor(editor->texthost,
-                                LoadCursorW(NULL, (WCHAR*)IDC_ARROW), FALSE);
-      else /* v4.1 */
-          ITextHost_TxSetCursor(editor->texthost,
-                                LoadCursorW(NULL, (WCHAR*)IDC_IBEAM), TRUE);
-      return TRUE;
-  }
-  if (pt.x < editor->rcFormat.left)
-  {
-      ITextHost_TxSetCursor( editor->texthost, cursor_reverse, FALSE );
-      return TRUE;
-  }
-  ME_CharFromPos(editor, pt.x, pt.y, &cursor, &isExact);
-  if (isExact)
-  {
-      ME_Run *run = cursor.run;
+            if (is_link( run )) cursor = cursor_hand;
 
-      if (is_link( run ))
-      {
-          ITextHost_TxSetCursor(editor->texthost,
-                                LoadCursorW(NULL, (WCHAR*)IDC_HAND),
-                                FALSE);
-          return TRUE;
-      }
+            else if (ME_IsSelection( editor ))
+            {
+                int start, end, offset = ME_GetCursorOfs( &pos );
 
-      if (ME_IsSelection(editor))
-      {
-          int selStart, selEnd;
-          int offset = ME_GetCursorOfs(&cursor);
+                ME_GetSelectionOfs( editor, &start, &end );
+                if (start <= offset && end >= offset) cursor = cursor_arrow;
+            }
+        }
+    }
 
-          ME_GetSelectionOfs(editor, &selStart, &selEnd);
-          if (selStart <= offset && selEnd >= offset) {
-              ITextHost_TxSetCursor(editor->texthost,
-                                    LoadCursorW(NULL, (WCHAR*)IDC_ARROW),
-                                    FALSE);
-              return TRUE;
-          }
-      }
-  }
-  ITextHost_TxSetCursor(editor->texthost,
-                        LoadCursorW(NULL, (WCHAR*)IDC_IBEAM), TRUE);
-  return TRUE;
+    ITextHost_TxSetCursor( editor->texthost, cursor, cursor == cursor_ibeam );
 }
 
 static LONG ME_GetSelectionType(ME_TextEditor *editor)
@@ -3005,8 +2962,6 @@ ME_TextEditor *ME_MakeEditor(ITextHost *texthost, BOOL bEmulateVersion10)
   ed->nLastTotalLength = ed->nTotalLength = 0;
   ed->nLastTotalWidth = ed->nTotalWidth = 0;
   ed->nUDArrowX = -1;
-  ed->rgbBackColor = -1;
-  ed->hbrBackground = GetSysColorBrush(COLOR_WINDOW);
   ed->nEventMask = 0;
   ed->nModifyStep = 0;
   ed->nTextLimit = TEXT_LIMIT_DEFAULT;
@@ -3043,9 +2998,9 @@ ME_TextEditor *ME_MakeEditor(ITextHost *texthost, BOOL bEmulateVersion10)
   else ed->selofs = 0;
   ed->nSelectionType = stPosition;
 
-  ed->cPasswordMask = 0;
+  ed->password_char = 0;
   if (ed->props & TXTBIT_USEPASSWORD)
-    ITextHost_TxGetPasswordChar(texthost, &ed->cPasswordMask);
+    ITextHost_TxGetPasswordChar( texthost, &ed->password_char );
 
   ed->bWordWrap = (ed->props & TXTBIT_WORDWRAP) && (ed->props & TXTBIT_MULTILINE);
 
@@ -3057,12 +3012,28 @@ ME_TextEditor *ME_MakeEditor(ITextHost *texthost, BOOL bEmulateVersion10)
   ed->vert_si.nMax = 0;
   ed->vert_si.nPage = 0;
   ed->vert_si.nPos = 0;
+  ed->vert_sb_enabled = 0;
 
   ed->horz_si.cbSize = sizeof(SCROLLINFO);
   ed->horz_si.nMin = 0;
   ed->horz_si.nMax = 0;
   ed->horz_si.nPage = 0;
   ed->horz_si.nPos = 0;
+  ed->horz_sb_enabled = 0;
+
+  if (ed->scrollbars & ES_DISABLENOSCROLL)
+  {
+      if (ed->scrollbars & WS_VSCROLL)
+      {
+          ITextHost_TxSetScrollRange( texthost, SB_VERT, 0, 1, TRUE );
+          ITextHost_TxEnableScrollBar( texthost, SB_VERT, ESB_DISABLE_BOTH );
+      }
+      if (ed->scrollbars & WS_HSCROLL)
+      {
+          ITextHost_TxSetScrollRange( texthost, SB_HORZ, 0, 1, TRUE );
+          ITextHost_TxEnableScrollBar( texthost, SB_HORZ, ESB_DISABLE_BOTH );
+      }
+  }
 
   ed->wheel_remain = 0;
 
@@ -3100,8 +3071,6 @@ void ME_DestroyEditor(ME_TextEditor *editor)
     if (editor->pFontCache[i].hFont)
       DeleteObject(editor->pFontCache[i].hFont);
   }
-  if (editor->rgbBackColor != -1)
-    DeleteObject(editor->hbrBackground);
   if(editor->lpOleCallback)
     IRichEditOleCallback_Release(editor->lpOleCallback);
   if (editor->reOle)
@@ -3134,7 +3103,7 @@ static inline int calc_wheel_change( int *remain, int amount_per_click )
     return change;
 }
 
-static void ME_LinkNotify(ME_TextEditor *editor, UINT msg, WPARAM wParam, LPARAM lParam)
+void link_notify(ME_TextEditor *editor, UINT msg, WPARAM wParam, LPARAM lParam)
 {
   int x,y;
   BOOL isExact;
@@ -3205,33 +3174,6 @@ static void ME_SetText(ME_TextEditor *editor, void *text, BOOL unicode)
   LPWSTR wszText = ME_ToUnicode(codepage, text, &textLen);
   ME_InsertTextFromCursor(editor, 0, wszText, textLen, editor->pBuffer->pDefaultStyle);
   ME_EndToUnicode(codepage, wszText);
-}
-
-static LRESULT ME_WmCreate( ME_TextEditor *editor )
-{
-  INT max;
-
-  max = (editor->scrollbars & ES_DISABLENOSCROLL) ? 1 : 0;
-  if (~editor->scrollbars & ES_DISABLENOSCROLL || editor->scrollbars & WS_VSCROLL)
-    ITextHost_TxSetScrollRange(editor->texthost, SB_VERT, 0, max, TRUE);
-
-  if (~editor->scrollbars & ES_DISABLENOSCROLL || editor->scrollbars & WS_HSCROLL)
-    ITextHost_TxSetScrollRange(editor->texthost, SB_HORZ, 0, max, TRUE);
-
-  if (editor->scrollbars & ES_DISABLENOSCROLL)
-  {
-    if (editor->scrollbars & WS_VSCROLL)
-    {
-      ITextHost_TxEnableScrollBar(editor->texthost, SB_VERT, ESB_DISABLE_BOTH);
-      ITextHost_TxShowScrollBar(editor->texthost, SB_VERT, TRUE);
-    }
-    if (editor->scrollbars & WS_HSCROLL)
-    {
-      ITextHost_TxEnableScrollBar(editor->texthost, SB_HORZ, ESB_DISABLE_BOTH);
-      ITextHost_TxShowScrollBar(editor->texthost, SB_HORZ, TRUE);
-    }
-  }
-  return 0;
 }
 
 static LRESULT handle_EM_SETCHARFORMAT( ME_TextEditor *editor, WPARAM flags, const CHARFORMAT2W *fmt_in )
@@ -3516,28 +3458,6 @@ LRESULT editor_handle_message( ME_TextEditor *editor, UINT msg, WPARAM wParam,
   }
   case EM_SELECTIONTYPE:
     return ME_GetSelectionType(editor);
-  case EM_SETBKGNDCOLOR:
-  {
-    LRESULT lColor;
-    if (editor->rgbBackColor != -1) {
-      DeleteObject(editor->hbrBackground);
-      lColor = editor->rgbBackColor;
-    }
-    else lColor = ITextHost_TxGetSysColor(editor->texthost, COLOR_WINDOW);
-
-    if (wParam)
-    {
-      editor->rgbBackColor = -1;
-      editor->hbrBackground = GetSysColorBrush(COLOR_WINDOW);
-    }
-    else
-    {
-      editor->rgbBackColor = lParam;
-      editor->hbrBackground = CreateSolidBrush(editor->rgbBackColor);
-    }
-    ITextHost_TxInvalidateRect(editor->texthost, NULL, TRUE);
-    return lColor;
-  }
   case EM_GETMODIFY:
     return editor->nModifyStep == 0 ? 0 : -1;
   case EM_SETMODIFY:
@@ -3960,16 +3880,6 @@ LRESULT editor_handle_message( ME_TextEditor *editor, UINT msg, WPARAM wParam,
 
     return (wParam >= 0x40000) ? 0 : MAKELONG( pt.x, pt.y );
   }
-  case WM_CREATE:
-    return ME_WmCreate( editor );
-  case WM_SETCURSOR:
-  {
-    POINT cursor_pos;
-    if (wParam == (WPARAM)editor->hWnd && GetCursorPos(&cursor_pos) &&
-        ScreenToClient(editor->hWnd, &cursor_pos))
-      ME_LinkNotify(editor, msg, 0, MAKELPARAM(cursor_pos.x, cursor_pos.y));
-    return ME_SetCursor(editor);
-  }
   case WM_LBUTTONDBLCLK:
   case WM_LBUTTONDOWN:
   {
@@ -3979,18 +3889,14 @@ LRESULT editor_handle_message( ME_TextEditor *editor, UINT msg, WPARAM wParam,
                    ME_CalculateClickCount(editor, msg, wParam, lParam));
     ITextHost_TxSetCapture(editor->texthost, TRUE);
     editor->bMouseCaptured = TRUE;
-    ME_LinkNotify(editor, msg, wParam, lParam);
-    if (!ME_SetCursor(editor)) goto do_default;
+    link_notify( editor, msg, wParam, lParam );
     break;
   }
   case WM_MOUSEMOVE:
     if (editor->bMouseCaptured)
       ME_MouseMove(editor, (short)LOWORD(lParam), (short)HIWORD(lParam));
     else
-      ME_LinkNotify(editor, msg, wParam, lParam);
-    /* Set cursor if mouse is captured, since WM_SETCURSOR won't be received. */
-    if (editor->bMouseCaptured)
-        ME_SetCursor(editor);
+      link_notify( editor, msg, wParam, lParam );
     break;
   case WM_LBUTTONUP:
     if (editor->bMouseCaptured) {
@@ -4001,15 +3907,14 @@ LRESULT editor_handle_message( ME_TextEditor *editor, UINT msg, WPARAM wParam,
       editor->nSelectionType = stPosition;
     else
     {
-      ME_SetCursor(editor);
-      ME_LinkNotify(editor, msg, wParam, lParam);
+      link_notify( editor, msg, wParam, lParam );
     }
     break;
   case WM_RBUTTONUP:
   case WM_RBUTTONDOWN:
   case WM_RBUTTONDBLCLK:
     ME_CommitUndo(editor); /* End coalesced undos for typed characters */
-    ME_LinkNotify(editor, msg, wParam, lParam);
+    link_notify( editor, msg, wParam, lParam );
     goto do_default;
   case WM_CONTEXTMENU:
     if (!ME_ShowContextMenu(editor, (short)LOWORD(lParam), (short)HIWORD(lParam)))
@@ -4243,10 +4148,6 @@ LRESULT editor_handle_message( ME_TextEditor *editor, UINT msg, WPARAM wParam,
       return 1;
     return 0;
   }
-  case EM_GETPASSWORDCHAR:
-  {
-    return editor->cPasswordMask;
-  }
   case EM_SETOLECALLBACK:
     if(editor->lpOleCallback)
       IRichEditOleCallback_Release(editor->lpOleCallback);
@@ -4298,12 +4199,6 @@ LRESULT editor_handle_message( ME_TextEditor *editor, UINT msg, WPARAM wParam,
     }
     /* FIXME: Currently no support for undo level and code page options */
     editor->mode = (editor->mode & ~mask) | changes;
-    return 0;
-  }
-  case EM_SETPASSWORDCHAR:
-  {
-    editor->cPasswordMask = wParam;
-    ME_RewrapRepaint(editor);
     return 0;
   }
   case EM_SETTARGETDEVICE:

@@ -16,15 +16,11 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#include <windows.h>
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
-
-#include <wine/debug.h>
-#include <wine/heap.h>
-
 #include "reg.h"
+#include <wine/debug.h>
 
 WINE_DEFAULT_DEBUG_CHANNEL(reg);
 
@@ -987,13 +983,22 @@ cleanup:
     return NULL;
 }
 
-int reg_import(const WCHAR *filename)
+int reg_import(int argc, WCHAR *argvW[])
 {
+    WCHAR *filename, *pos;
     FILE *fp;
     static const WCHAR rb_mode[] = {'r','b',0};
     BYTE s[2];
     struct parser parser;
-    WCHAR *pos;
+
+    if (argc > 3)
+    {
+        output_message(STRING_INVALID_SYNTAX);
+        output_message(STRING_FUNC_HELP, wcsupr(argvW[1]));
+        return 1;
+    }
+
+    filename = argvW[2];
 
     fp = _wfopen(filename, rb_mode);
     if (!fp)
