@@ -202,6 +202,7 @@ void ME_DestroyContext(ME_Context *c) DECLSPEC_HIDDEN;
 BOOL ME_WrapMarkedParagraphs(ME_TextEditor *editor) DECLSPEC_HIDDEN;
 void para_range_invalidate( ME_TextEditor *editor, ME_Paragraph *start_para, ME_Paragraph *last_para ) DECLSPEC_HIDDEN;
 void ME_SendRequestResize(ME_TextEditor *editor, BOOL force) DECLSPEC_HIDDEN;
+BOOL wrap_marked_paras_dc( ME_TextEditor *editor, HDC hdc ) DECLSPEC_HIDDEN;
 
 /* para.c */
 void editor_get_selection_paras(ME_TextEditor *editor, ME_Paragraph **para, ME_Paragraph **para_end ) DECLSPEC_HIDDEN;
@@ -237,7 +238,7 @@ static inline ME_DisplayItem *para_get_di(ME_Paragraph *para)
 }
 
 /* paint.c */
-void ME_PaintContent(ME_TextEditor *editor, HDC hDC, const RECT *rcUpdate) DECLSPEC_HIDDEN;
+void editor_draw( ME_TextEditor *editor, HDC hDC, const RECT *update ) DECLSPEC_HIDDEN;
 void ME_Repaint(ME_TextEditor *editor) DECLSPEC_HIDDEN;
 void ME_RewrapRepaint(ME_TextEditor *editor) DECLSPEC_HIDDEN;
 void ME_UpdateRepaint(ME_TextEditor *editor, BOOL update_now) DECLSPEC_HIDDEN;
@@ -389,7 +390,7 @@ extern const struct ITextServicesVtbl text_services_stdcall_vtbl DECLSPEC_HIDDEN
 #define TXTSERV_VTABLE(This) (This)->lpVtbl
 #endif
 #define ITextServices_TxSendMessage(This,a,b,c,d) TXTSERV_VTABLE(This)->TxSendMessage(This,a,b,c,d)
-#define ITextServices_TxDraw(This,a,b,c,d,e,f,g,h,i,j,k,l) TXTSERV_VTABLE(This)->ITextServices_TxDraw(This,a,b,c,d,e,f,g,h,i,j,k,l)
+#define ITextServices_TxDraw(This,a,b,c,d,e,f,g,h,i,j,k,l) TXTSERV_VTABLE(This)->TxDraw(This,a,b,c,d,e,f,g,h,i,j,k,l)
 #define ITextServices_TxGetHScroll(This,a,b,c,d,e) TXTSERV_VTABLE(This)->TxGetHScroll(This,a,b,c,d,e)
 #define ITextServices_TxGetVScroll(This,a,b,c,d,e) TXTSERV_VTABLE(This)->TxGetVScroll(This,a,b,c,d,e)
 #define ITextServices_OnTxSetCursor(This,a,b,c,d,e,f,g,h,i) TXTSERV_VTABLE(This)->OnTxSetCursor(This,a,b,c,d,e,f,g,h,i)

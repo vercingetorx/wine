@@ -30,6 +30,8 @@ my $gen_traces = 1;
 
 # List of categories to put in the 'opengl_core.c' file
 my %cat_1_0 = ( "CL_VERSION_1_0" => 1 );
+my %cat_1_1 = ( %cat_1_0, "CL_VERSION_1_1" => 1 );
+my %cat_1_2 = ( %cat_1_1, "CL_VERSION_1_2" => 1 );
 
 my %core_categories = ();
 
@@ -50,6 +52,27 @@ my %arg_types =
         "uint32_t"       => [ "long",   "%u" ],
         "uint64_t"       => [ "int64",  "wine_dbgstr_longlong(%s)" ],
         "unsigned int"   => [ "long",   "%u" ],
+    );
+
+my %unsupported_extensions =
+    (
+        # Needs wined3d integration.
+        "cl_intel_d3d11_nv12_media_sharing" => 1,
+        "cl_intel_dx9_media_sharing" => 1,
+        "cl_khr_d3d10_sharing" => 1,
+        "cl_khr_d3d11_sharing" => 1,
+        "cl_khr_dx9_media_sharing" => 1,
+        "cl_nv_d3d9_sharing" => 1,
+        "cl_nv_d3d10_sharing" => 1,
+        "cl_nv_d3d11_sharing" => 1,
+
+        # Needs a loader/ICD split.
+        "cl_khr_icd" => 1,
+        "cl_loader_layers" => 1,
+
+        # Needs callback conversion.
+        "cl_apple_setmemobjectdestructor" => 1,
+        "cl_arm_shared_virtual_memory" => 1,
     );
 
 sub generate_pe_thunk($$)
@@ -162,10 +185,18 @@ if (@ARGV > 1)
     $name0 =~ s%^.*/%%;
     die "Usage: $name0 [version]\n";
 }
-my $version = $ARGV[0] || "1.0";
+my $version = $ARGV[0] || "1.2";
 if ($version eq "1.0")
 {
     %core_categories = %cat_1_0;
+}
+elsif ($version eq "1.1")
+{
+    %core_categories = %cat_1_1;
+}
+elsif ($version eq "1.2")
+{
+    %core_categories = %cat_1_2;
 }
 else
 {
@@ -216,6 +247,7 @@ sub needs_pe_wrapper($)
 
             # needs function pointer conversion
             "clGetExtensionFunctionAddress" => 1,
+            "clGetExtensionFunctionAddressForPlatform" => 1,
 
             # deprecated and absent from headers
             "clSetCommandQueueProperty" => 1,
@@ -232,9 +264,13 @@ sub needs_unix_wrapper($)
         (
             # need callback conversion
             "clBuildProgram" => 1,
+            "clCompileProgram" => 1,
             "clCreateContext" => 1,
             "clCreateContextFromType" => 1,
             "clEnqueueNativeKernel" => 1,
+            "clLinkProgram" => 1,
+            "clSetEventCallback" => 1,
+            "clSetMemObjectDestructorCallback" => 1,
         );
     my $name = shift;
 
@@ -247,6 +283,7 @@ sub needs_unix_function($)
     my %funcs =
         (
             "clGetExtensionFunctionAddress" => 1,
+            "clGetExtensionFunctionAddressForPlatform" => 1,
             "clSetCommandQueueProperty" => 1,
         );
     my $name = shift;
@@ -348,6 +385,16 @@ sub parse_file($)
             $cl_types{$type->{name}} = $types{$type->{name}};
         }
     }
+
+    # generate extension list
+    foreach my $ext ($xml->findnodes("/registry/extensions/extension"))
+    {
+        # we currently don't support clGetExtensionFunctionAddress, and
+        # implementing clGetExtensionFunctionAddressForPlatform is nontrivial;
+        # we need to generate a table of thunks per platform and retrieve the
+        # platform from the called object
+        $unsupported_extensions{lc($ext->{name})} = 1 if $ext->findnodes("./require/command");
+    }
 }
 
 parse_file( "cl-$commit.xml" );
@@ -361,6 +408,7 @@ foreach (sort keys %core_functions)
 }
 
 close(SPEC);
+
 
 # generate the PE thunks
 open(PE, ">$pe_file") or die "cannot create $pe_file";
@@ -378,6 +426,35 @@ foreach (sort keys %core_functions)
     next if needs_pe_wrapper( $_ );
     print PE "\n", generate_pe_thunk( $_, $core_functions{$_} );
 }
+
+print PE <<EOF
+
+BOOL extension_is_supported( const char *name, size_t len )
+{
+    unsigned int i;
+
+    static const char *const unsupported[] =
+    {
+EOF
+;
+
+foreach (sort keys %unsupported_extensions)
+{
+    print PE "        \"$_\",\n";
+}
+
+print PE <<EOF
+    };
+
+    for (i = 0; i < ARRAY_SIZE(unsupported); ++i)
+    {
+        if (!strncasecmp( name, unsupported[i], len ))
+            return FALSE;
+    }
+    return TRUE;
+}
+EOF
+;
 
 close(PE);
 

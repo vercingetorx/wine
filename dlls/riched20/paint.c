@@ -25,13 +25,23 @@ WINE_DEFAULT_DEBUG_CHANNEL(richedit);
 
 static void draw_paragraph( ME_Context *c, ME_Paragraph *para );
 
-void ME_PaintContent(ME_TextEditor *editor, HDC hDC, const RECT *rcUpdate)
+void editor_draw( ME_TextEditor *editor, HDC hDC, const RECT *update )
 {
   ME_Paragraph *para;
   ME_Context c;
   ME_Cell *cell;
   int ys, ye;
   HRGN oldRgn;
+  RECT rc, client;
+  HBRUSH brush = CreateSolidBrush( ITextHost_TxGetSysColor( editor->texthost, COLOR_WINDOW ) );
+
+  ME_InitContext( &c, editor, hDC );
+  if (!update)
+  {
+      client = c.rcView;
+      client.left -= editor->selofs;
+      update = &client;
+  }
 
   oldRgn = CreateRectRgn(0, 0, 0, 0);
   if (!GetClipRgn(hDC, oldRgn))
@@ -39,10 +49,9 @@ void ME_PaintContent(ME_TextEditor *editor, HDC hDC, const RECT *rcUpdate)
     DeleteObject(oldRgn);
     oldRgn = NULL;
   }
-  IntersectClipRect(hDC, rcUpdate->left, rcUpdate->top,
-                     rcUpdate->right, rcUpdate->bottom);
+  IntersectClipRect( hDC, update->left, update->top, update->right, update->bottom );
 
-  ME_InitContext(&c, editor, hDC);
+  brush = SelectObject( hDC, brush );
   SetBkMode(hDC, TRANSPARENT);
 
   para = editor_first_para( editor );
@@ -65,35 +74,38 @@ void ME_PaintContent(ME_TextEditor *editor, HDC hDC, const RECT *rcUpdate)
     }
 
     /* Draw the paragraph if any of the paragraph is in the update region. */
-    if (ys < rcUpdate->bottom && ye > rcUpdate->top)
+    if (ys < update->bottom && ye > update->top)
       draw_paragraph( &c, para );
     para = para_next( para );
   }
   if (c.pt.y + editor->nTotalLength < c.rcView.bottom)
-  {
-    /* Fill space after the end of the text. */
-    RECT rc;
+  { /* space after the end of the text */
     rc.top = c.pt.y + editor->nTotalLength;
     rc.left = c.rcView.left;
     rc.bottom = c.rcView.bottom;
     rc.right = c.rcView.right;
-
-    IntersectRect(&rc, &rc, rcUpdate);
-
-    if (!IsRectEmpty(&rc))
+    if (IntersectRect( &rc, &rc, update ))
       PatBlt(hDC, rc.left, rc.top, rc.right - rc.left, rc.bottom - rc.top, PATCOPY);
   }
-  if (editor->nTotalLength != editor->nLastTotalLength ||
-      editor->nTotalWidth != editor->nLastTotalWidth)
+  if (editor->selofs)
+  { /* selection bar */
+    rc.left = c.rcView.left - editor->selofs;
+    rc.top = c.rcView.top;
+    rc.right = c.rcView.left;
+    rc.bottom = c.rcView.bottom;
+    if (IntersectRect( &rc, &rc, update ))
+      PatBlt( hDC, rc.left, rc.top, rc.right - rc.left, rc.bottom - rc.top, PATCOPY );
+  }
+  if (editor->nTotalLength != editor->nLastTotalLength || editor->nTotalWidth != editor->nLastTotalWidth)
     ME_SendRequestResize(editor, FALSE);
   editor->nLastTotalLength = editor->nTotalLength;
   editor->nLastTotalWidth = editor->nTotalWidth;
 
+  DeleteObject( SelectObject( hDC, brush ) );
   SelectClipRgn(hDC, oldRgn);
   if (oldRgn)
     DeleteObject(oldRgn);
 
-  c.hDC = NULL;
   ME_DestroyContext(&c);
 }
 
@@ -119,11 +131,15 @@ void ME_UpdateRepaint(ME_TextEditor *editor, BOOL update_now)
   /* Ensure that the cursor is visible */
   editor_ensure_visible( editor, &editor->pCursors[0] );
 
+  update_caret( editor );
+
+  if (!editor->bEmulateVersion10 || (editor->nEventMask & ENM_UPDATE))
+    ME_SendOldNotify( editor, EN_UPDATE );
+
   ITextHost_TxViewChange(editor->texthost, update_now);
 
   ME_SendSelChange(editor);
 
-  /* send EN_CHANGE if the event mask asks for it */
   if(editor->nEventMask & ENM_CHANGE)
   {
     editor->nEventMask &= ~ENM_CHANGE;
@@ -1033,9 +1049,30 @@ static void draw_paragraph( ME_Context *c, ME_Paragraph *para )
     SetTextAlign( c->hDC, align );
 }
 
+static void enable_show_scrollbar( ME_TextEditor *editor, INT bar, BOOL enable )
+{
+    if (enable || editor->scrollbars & ES_DISABLENOSCROLL)
+        ITextHost_TxEnableScrollBar( editor->texthost, bar, enable ? 0 : ESB_DISABLE_BOTH );
+    if (!(editor->scrollbars & ES_DISABLENOSCROLL))
+        ITextHost_TxShowScrollBar( editor->texthost, bar, enable );
+}
+
+static void set_scroll_range_pos( ITextHost *host, INT bar, SCROLLINFO *info, BOOL set_range )
+{
+    LONG max_pos = info->nMax, pos = info->nPos;
+
+    /* Scale the scrollbar info to 16-bit values. */
+    if (max_pos > 0xffff)
+    {
+        pos = MulDiv( pos, 0xffff, max_pos );
+        max_pos = 0xffff;
+    }
+    if (set_range) ITextHost_TxSetScrollRange( host, bar, 0, max_pos, FALSE );
+    ITextHost_TxSetScrollPos( host, bar, pos, TRUE );
+}
+
 void ME_ScrollAbs(ME_TextEditor *editor, int x, int y)
 {
-  BOOL old_vis, new_vis;
   int scrollX = 0, scrollY = 0;
 
   if (editor->horz_si.nPos != x) {
@@ -1043,9 +1080,7 @@ void ME_ScrollAbs(ME_TextEditor *editor, int x, int y)
     x = max(x, editor->horz_si.nMin);
     scrollX = editor->horz_si.nPos - x;
     editor->horz_si.nPos = x;
-    if (editor->horz_si.nMax > 0xFFFF) /* scale to 16-bit value */
-      x = MulDiv(x, 0xFFFF, editor->horz_si.nMax);
-    ITextHost_TxSetScrollPos(editor->texthost, SB_HORZ, x, TRUE);
+    set_scroll_range_pos( editor->texthost, SB_HORZ, &editor->horz_si, FALSE );
   }
 
   if (editor->vert_si.nPos != y) {
@@ -1053,38 +1088,17 @@ void ME_ScrollAbs(ME_TextEditor *editor, int x, int y)
     y = max(y, editor->vert_si.nMin);
     scrollY = editor->vert_si.nPos - y;
     editor->vert_si.nPos = y;
-    if (editor->vert_si.nMax > 0xFFFF) /* scale to 16-bit value */
-      y = MulDiv(y, 0xFFFF, editor->vert_si.nMax);
-    ITextHost_TxSetScrollPos(editor->texthost, SB_VERT, y, TRUE);
+    set_scroll_range_pos( editor->texthost, SB_VERT, &editor->vert_si, FALSE );
   }
 
-  if (abs(scrollX) > editor->sizeWindow.cx ||
-      abs(scrollY) > editor->sizeWindow.cy)
+  if (abs(scrollX) > editor->sizeWindow.cx || abs(scrollY) > editor->sizeWindow.cy)
     ITextHost_TxInvalidateRect(editor->texthost, NULL, TRUE);
   else
     ITextHost_TxScrollWindowEx(editor->texthost, scrollX, scrollY,
                                &editor->rcFormat, &editor->rcFormat,
                                NULL, NULL, SW_INVALIDATE);
-  ME_Repaint(editor);
-
-  if (editor->hWnd)
-  {
-    LONG winStyle = GetWindowLongW(editor->hWnd, GWL_STYLE);
-    if (editor->scrollbars & WS_HSCROLL)
-    {
-      old_vis = winStyle & WS_HSCROLL;
-      new_vis = editor->horz_sb_enabled || editor->scrollbars & ES_DISABLENOSCROLL;
-      if (!old_vis ^ !new_vis) ITextHost_TxShowScrollBar( editor->texthost, SB_HORZ, new_vis );
-    }
-
-    if (editor->scrollbars & WS_VSCROLL)
-    {
-      old_vis = winStyle & WS_VSCROLL;
-      new_vis = editor->vert_sb_enabled || editor->scrollbars & ES_DISABLENOSCROLL;
-      if (!old_vis ^ !new_vis) ITextHost_TxShowScrollBar( editor->texthost, SB_VERT, new_vis );
-    }
-  }
   ME_UpdateScrollBar(editor);
+  ME_Repaint(editor);
 }
 
 void ME_HScrollAbs(ME_TextEditor *editor, int x)
@@ -1121,18 +1135,10 @@ void ME_UpdateScrollBar(ME_TextEditor *editor)
 {
   /* Note that this is the only function that should ever call
    * SetScrollInfo with SIF_PAGE or SIF_RANGE. */
-
-  SCROLLINFO si;
   BOOL enable;
 
   if (ME_WrapMarkedParagraphs(editor))
     FIXME("ME_UpdateScrollBar had to call ME_WrapMarkedParagraphs\n");
-
-  si.cbSize = sizeof(si);
-  si.fMask = SIF_PAGE | SIF_RANGE | SIF_POS;
-  si.nMin = 0;
-  if (editor->scrollbars & ES_DISABLENOSCROLL)
-    si.fMask |= SIF_DISABLENOSCROLL;
 
   /* Update horizontal scrollbar */
   enable = editor->nTotalWidth > editor->sizeWindow.cx;
@@ -1143,40 +1149,19 @@ void ME_UpdateScrollBar(ME_TextEditor *editor)
     return;
   }
 
-  si.nMax = editor->nTotalWidth;
-  si.nPos = editor->horz_si.nPos;
-  si.nPage = editor->sizeWindow.cx;
-
-  if (si.nMax != editor->horz_si.nMax ||
-      si.nPage != editor->horz_si.nPage)
-  {
-    TRACE("min=%d max=%d page=%d\n", si.nMin, si.nMax, si.nPage);
-    editor->horz_si.nMax = si.nMax;
-    editor->horz_si.nPage = si.nPage;
-    if ((enable || editor->horz_sb_enabled) && editor->scrollbars & WS_HSCROLL)
-    {
-      if (si.nMax > 0xFFFF)
-      {
-        /* Native scales the scrollbar info to 16-bit external values. */
-        si.nPos = MulDiv(si.nPos, 0xFFFF, si.nMax);
-        si.nMax = 0xFFFF;
-      }
-      if (editor->hWnd) {
-        SetScrollInfo(editor->hWnd, SB_HORZ, &si, TRUE);
-      } else {
-        ITextHost_TxSetScrollRange(editor->texthost, SB_HORZ, si.nMin, si.nMax, FALSE);
-        ITextHost_TxSetScrollPos(editor->texthost, SB_HORZ, si.nPos, TRUE);
-      }
-    }
-  }
-
   if (editor->scrollbars & WS_HSCROLL && !enable ^ !editor->horz_sb_enabled)
   {
-    if (enable || editor->scrollbars & ES_DISABLENOSCROLL)
-      ITextHost_TxEnableScrollBar( editor->texthost, SB_HORZ, enable ? 0 : ESB_DISABLE_BOTH );
-    if (!(editor->scrollbars & ES_DISABLENOSCROLL))
-      ITextHost_TxShowScrollBar( editor->texthost, SB_HORZ, enable );
     editor->horz_sb_enabled = enable;
+    enable_show_scrollbar( editor, SB_HORZ, enable );
+  }
+
+  if (editor->horz_si.nMax != editor->nTotalWidth || editor->horz_si.nPage != editor->sizeWindow.cx)
+  {
+    editor->horz_si.nMax = editor->nTotalWidth;
+    editor->horz_si.nPage = editor->sizeWindow.cx;
+    TRACE( "min = %d max = %d page = %d\n", editor->horz_si.nMin, editor->horz_si.nMax, editor->horz_si.nPage );
+    if ((enable || editor->horz_sb_enabled) && editor->scrollbars & WS_HSCROLL)
+      set_scroll_range_pos( editor->texthost, SB_HORZ, &editor->horz_si, TRUE );
   }
 
   /* Update vertical scrollbar */
@@ -1189,40 +1174,19 @@ void ME_UpdateScrollBar(ME_TextEditor *editor)
     return;
   }
 
-  si.nMax = editor->nTotalLength;
-  si.nPos = editor->vert_si.nPos;
-  si.nPage = editor->sizeWindow.cy;
-
-  if (si.nMax != editor->vert_si.nMax ||
-      si.nPage != editor->vert_si.nPage)
-  {
-    TRACE("min=%d max=%d page=%d\n", si.nMin, si.nMax, si.nPage);
-    editor->vert_si.nMax = si.nMax;
-    editor->vert_si.nPage = si.nPage;
-    if ((enable || editor->vert_sb_enabled) && editor->scrollbars & WS_VSCROLL)
-    {
-      if (si.nMax > 0xFFFF)
-      {
-        /* Native scales the scrollbar info to 16-bit external values. */
-        si.nPos = MulDiv(si.nPos, 0xFFFF, si.nMax);
-        si.nMax = 0xFFFF;
-      }
-      if (editor->hWnd) {
-        SetScrollInfo(editor->hWnd, SB_VERT, &si, TRUE);
-      } else {
-        ITextHost_TxSetScrollRange(editor->texthost, SB_VERT, si.nMin, si.nMax, FALSE);
-        ITextHost_TxSetScrollPos(editor->texthost, SB_VERT, si.nPos, TRUE);
-      }
-    }
-  }
-
   if (editor->scrollbars & WS_VSCROLL && !enable ^ !editor->vert_sb_enabled)
   {
-    if (enable || editor->scrollbars & ES_DISABLENOSCROLL)
-      ITextHost_TxEnableScrollBar( editor->texthost, SB_VERT, enable ? 0 : ESB_DISABLE_BOTH );
-    if (!(editor->scrollbars & ES_DISABLENOSCROLL))
-      ITextHost_TxShowScrollBar( editor->texthost, SB_VERT, enable );
     editor->vert_sb_enabled = enable;
+    enable_show_scrollbar( editor, SB_VERT, enable );
+  }
+
+  if (editor->vert_si.nMax != editor->nTotalLength || editor->vert_si.nPage != editor->sizeWindow.cy)
+  {
+    editor->vert_si.nMax = editor->nTotalLength;
+    editor->vert_si.nPage = editor->sizeWindow.cy;
+    TRACE( "min = %d max = %d page = %d\n", editor->vert_si.nMin, editor->vert_si.nMax, editor->vert_si.nPage );
+    if ((enable || editor->vert_sb_enabled) && editor->scrollbars & WS_VSCROLL)
+      set_scroll_range_pos( editor->texthost, SB_VERT, &editor->vert_si, TRUE );
   }
 }
 

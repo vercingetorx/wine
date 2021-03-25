@@ -581,27 +581,12 @@ void wined3d_device_destroy_default_samplers(struct wined3d_device *device, stru
     device->null_sampler = NULL;
 }
 
-static void wined3d_null_image_vk_cleanup(struct wined3d_null_image_vk *image,
-        struct wined3d_context_vk *context_vk, uint64_t command_buffer_id)
-{
-    wined3d_context_vk_destroy_image(context_vk, image->vk_image, command_buffer_id);
-    if (image->memory)
-        wined3d_context_vk_destroy_allocator_block(context_vk, image->memory, command_buffer_id);
-    else
-        wined3d_context_vk_destroy_memory(context_vk, image->vk_memory, command_buffer_id);
-}
-
-static bool wined3d_null_image_vk_init(struct wined3d_null_image_vk *image, struct wined3d_context_vk *context_vk,
+static bool wined3d_null_image_vk_init(struct wined3d_image_vk *image, struct wined3d_context_vk *context_vk,
         VkCommandBuffer vk_command_buffer, VkImageType type, unsigned int layer_count, unsigned int sample_count)
 {
-    struct wined3d_device_vk *device_vk = wined3d_device_vk(context_vk->c.device);
     const struct wined3d_vk_info *vk_info = context_vk->vk_info;
-    VkMemoryRequirements memory_requirements;
     VkImageSubresourceRange range;
-    VkImageCreateInfo image_desc;
-    unsigned int memory_type_idx;
     uint32_t flags = 0;
-    VkResult vr;
 
     static const VkClearColorValue colour = {{0}};
 
@@ -611,63 +596,14 @@ static bool wined3d_null_image_vk_init(struct wined3d_null_image_vk *image, stru
     if (type == VK_IMAGE_TYPE_2D && layer_count >= 6)
         flags |= VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT;
 
-    image_desc.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-    image_desc.pNext = NULL;
-    image_desc.flags = flags;
-    image_desc.imageType = type;
-    image_desc.format = VK_FORMAT_R8G8B8A8_UNORM;
-    image_desc.extent.width = 1;
-    image_desc.extent.height = 1;
-    image_desc.extent.depth = 1;
-    image_desc.mipLevels = 1;
-    image_desc.arrayLayers = layer_count;
-    image_desc.samples = sample_count;
-    image_desc.tiling = VK_IMAGE_TILING_OPTIMAL;
-    image_desc.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
-    image_desc.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    image_desc.queueFamilyIndexCount = 0;
-    image_desc.pQueueFamilyIndices = NULL;
-    image_desc.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    if ((vr = VK_CALL(vkCreateImage(device_vk->vk_device, &image_desc, NULL, &image->vk_image))) < 0)
+    if (!wined3d_context_vk_create_image(context_vk, type,
+            VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_FORMAT_R8G8B8A8_UNORM,
+            1, 1, 1, sample_count, 1, layer_count, flags, image))
     {
-        ERR("Failed to create Vulkan image, vr %s.\n", wined3d_debug_vkresult(vr));
         return false;
     }
 
-    VK_CALL(vkGetImageMemoryRequirements(device_vk->vk_device, image->vk_image, &memory_requirements));
-
-    memory_type_idx = wined3d_adapter_vk_get_memory_type_index(wined3d_adapter_vk(device_vk->d.adapter),
-            memory_requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    if (memory_type_idx == ~0u)
-    {
-        ERR("Failed to find suitable image memory type.\n");
-        VK_CALL(vkDestroyImage(device_vk->vk_device, image->vk_image, NULL));
-        image->vk_image = VK_NULL_HANDLE;
-        return false;
-    }
-
-    image->memory = wined3d_context_vk_allocate_memory(context_vk,
-            memory_type_idx, memory_requirements.size, &image->vk_memory);
-    if (!image->vk_memory)
-    {
-        ERR("Failed to allocate image memory.\n");
-        VK_CALL(vkDestroyImage(device_vk->vk_device, image->vk_image, NULL));
-        image->vk_image = VK_NULL_HANDLE;
-        return false;
-    }
-
-    if ((vr = VK_CALL(vkBindImageMemory(device_vk->vk_device, image->vk_image,
-            image->vk_memory, image->memory ? image->memory->offset : 0))) < 0)
-    {
-        ERR("Failed to bind image memory, vr %s.\n", wined3d_debug_vkresult(vr));
-        if (image->memory)
-            wined3d_allocator_block_free(image->memory);
-        else
-            VK_CALL(vkFreeMemory(device_vk->vk_device, image->vk_memory, NULL));
-        VK_CALL(vkDestroyImage(device_vk->vk_device, image->vk_image, NULL));
-        image->vk_image = VK_NULL_HANDLE;
-        return false;
-    }
+    wined3d_context_vk_reference_image(context_vk, image);
 
     range.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
     range.baseMipLevel = 0;
@@ -702,7 +638,6 @@ bool wined3d_device_vk_create_null_resources(struct wined3d_device_vk *device_vk
     VkCommandBuffer vk_command_buffer;
     unsigned int sample_count = 2;
     VkBufferUsageFlags usage;
-    uint64_t id;
 
     format = wined3d_get_format(device_vk->d.adapter, WINED3DFMT_R8G8B8A8_UNORM, WINED3D_BIND_SHADER_RESOURCE);
     while (sample_count && !(sample_count & format->multisample_types))
@@ -753,13 +688,12 @@ bool wined3d_device_vk_create_null_resources(struct wined3d_device_vk *device_vk
     return true;
 
 fail:
-    id = context_vk->current_command_buffer.id;
     if (r->image_2dms.vk_image)
-        wined3d_null_image_vk_cleanup(&r->image_2dms, context_vk, id);
+        wined3d_context_vk_destroy_image(context_vk, &r->image_2dms);
     if (r->image_2d.vk_image)
-        wined3d_null_image_vk_cleanup(&r->image_2d, context_vk, id);
+        wined3d_context_vk_destroy_image(context_vk, &r->image_2d);
     if (r->image_1d.vk_image)
-        wined3d_null_image_vk_cleanup(&r->image_1d, context_vk, id);
+        wined3d_context_vk_destroy_image(context_vk, &r->image_1d);
     wined3d_context_vk_reference_bo(context_vk, &r->bo);
     wined3d_context_vk_destroy_bo(context_vk, &r->bo);
     return false;
@@ -769,14 +703,17 @@ void wined3d_device_vk_destroy_null_resources(struct wined3d_device_vk *device_v
         struct wined3d_context_vk *context_vk)
 {
     struct wined3d_null_resources_vk *r = &device_vk->null_resources_vk;
-    uint64_t id = context_vk->current_command_buffer.id;
 
     /* We don't track command buffer references to NULL resources. We easily
      * could, but it doesn't seem worth it. */
-    wined3d_null_image_vk_cleanup(&r->image_3d, context_vk, id);
-    wined3d_null_image_vk_cleanup(&r->image_2dms, context_vk, id);
-    wined3d_null_image_vk_cleanup(&r->image_2d, context_vk, id);
-    wined3d_null_image_vk_cleanup(&r->image_1d, context_vk, id);
+    wined3d_context_vk_reference_image(context_vk, &r->image_3d);
+    wined3d_context_vk_destroy_image(context_vk, &r->image_3d);
+    wined3d_context_vk_reference_image(context_vk, &r->image_2dms);
+    wined3d_context_vk_destroy_image(context_vk, &r->image_2dms);
+    wined3d_context_vk_reference_image(context_vk, &r->image_2d);
+    wined3d_context_vk_destroy_image(context_vk, &r->image_2d);
+    wined3d_context_vk_reference_image(context_vk, &r->image_1d);
+    wined3d_context_vk_destroy_image(context_vk, &r->image_1d);
     wined3d_context_vk_reference_bo(context_vk, &r->bo);
     wined3d_context_vk_destroy_bo(context_vk, &r->bo);
 }
@@ -934,16 +871,16 @@ void wined3d_device_vk_destroy_null_views(struct wined3d_device_vk *device_vk, s
     struct wined3d_null_views_vk *v = &device_vk->null_views_vk;
     uint64_t id = context_vk->current_command_buffer.id;
 
-    wined3d_context_vk_destroy_image_view(context_vk, v->vk_info_2dms_array.imageView, id);
-    wined3d_context_vk_destroy_image_view(context_vk, v->vk_info_2d_array.imageView, id);
-    wined3d_context_vk_destroy_image_view(context_vk, v->vk_info_cube.imageView, id);
-    wined3d_context_vk_destroy_image_view(context_vk, v->vk_info_3d.imageView, id);
-    wined3d_context_vk_destroy_image_view(context_vk, v->vk_info_2dms.imageView, id);
-    wined3d_context_vk_destroy_image_view(context_vk, v->vk_info_2d.imageView, id);
-    wined3d_context_vk_destroy_image_view(context_vk, v->vk_info_1d.imageView, id);
+    wined3d_context_vk_destroy_vk_image_view(context_vk, v->vk_info_2dms_array.imageView, id);
+    wined3d_context_vk_destroy_vk_image_view(context_vk, v->vk_info_2d_array.imageView, id);
+    wined3d_context_vk_destroy_vk_image_view(context_vk, v->vk_info_cube.imageView, id);
+    wined3d_context_vk_destroy_vk_image_view(context_vk, v->vk_info_3d.imageView, id);
+    wined3d_context_vk_destroy_vk_image_view(context_vk, v->vk_info_2dms.imageView, id);
+    wined3d_context_vk_destroy_vk_image_view(context_vk, v->vk_info_2d.imageView, id);
+    wined3d_context_vk_destroy_vk_image_view(context_vk, v->vk_info_1d.imageView, id);
 
-    wined3d_context_vk_destroy_buffer_view(context_vk, v->vk_view_buffer_float, id);
-    wined3d_context_vk_destroy_buffer_view(context_vk, v->vk_view_buffer_uint, id);
+    wined3d_context_vk_destroy_vk_buffer_view(context_vk, v->vk_view_buffer_float, id);
+    wined3d_context_vk_destroy_vk_buffer_view(context_vk, v->vk_view_buffer_uint, id);
 }
 
 HRESULT CDECL wined3d_device_acquire_focus_window(struct wined3d_device *device, HWND window)
@@ -1329,44 +1266,10 @@ struct wined3d_buffer * CDECL wined3d_device_get_stream_output(struct wined3d_de
 HRESULT CDECL wined3d_device_set_stream_source(struct wined3d_device *device, UINT stream_idx,
         struct wined3d_buffer *buffer, UINT offset, UINT stride)
 {
-    struct wined3d_stream_state *stream;
-    struct wined3d_buffer *prev_buffer;
-
     TRACE("device %p, stream_idx %u, buffer %p, offset %u, stride %u.\n",
             device, stream_idx, buffer, offset, stride);
 
-    if (stream_idx >= WINED3D_MAX_STREAMS)
-    {
-        WARN("Stream index %u out of range.\n", stream_idx);
-        return WINED3DERR_INVALIDCALL;
-    }
-    else if (offset & 0x3)
-    {
-        WARN("Offset %u is not 4 byte aligned.\n", offset);
-        return WINED3DERR_INVALIDCALL;
-    }
-
-    stream = &device->cs->c.state->streams[stream_idx];
-    prev_buffer = stream->buffer;
-
-    if (prev_buffer == buffer
-            && stream->stride == stride
-            && stream->offset == offset)
-    {
-       TRACE("Application is setting the old values over, nothing to do.\n");
-       return WINED3D_OK;
-    }
-
-    stream->buffer = buffer;
-    stream->stride = stride;
-    stream->offset = offset;
-    if (buffer)
-        wined3d_buffer_incref(buffer);
-    wined3d_cs_emit_set_stream_source(device->cs, stream_idx, buffer, offset, stride);
-    if (prev_buffer)
-        wined3d_buffer_decref(prev_buffer);
-
-    return WINED3D_OK;
+    return wined3d_device_context_set_stream_source(&device->cs->c, stream_idx, buffer, offset, stride);
 }
 
 HRESULT CDECL wined3d_device_get_stream_source(const struct wined3d_device *device,
@@ -1633,29 +1536,10 @@ static void wined3d_device_set_material(struct wined3d_device *device, const str
 void CDECL wined3d_device_set_index_buffer(struct wined3d_device *device,
         struct wined3d_buffer *buffer, enum wined3d_format_id format_id, unsigned int offset)
 {
-    struct wined3d_state *state = device->cs->c.state;
-    enum wined3d_format_id prev_format;
-    struct wined3d_buffer *prev_buffer;
-    unsigned int prev_offset;
-
     TRACE("device %p, buffer %p, format %s, offset %u.\n",
             device, buffer, debug_d3dformat(format_id), offset);
 
-    prev_buffer = state->index_buffer;
-    prev_format = state->index_format;
-    prev_offset = state->index_offset;
-
-    if (prev_buffer == buffer && prev_format == format_id && prev_offset == offset)
-        return;
-
-    if (buffer)
-        wined3d_buffer_incref(buffer);
-    state->index_buffer = buffer;
-    state->index_format = format_id;
-    state->index_offset = offset;
-    wined3d_cs_emit_set_index_buffer(device->cs, buffer, format_id, offset);
-    if (prev_buffer)
-        wined3d_buffer_decref(prev_buffer);
+    wined3d_device_context_set_index_buffer(&device->cs->c, buffer, format_id, offset);
 }
 
 struct wined3d_buffer * CDECL wined3d_device_get_index_buffer(const struct wined3d_device *device,
@@ -1877,7 +1761,7 @@ void CDECL wined3d_device_set_state(struct wined3d_device *device, struct wined3
         wined3d_device_context_emit_set_rendertarget_view(context, i, state->fb.render_targets[i]);
     }
 
-    wined3d_cs_emit_set_depth_stencil_view(device->cs, state->fb.depth_stencil);
+    wined3d_device_context_emit_set_depth_stencil_view(context, state->fb.depth_stencil);
     wined3d_cs_emit_set_vertex_declaration(device->cs, state->vertex_declaration);
 
     for (i = 0; i < WINED3D_MAX_STREAM_OUTPUT_BUFFERS; ++i)
@@ -1888,13 +1772,14 @@ void CDECL wined3d_device_set_state(struct wined3d_device *device, struct wined3
 
     for (i = 0; i < WINED3D_MAX_STREAMS; ++i)
     {
-        wined3d_cs_emit_set_stream_source(device->cs, i, state->streams[i].buffer,
+        wined3d_device_context_emit_set_stream_source(context, i, state->streams[i].buffer,
                 state->streams[i].offset, state->streams[i].stride);
     }
 
-    wined3d_cs_emit_set_index_buffer(device->cs, state->index_buffer, state->index_format, state->index_offset);
+    wined3d_device_context_emit_set_index_buffer(context, state->index_buffer,
+            state->index_format, state->index_offset);
 
-    wined3d_cs_emit_set_predication(device->cs, state->predicate, state->predicate_value);
+    wined3d_device_context_emit_set_predication(context, state->predicate, state->predicate_value);
 
     for (i = 0; i < WINED3D_SHADER_TYPE_COUNT; ++i)
     {
@@ -2370,6 +2255,130 @@ HRESULT CDECL wined3d_device_context_set_rendertarget_view(struct wined3d_device
     wined3d_device_context_unbind_srv_for_rtv(context, view, FALSE);
 
     return WINED3D_OK;
+}
+
+HRESULT CDECL wined3d_device_context_set_depth_stencil_view(struct wined3d_device_context *context,
+        struct wined3d_rendertarget_view *view)
+{
+    struct wined3d_fb_state *fb = &context->state->fb;
+    struct wined3d_rendertarget_view *prev;
+
+    TRACE("context %p, view %p.\n", context, view);
+
+    if (view && !(view->resource->bind_flags & WINED3D_BIND_DEPTH_STENCIL))
+    {
+        WARN("View resource %p has incompatible %s bind flags.\n",
+                view->resource, wined3d_debug_bind_flags(view->resource->bind_flags));
+        return WINED3DERR_INVALIDCALL;
+    }
+
+    prev = fb->depth_stencil;
+    if (prev == view)
+    {
+        TRACE("Trying to do a NOP SetRenderTarget operation.\n");
+        return WINED3D_OK;
+    }
+
+    if ((fb->depth_stencil = view))
+        wined3d_rendertarget_view_incref(view);
+    wined3d_device_context_emit_set_depth_stencil_view(context, view);
+    if (prev)
+        wined3d_rendertarget_view_decref(prev);
+    wined3d_device_context_unbind_srv_for_rtv(context, view, TRUE);
+
+    return WINED3D_OK;
+}
+
+void CDECL wined3d_device_context_set_predication(struct wined3d_device_context *context,
+        struct wined3d_query *predicate, BOOL value)
+{
+    struct wined3d_state *state = context->state;
+    struct wined3d_query *prev;
+
+    TRACE("context %p, predicate %p, value %#x.\n", context, predicate, value);
+
+    prev = state->predicate;
+    if (predicate)
+    {
+        FIXME("Predicated rendering not implemented.\n");
+        wined3d_query_incref(predicate);
+    }
+    state->predicate = predicate;
+    state->predicate_value = value;
+    wined3d_device_context_emit_set_predication(context, predicate, value);
+    if (prev)
+        wined3d_query_decref(prev);
+}
+
+HRESULT CDECL wined3d_device_context_set_stream_source(struct wined3d_device_context *context,
+        unsigned int stream_idx, struct wined3d_buffer *buffer, unsigned int offset, unsigned int stride)
+{
+    struct wined3d_stream_state *stream;
+    struct wined3d_buffer *prev_buffer;
+
+    TRACE("context %p, stream_idx %u, buffer %p, offset %u, stride %u.\n",
+            context, stream_idx, buffer, offset, stride);
+
+    if (stream_idx >= WINED3D_MAX_STREAMS)
+    {
+        WARN("Stream index %u out of range.\n", stream_idx);
+        return WINED3DERR_INVALIDCALL;
+    }
+    else if (offset & 0x3)
+    {
+        WARN("Offset %u is not 4 byte aligned.\n", offset);
+        return WINED3DERR_INVALIDCALL;
+    }
+
+    stream = &context->state->streams[stream_idx];
+    prev_buffer = stream->buffer;
+
+    if (prev_buffer == buffer
+            && stream->stride == stride
+            && stream->offset == offset)
+    {
+       TRACE("Application is setting the old values over, nothing to do.\n");
+       return WINED3D_OK;
+    }
+
+    stream->buffer = buffer;
+    stream->stride = stride;
+    stream->offset = offset;
+    if (buffer)
+        wined3d_buffer_incref(buffer);
+    wined3d_device_context_emit_set_stream_source(context, stream_idx, buffer, offset, stride);
+    if (prev_buffer)
+        wined3d_buffer_decref(prev_buffer);
+
+    return WINED3D_OK;
+}
+
+void CDECL wined3d_device_context_set_index_buffer(struct wined3d_device_context *context,
+        struct wined3d_buffer *buffer, enum wined3d_format_id format_id, unsigned int offset)
+{
+    struct wined3d_state *state = context->state;
+    enum wined3d_format_id prev_format;
+    struct wined3d_buffer *prev_buffer;
+    unsigned int prev_offset;
+
+    TRACE("context %p, buffer %p, format %s, offset %u.\n",
+            context, buffer, debug_d3dformat(format_id), offset);
+
+    prev_buffer = state->index_buffer;
+    prev_format = state->index_format;
+    prev_offset = state->index_offset;
+
+    if (prev_buffer == buffer && prev_format == format_id && prev_offset == offset)
+        return;
+
+    if (buffer)
+        wined3d_buffer_incref(buffer);
+    state->index_buffer = buffer;
+    state->index_format = format_id;
+    state->index_offset = offset;
+    wined3d_device_context_emit_set_index_buffer(context, buffer, format_id, offset);
+    if (prev_buffer)
+        wined3d_buffer_decref(prev_buffer);
 }
 
 void CDECL wined3d_device_set_vertex_shader(struct wined3d_device *device, struct wined3d_shader *shader)
@@ -4354,22 +4363,9 @@ HRESULT CDECL wined3d_device_clear(struct wined3d_device *device, DWORD rect_cou
 void CDECL wined3d_device_set_predication(struct wined3d_device *device,
         struct wined3d_query *predicate, BOOL value)
 {
-    struct wined3d_state *state = device->cs->c.state;
-    struct wined3d_query *prev;
-
     TRACE("device %p, predicate %p, value %#x.\n", device, predicate, value);
 
-    prev = state->predicate;
-    if (predicate)
-    {
-        FIXME("Predicated rendering not implemented.\n");
-        wined3d_query_incref(predicate);
-    }
-    state->predicate = predicate;
-    state->predicate_value = value;
-    wined3d_cs_emit_set_predication(device->cs, predicate, value);
-    if (prev)
-        wined3d_query_decref(prev);
+    wined3d_device_context_set_predication(&device->cs->c, predicate, value);
 }
 
 struct wined3d_query * CDECL wined3d_device_get_predication(struct wined3d_device *device, BOOL *value)
@@ -5272,33 +5268,9 @@ HRESULT CDECL wined3d_device_set_rendertarget_view(struct wined3d_device *device
 HRESULT CDECL wined3d_device_set_depth_stencil_view(struct wined3d_device *device,
         struct wined3d_rendertarget_view *view)
 {
-    struct wined3d_fb_state *fb = &device->cs->c.state->fb;
-    struct wined3d_rendertarget_view *prev;
-
     TRACE("device %p, view %p.\n", device, view);
 
-    if (view && !(view->resource->bind_flags & WINED3D_BIND_DEPTH_STENCIL))
-    {
-        WARN("View resource %p has incompatible %s bind flags.\n",
-                view->resource, wined3d_debug_bind_flags(view->resource->bind_flags));
-        return WINED3DERR_INVALIDCALL;
-    }
-
-    prev = fb->depth_stencil;
-    if (prev == view)
-    {
-        TRACE("Trying to do a NOP SetRenderTarget operation.\n");
-        return WINED3D_OK;
-    }
-
-    if ((fb->depth_stencil = view))
-        wined3d_rendertarget_view_incref(view);
-    wined3d_cs_emit_set_depth_stencil_view(device->cs, view);
-    if (prev)
-        wined3d_rendertarget_view_decref(prev);
-    wined3d_device_context_unbind_srv_for_rtv(&device->cs->c, view, TRUE);
-
-    return WINED3D_OK;
+    return wined3d_device_context_set_depth_stencil_view(&device->cs->c, view);
 }
 
 static struct wined3d_texture *wined3d_device_create_cursor_texture(struct wined3d_device *device,

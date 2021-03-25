@@ -138,6 +138,42 @@ cl_int WINAPI wrap_clEnqueueNativeKernel( cl_command_queue command_queue,
     return CL_INVALID_OPERATION;
 }
 
+cl_int WINAPI wrap_clSetEventCallback( cl_event event, cl_int type,
+        void (WINAPI *pfn_notify)(cl_event, cl_int, void *),
+        void *user_data)
+{
+    FIXME( "not yet implemented\n" );
+    return CL_INVALID_OPERATION;
+}
+
+cl_int WINAPI wrap_clSetMemObjectDestructorCallback(cl_mem memobj,
+        void (WINAPI *pfn_notify)(cl_mem, void *),
+        void *user_data)
+{
+    FIXME( "not yet implemented\n" );
+    return CL_INVALID_OPERATION;
+}
+
+cl_int WINAPI wrap_clCompileProgram( cl_program program, cl_uint num_devices,
+        const cl_device_id *device_list, const char *options, cl_uint num_input_headers,
+        const cl_program *input_headers, const char **header_include_names,
+        void (WINAPI *pfn_notify)(cl_program program, void *user_data),
+        void *user_data )
+{
+    FIXME( "not yet implemented\n" );
+    return CL_INVALID_OPERATION;
+}
+
+cl_program WINAPI wrap_clLinkProgram( cl_context context, cl_uint num_devices, const cl_device_id *device_list,
+        const char *options, cl_uint num_input_programs, const cl_program *input_programs,
+        void (WINAPI *pfn_notify)(cl_program program, void *user_data),
+        void *user_data, cl_int *errcode_ret )
+{
+    FIXME( "not yet implemented\n" );
+    *errcode_ret = CL_INVALID_OPERATION;
+    return NULL;
+}
+
 NTSTATUS CDECL __wine_init_unix_lib( HMODULE module, DWORD reason, const void *ptr_in, void *ptr_out )
 {
     if (reason != DLL_PROCESS_ATTACH) return STATUS_SUCCESS;

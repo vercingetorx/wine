@@ -141,6 +141,10 @@ extern DWORD ntdll_umbstowcs( const char *src, DWORD srclen, WCHAR *dst, DWORD d
 extern int ntdll_wcstoumbs( const WCHAR *src, DWORD srclen, char *dst, DWORD dstlen, BOOL strict ) DECLSPEC_HIDDEN;
 extern char **build_envp( const WCHAR *envW ) DECLSPEC_HIDDEN;
 extern NTSTATUS exec_wineloader( char **argv, int socketfd, const pe_image_info_t *pe_info ) DECLSPEC_HIDDEN;
+extern NTSTATUS load_builtin( const pe_image_info_t *image_info, const WCHAR *filename,
+                              void **addr_ptr, SIZE_T *size_ptr ) DECLSPEC_HIDDEN;
+extern NTSTATUS load_main_exe( const WCHAR *name, const WCHAR *curdir, WCHAR **image, void **module,
+                               SECTION_IMAGE_INFORMATION *image_info ) DECLSPEC_HIDDEN;
 extern void start_server( BOOL debug ) DECLSPEC_HIDDEN;
 extern ULONG_PTR get_image_address(void) DECLSPEC_HIDDEN;
 
@@ -178,7 +182,8 @@ extern void *anon_mmap_alloc( size_t size, int prot ) DECLSPEC_HIDDEN;
 extern void virtual_init(void) DECLSPEC_HIDDEN;
 extern ULONG_PTR get_system_affinity_mask(void) DECLSPEC_HIDDEN;
 extern void virtual_get_system_info( SYSTEM_BASIC_INFORMATION *info ) DECLSPEC_HIDDEN;
-extern NTSTATUS virtual_map_builtin_module( HANDLE mapping, void **module ) DECLSPEC_HIDDEN;
+extern NTSTATUS virtual_map_builtin_module( HANDLE mapping, void **module, SIZE_T *size,
+                                            SECTION_IMAGE_INFORMATION *info, WORD machine, BOOL prefer_native ) DECLSPEC_HIDDEN;
 extern NTSTATUS virtual_create_builtin_view( void *module, const UNICODE_STRING *nt_name,
                                              pe_image_info_t *info, void *so_handle ) DECLSPEC_HIDDEN;
 extern TEB *virtual_alloc_first_teb(void) DECLSPEC_HIDDEN;
@@ -202,9 +207,10 @@ extern void virtual_set_force_exec( BOOL enable ) DECLSPEC_HIDDEN;
 extern void virtual_set_large_address_space(void) DECLSPEC_HIDDEN;
 extern void virtual_fill_image_information( const pe_image_info_t *pe_info,
                                             SECTION_IMAGE_INFORMATION *info ) DECLSPEC_HIDDEN;
+extern NTSTATUS release_builtin_module( void *module ) DECLSPEC_HIDDEN;
 extern void *get_builtin_so_handle( void *module ) DECLSPEC_HIDDEN;
-extern NTSTATUS set_builtin_unix_handle( void *module, void *handle, void *entry ) DECLSPEC_HIDDEN;
-extern NTSTATUS CDECL init_unix_lib( void *module, DWORD reason, const void *ptr_in, void *ptr_out ) DECLSPEC_HIDDEN;
+extern NTSTATUS get_builtin_unix_info( void *module, const char **name, void **handle, void **entry ) DECLSPEC_HIDDEN;
+extern NTSTATUS set_builtin_unix_info( void *module, const char *name, void *handle, void *entry ) DECLSPEC_HIDDEN;
 
 extern NTSTATUS get_thread_ldt_entry( HANDLE handle, void *data, ULONG len, ULONG *ret_len ) DECLSPEC_HIDDEN;
 extern BOOL get_thread_times( int unix_pid, int unix_tid, LARGE_INTEGER *kernel_time,
@@ -218,7 +224,6 @@ extern void *signal_init_syscalls(void) DECLSPEC_HIDDEN;
 extern void DECLSPEC_NORETURN signal_start_thread( PRTL_THREAD_START_ROUTINE entry, void *arg,
                                                    BOOL suspend, void *thunk, TEB *teb ) DECLSPEC_HIDDEN;
 extern void DECLSPEC_NORETURN signal_exit_thread( int status, void (*func)(int) ) DECLSPEC_HIDDEN;
-extern void DECLSPEC_NORETURN exec_process( NTSTATUS status ) DECLSPEC_HIDDEN;
 extern void __wine_syscall_dispatcher(void) DECLSPEC_HIDDEN;
 extern void signal_restore_full_cpu_context(void) DECLSPEC_HIDDEN;
 extern void fill_vm_counters( VM_COUNTERS_EX *pvmi, int unix_pid ) DECLSPEC_HIDDEN;
@@ -239,6 +244,7 @@ extern NTSTATUS errno_to_status( int err ) DECLSPEC_HIDDEN;
 extern NTSTATUS nt_to_unix_file_name( const UNICODE_STRING *nameW, char **unix_name_ret,
                                       UNICODE_STRING *nt_name, UINT disposition ) DECLSPEC_HIDDEN;
 extern NTSTATUS unix_to_nt_file_name( const char *name, WCHAR **nt ) DECLSPEC_HIDDEN;
+extern NTSTATUS get_full_path( const WCHAR *name, const WCHAR *curdir, WCHAR **path ) DECLSPEC_HIDDEN;
 extern NTSTATUS open_unix_file( HANDLE *handle, const char *unix_name, ACCESS_MASK access,
                                 OBJECT_ATTRIBUTES *attr, ULONG attributes, ULONG sharing, ULONG disposition,
                                 ULONG options, void *ea_buffer, ULONG ea_length ) DECLSPEC_HIDDEN;
@@ -257,6 +263,8 @@ extern void WINAPI call_raise_user_exception_dispatcher( NTSTATUS (WINAPI *dispa
 
 extern void *get_syscall_frame(void) DECLSPEC_HIDDEN;
 extern void set_syscall_frame(void *frame) DECLSPEC_HIDDEN;
+
+#define IMAGE_DLLCHARACTERISTICS_PREFER_NATIVE 0x0010 /* Wine extension */
 
 #define TICKSPERSEC 10000000
 #define SECS_1601_TO_1970  ((369 * 365 + 89) * (ULONGLONG)86400)

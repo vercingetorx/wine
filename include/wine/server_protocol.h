@@ -467,6 +467,7 @@ enum apc_type
     APC_MAP_VIEW,
     APC_UNMAP_VIEW,
     APC_CREATE_THREAD,
+    APC_DUP_HANDLE,
     APC_BREAK_PROCESS
 };
 
@@ -577,6 +578,15 @@ typedef union
         mem_size_t       reserve;
         mem_size_t       commit;
     } create_thread;
+    struct
+    {
+        enum apc_type    type;
+        obj_handle_t     src_handle;
+        obj_handle_t     dst_process;
+        unsigned int     access;
+        unsigned int     attributes;
+        unsigned int     options;
+    } dup_handle;
 } apc_call_t;
 
 typedef union
@@ -664,6 +674,12 @@ typedef union
         client_ptr_t     teb;
         obj_handle_t     handle;
     } create_thread;
+    struct
+    {
+        enum apc_type    type;
+        unsigned int     status;
+        obj_handle_t     handle;
+    } dup_handle;
     struct
     {
         enum apc_type    type;
@@ -837,20 +853,6 @@ struct new_process_reply
     process_id_t pid;
     obj_handle_t handle;
     char __pad_20[4];
-};
-
-
-
-struct exec_process_request
-{
-    struct request_header __header;
-    int          socket_fd;
-    client_cpu_t cpu;
-    char __pad_20[4];
-};
-struct exec_process_reply
-{
-    struct reply_header __header;
 };
 
 
@@ -1253,9 +1255,7 @@ struct dup_handle_reply
 {
     struct reply_header __header;
     obj_handle_t handle;
-    int          self;
-    int          closed;
-    char __pad_20[4];
+    char __pad_12[4];
 };
 
 
@@ -5392,7 +5392,6 @@ struct resume_process_reply
 enum request
 {
     REQ_new_process,
-    REQ_exec_process,
     REQ_get_new_process_info,
     REQ_new_thread,
     REQ_get_startup_info,
@@ -5673,7 +5672,6 @@ union generic_request
     struct request_max_size max_size;
     struct request_header request_header;
     struct new_process_request new_process_request;
-    struct exec_process_request exec_process_request;
     struct get_new_process_info_request get_new_process_info_request;
     struct new_thread_request new_thread_request;
     struct get_startup_info_request get_startup_info_request;
@@ -5952,7 +5950,6 @@ union generic_reply
     struct request_max_size max_size;
     struct reply_header reply_header;
     struct new_process_reply new_process_reply;
-    struct exec_process_reply exec_process_reply;
     struct get_new_process_info_reply get_new_process_info_reply;
     struct new_thread_reply new_thread_reply;
     struct get_startup_info_reply get_startup_info_reply;
@@ -6229,7 +6226,7 @@ union generic_reply
 
 /* ### protocol_version begin ### */
 
-#define SERVER_PROTOCOL_VERSION 686
+#define SERVER_PROTOCOL_VERSION 688
 
 /* ### protocol_version end ### */
 

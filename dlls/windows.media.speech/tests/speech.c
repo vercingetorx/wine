@@ -48,11 +48,12 @@ static void test_SpeechSynthesizer(void)
     IVectorView_VoiceInformation *voices = NULL;
     IInstalledVoicesStatic *voices_static = NULL;
     IActivationFactory *factory = NULL;
+    IVoiceInformation *voice;
     IInspectable *inspectable = NULL, *tmp_inspectable = NULL;
     IAgileObject *agile_object = NULL, *tmp_agile_object = NULL;
     HSTRING str;
     HRESULT hr;
-    ULONG size;
+    UINT32 size;
 
     hr = pRoInitialize(RO_INIT_MULTITHREADED);
     ok(hr == S_OK, "RoInitialize failed, hr %#x\n", hr);
@@ -97,6 +98,15 @@ static void test_SpeechSynthesizer(void)
     hr = IVectorView_VoiceInformation_get_Size(voices, &size);
     ok(hr == S_OK, "IVectorView_VoiceInformation_get_Size voices failed, hr %#x\n", hr);
     todo_wine ok(size != 0 && size != 0xdeadbeef, "IVectorView_VoiceInformation_get_Size returned %u\n", size);
+
+    voice = (IVoiceInformation *)0xdeadbeef;
+    hr = IVectorView_VoiceInformation_GetAt(voices, size, &voice);
+    ok(hr == E_BOUNDS, "IVectorView_VoiceInformation_GetAt failed, hr %#x\n", hr);
+    ok(voice == NULL, "IVectorView_VoiceInformation_GetAt returned %p\n", voice);
+
+    hr = IVectorView_VoiceInformation_GetMany(voices, size, 1, &voice, &size);
+    ok(hr == S_OK, "IVectorView_VoiceInformation_GetMany failed, hr %#x\n", hr);
+    ok(size == 0, "IVectorView_VoiceInformation_GetMany returned count %u\n", size);
 
     IVectorView_VoiceInformation_Release(voices);
 

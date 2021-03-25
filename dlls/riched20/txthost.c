@@ -99,6 +99,7 @@ struct host *host_create( HWND hwnd, CREATESTRUCTW *cs, BOOL emulate_10 )
 
     texthost->ITextHost_iface.lpVtbl = &textHostVtbl;
     texthost->ref = 1;
+    texthost->text_srv = NULL;
     texthost->window = hwnd;
     texthost->parent = cs->hwndParent;
     texthost->emulate_10 = emulate_10;
@@ -196,13 +197,49 @@ DEFINE_THISCALL_WRAPPER(ITextHostImpl_TxSetScrollRange,20)
 DECLSPEC_HIDDEN BOOL __thiscall ITextHostImpl_TxSetScrollRange( ITextHost *iface, INT bar, LONG min_pos, INT max_pos, BOOL redraw )
 {
     struct host *host = impl_from_ITextHost( iface );
-    return SetScrollRange( host->window, bar, min_pos, max_pos, redraw );
+    SCROLLINFO info = { .cbSize = sizeof(info), .fMask = SIF_PAGE | SIF_RANGE };
+
+    if (bar != SB_HORZ && bar != SB_VERT)
+    {
+        FIXME( "Unexpected bar %d\n", bar );
+        return FALSE;
+    }
+
+    if (host->scrollbars & ES_DISABLENOSCROLL) info.fMask |= SIF_DISABLENOSCROLL;
+
+    if (host->text_srv) /* This can be called during text services creation */
+    {
+        if (bar == SB_HORZ) ITextServices_TxGetHScroll( host->text_srv, NULL, NULL, NULL, (LONG *)&info.nPage, NULL );
+        else ITextServices_TxGetVScroll( host->text_srv, NULL, NULL, NULL, (LONG *)&info.nPage, NULL );
+    }
+
+    info.nMin = min_pos;
+    info.nMax = max_pos;
+    return SetScrollInfo( host->window, bar, &info, redraw );
 }
 
 DEFINE_THISCALL_WRAPPER(ITextHostImpl_TxSetScrollPos,16)
 DECLSPEC_HIDDEN BOOL __thiscall ITextHostImpl_TxSetScrollPos( ITextHost *iface, INT bar, INT pos, BOOL redraw )
 {
     struct host *host = impl_from_ITextHost( iface );
+    DWORD style = GetWindowLongW( host->window, GWL_STYLE );
+    DWORD mask = (bar == SB_HORZ) ? WS_HSCROLL : WS_VSCROLL;
+    BOOL show = TRUE, shown = style & mask;
+
+    if (bar != SB_HORZ && bar != SB_VERT)
+    {
+        FIXME( "Unexpected bar %d\n", bar );
+        return FALSE;
+    }
+
+    /* If the application has adjusted the scrollbar's visibility it is reset */
+    if (!(host->scrollbars & ES_DISABLENOSCROLL))
+    {
+        if (bar == SB_HORZ) ITextServices_TxGetHScroll( host->text_srv, NULL, NULL, NULL, NULL, &show );
+        else ITextServices_TxGetVScroll( host->text_srv, NULL, NULL, NULL, NULL, &show );
+    }
+
+    if (!show ^ !shown) ShowScrollBar( host->window, bar, show );
     return SetScrollPos( host->window, bar, pos, redraw ) != 0;
 }
 
@@ -933,7 +970,6 @@ static LRESULT RichEditWndProc_common( HWND hwnd, UINT msg, WPARAM wparam,
                                        LPARAM lparam, BOOL unicode )
 {
     struct host *host;
-    ME_TextEditor *editor;
     HRESULT hr = S_OK;
     LRESULT res = 0;
 
@@ -962,7 +998,6 @@ static LRESULT RichEditWndProc_common( HWND hwnd, UINT msg, WPARAM wparam,
         return res;
     }
 
-    editor = host->editor;
     switch (msg)
     {
     case WM_CHAR:
@@ -984,7 +1019,7 @@ static LRESULT RichEditWndProc_common( HWND hwnd, UINT msg, WPARAM wparam,
         LONG codepage = unicode ? CP_UNICODE : CP_ACP;
         int len;
 
-        ITextServices_OnTxPropertyBitsChange( host->text_srv, TXTBIT_CLIENTRECTCHANGE, 0 );
+        ITextServices_OnTxInPlaceActivate( host->text_srv, NULL );
 
         if (lparam)
         {
@@ -1005,7 +1040,7 @@ static LRESULT RichEditWndProc_common( HWND hwnd, UINT msg, WPARAM wparam,
         RECT rc;
         HBRUSH brush;
 
-        if (GetUpdateRect( editor->hWnd, &rc, TRUE ))
+        if (GetUpdateRect( hwnd, &rc, TRUE ))
         {
             brush = CreateSolidBrush( ITextHost_TxGetSysColor( &host->ITextHost_iface, COLOR_WINDOW ) );
             FillRect( hdc, &rc, brush );
@@ -1143,51 +1178,62 @@ static LRESULT RichEditWndProc_common( HWND hwnd, UINT msg, WPARAM wparam,
         break;
 
     case WM_PAINT:
+    case WM_PRINTCLIENT:
     {
         HDC hdc;
-        RECT rc;
+        RECT rc, client, update;
         PAINTSTRUCT ps;
         HBRUSH brush = CreateSolidBrush( ITextHost_TxGetSysColor( &host->ITextHost_iface, COLOR_WINDOW ) );
 
-        update_caret( editor );
-        hdc = BeginPaint( editor->hWnd, &ps );
-        if (!editor->bEmulateVersion10 || (editor->nEventMask & ENM_UPDATE))
-            ME_SendOldNotify( editor, EN_UPDATE );
+        ITextHostImpl_TxGetClientRect( &host->ITextHost_iface, &client );
+
+        if (msg == WM_PAINT)
+        {
+            hdc = BeginPaint( hwnd, &ps );
+            update = ps.rcPaint;
+        }
+        else
+        {
+            hdc = (HDC)wparam;
+            update = client;
+        }
+
         brush = SelectObject( hdc, brush );
 
         /* Erase area outside of the formatting rectangle */
-        if (ps.rcPaint.top < editor->rcFormat.top)
+        if (update.top < client.top)
         {
-            rc = ps.rcPaint;
-            rc.bottom = editor->rcFormat.top;
+            rc = update;
+            rc.bottom = client.top;
             PatBlt( hdc, rc.left, rc.top, rc.right - rc.left, rc.bottom - rc.top, PATCOPY );
-            ps.rcPaint.top = editor->rcFormat.top;
+            update.top = client.top;
         }
-        if (ps.rcPaint.bottom > editor->rcFormat.bottom)
+        if (update.bottom > client.bottom)
         {
-            rc = ps.rcPaint;
-            rc.top = editor->rcFormat.bottom;
+            rc = update;
+            rc.top = client.bottom;
             PatBlt( hdc, rc.left, rc.top, rc.right - rc.left, rc.bottom - rc.top, PATCOPY );
-            ps.rcPaint.bottom = editor->rcFormat.bottom;
+            update.bottom = client.bottom;
         }
-        if (ps.rcPaint.left < editor->rcFormat.left)
+        if (update.left < client.left)
         {
-            rc = ps.rcPaint;
-            rc.right = editor->rcFormat.left;
+            rc = update;
+            rc.right = client.left;
             PatBlt( hdc, rc.left, rc.top, rc.right - rc.left, rc.bottom - rc.top, PATCOPY );
-            ps.rcPaint.left = editor->rcFormat.left;
+            update.left = client.left;
         }
-        if (ps.rcPaint.right > editor->rcFormat.right)
+        if (update.right > client.right)
         {
-            rc = ps.rcPaint;
-            rc.left = editor->rcFormat.right;
+            rc = update;
+            rc.left = client.right;
             PatBlt( hdc, rc.left, rc.top, rc.right - rc.left, rc.bottom - rc.top, PATCOPY );
-            ps.rcPaint.right = editor->rcFormat.right;
+            update.right = client.right;
         }
 
-        ME_PaintContent( editor, hdc, &ps.rcPaint );
+        ITextServices_TxDraw( host->text_srv, DVASPECT_CONTENT, 0, NULL, NULL, hdc, NULL, NULL, NULL,
+                              &update, NULL, 0, TXTVIEW_ACTIVE );
         DeleteObject( SelectObject( hdc, brush ) );
-        EndPaint( editor->hWnd, &ps );
+        if (msg == WM_PAINT) EndPaint( hwnd, &ps );
         return 0;
     }
     case EM_REPLACESEL:
@@ -1438,7 +1484,7 @@ static BOOL register_classes( HINSTANCE instance )
     wcW.style = CS_DBLCLKS | CS_HREDRAW | CS_VREDRAW | CS_GLOBALCLASS;
     wcW.lpfnWndProc = RichEditWndProcW;
     wcW.cbClsExtra = 0;
-    wcW.cbWndExtra = sizeof(ME_TextEditor *);
+    wcW.cbWndExtra = sizeof(struct host *);
     wcW.hInstance = NULL; /* hInstance would register DLL-local class */
     wcW.hIcon = NULL;
     wcW.hCursor = LoadCursorW( NULL, (LPWSTR)IDC_IBEAM );
@@ -1464,7 +1510,7 @@ static BOOL register_classes( HINSTANCE instance )
     wcA.style = CS_DBLCLKS | CS_HREDRAW | CS_VREDRAW | CS_GLOBALCLASS;
     wcA.lpfnWndProc = RichEditWndProcA;
     wcA.cbClsExtra = 0;
-    wcA.cbWndExtra = sizeof(ME_TextEditor *);
+    wcA.cbWndExtra = sizeof(struct host *);
     wcA.hInstance = NULL; /* hInstance would register DLL-local class */
     wcA.hIcon = NULL;
     wcA.hCursor = LoadCursorW( NULL, (LPWSTR)IDC_IBEAM );

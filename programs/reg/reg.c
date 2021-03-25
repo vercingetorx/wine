@@ -16,7 +16,6 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#include <stdlib.h>
 #include "reg.h"
 #include <wine/debug.h>
 
@@ -69,30 +68,6 @@ const struct reg_type_rels type_rels[] =
     {REG_MULTI_SZ, type_multi_sz},
 };
 
-void *heap_xalloc(size_t size)
-{
-    void *buf = heap_alloc(size);
-    if (!buf)
-    {
-        ERR("Out of memory!\n");
-        exit(1);
-    }
-    return buf;
-}
-
-void *heap_xrealloc(void *buf, size_t size)
-{
-    void *new_buf = heap_realloc(buf, size);
-
-    if (!new_buf)
-    {
-        ERR("Out of memory!\n");
-        exit(1);
-    }
-
-    return new_buf;
-}
-
 void output_writeconsole(const WCHAR *str, DWORD wlen)
 {
     DWORD count, ret;
@@ -108,11 +83,11 @@ void output_writeconsole(const WCHAR *str, DWORD wlen)
          * one in that case.
          */
         len = WideCharToMultiByte(GetConsoleOutputCP(), 0, str, wlen, NULL, 0, NULL, NULL);
-        msgA = heap_xalloc(len);
+        msgA = malloc(len);
 
         WideCharToMultiByte(GetConsoleOutputCP(), 0, str, wlen, msgA, len, NULL, NULL);
         WriteFile(GetStdHandle(STD_OUTPUT_HANDLE), msgA, len, &count, FALSE);
-        heap_free(msgA);
+        free(msgA);
     }
 }
 
@@ -134,17 +109,27 @@ static void output_formatstring(const WCHAR *fmt, __ms_va_list va_args)
 
 void WINAPIV output_message(unsigned int id, ...)
 {
-    WCHAR fmt[1024];
+    WCHAR *fmt = NULL;
+    int len;
     __ms_va_list va_args;
 
-    if (!LoadStringW(GetModuleHandleW(NULL), id, fmt, ARRAY_SIZE(fmt)))
+    if (!(len = LoadStringW(GetModuleHandleW(NULL), id, (WCHAR *)&fmt, 0)))
     {
         WINE_FIXME("LoadString failed with %d\n", GetLastError());
         return;
     }
+
+    len++;
+    fmt = malloc(len * sizeof(WCHAR));
+    if (!fmt) return;
+
+    LoadStringW(GetModuleHandleW(NULL), id, fmt, len);
+
     __ms_va_start(va_args, id);
     output_formatstring(fmt, va_args);
     __ms_va_end(va_args);
+
+    free(fmt);
 }
 
 void WINAPIV output_string(const WCHAR *fmt, ...)
@@ -233,7 +218,7 @@ WCHAR *build_subkey_path(WCHAR *path, DWORD path_len, WCHAR *subkey_name, DWORD 
     WCHAR *subkey_path;
     static const WCHAR fmt[] = {'%','s','\\','%','s',0};
 
-    subkey_path = heap_xalloc((path_len + subkey_len + 2) * sizeof(WCHAR));
+    subkey_path = malloc((path_len + subkey_len + 2) * sizeof(WCHAR));
     swprintf(subkey_path, path_len + subkey_len + 2, fmt, path, subkey_name);
 
     return subkey_path;
@@ -255,13 +240,13 @@ static WCHAR *get_long_key(HKEY root, WCHAR *path)
 
     if (!path)
     {
-        long_key = heap_xalloc((len + 1) * sizeof(WCHAR));
+        long_key = malloc((len + 1) * sizeof(WCHAR));
         lstrcpyW(long_key, root_rels[i].long_name);
         return long_key;
     }
 
     len += lstrlenW(path) + 1; /* add one for the backslash */
-    long_key = heap_xalloc((len + 1) * sizeof(WCHAR));
+    long_key = malloc((len + 1) * sizeof(WCHAR));
     swprintf(long_key, len + 1, fmt, root_rels[i].long_name, path);
     return long_key;
 }

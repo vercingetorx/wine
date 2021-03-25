@@ -63,7 +63,7 @@ struct memory_buffer
     } d3d9_surface;
     struct
     {
-        IUnknown *surface;
+        ID3D11Texture2D *texture;
         unsigned int subresource;
         struct attributes attributes;
     } dxgi_surface;
@@ -131,9 +131,9 @@ static ULONG WINAPI memory_buffer_Release(IMFMediaBuffer *iface)
     {
         if (buffer->d3d9_surface.surface)
             IDirect3DSurface9_Release(buffer->d3d9_surface.surface);
-        if (buffer->dxgi_surface.surface)
+        if (buffer->dxgi_surface.texture)
         {
-            IUnknown_Release(buffer->dxgi_surface.surface);
+            ID3D11Texture2D_Release(buffer->dxgi_surface.texture);
             clear_attributes_object(&buffer->dxgi_surface.attributes);
         }
         DeleteCriticalSection(&buffer->cs);
@@ -406,6 +406,17 @@ static HRESULT WINAPI d3d9_surface_buffer_Unlock(IMFMediaBuffer *iface)
     return hr;
 }
 
+static HRESULT WINAPI d3d9_surface_buffer_SetCurrentLength(IMFMediaBuffer *iface, DWORD current_length)
+{
+    struct memory_buffer *buffer = impl_from_IMFMediaBuffer(iface);
+
+    TRACE("%p, %u.\n", iface, current_length);
+
+    buffer->current_length = current_length;
+
+    return S_OK;
+}
+
 static const IMFMediaBufferVtbl d3d9_surface_1d_buffer_vtbl =
 {
     memory_1d_2d_buffer_QueryInterface,
@@ -414,7 +425,7 @@ static const IMFMediaBufferVtbl d3d9_surface_1d_buffer_vtbl =
     d3d9_surface_buffer_Lock,
     d3d9_surface_buffer_Unlock,
     memory_buffer_GetCurrentLength,
-    memory_buffer_SetCurrentLength,
+    d3d9_surface_buffer_SetCurrentLength,
     memory_buffer_GetMaxLength,
 };
 
@@ -686,13 +697,6 @@ static HRESULT WINAPI d3d9_surface_buffer_GetScanline0AndPitch(IMF2DBuffer2 *ifa
     return hr;
 }
 
-static HRESULT WINAPI d3d9_surface_buffer_GetContiguousLength(IMF2DBuffer2 *iface, DWORD *length)
-{
-    FIXME("%p, %p.\n", iface, length);
-
-    return E_NOTIMPL;
-}
-
 static HRESULT WINAPI d3d9_surface_buffer_Lock2DSize(IMF2DBuffer2 *iface, MF2DBuffer_LockFlags flags, BYTE **scanline0,
         LONG *pitch, BYTE **buffer_start, DWORD *buffer_length)
 {
@@ -737,7 +741,7 @@ static const IMF2DBuffer2Vtbl d3d9_surface_buffer_vtbl =
     d3d9_surface_buffer_Unlock2D,
     d3d9_surface_buffer_GetScanline0AndPitch,
     memory_2d_buffer_IsContiguousFormat,
-    d3d9_surface_buffer_GetContiguousLength,
+    memory_2d_buffer_GetContiguousLength,
     memory_2d_buffer_ContiguousCopyTo,
     memory_2d_buffer_ContiguousCopyFrom,
     d3d9_surface_buffer_Lock2DSize,
@@ -845,6 +849,17 @@ static HRESULT WINAPI dxgi_surface_buffer_Unlock(IMFMediaBuffer *iface)
     return E_NOTIMPL;
 }
 
+static HRESULT WINAPI dxgi_surface_buffer_SetCurrentLength(IMFMediaBuffer *iface, DWORD current_length)
+{
+    struct memory_buffer *buffer = impl_from_IMFMediaBuffer(iface);
+
+    TRACE("%p, %u.\n", iface, current_length);
+
+    buffer->current_length = current_length;
+
+    return S_OK;
+}
+
 static HRESULT WINAPI dxgi_surface_buffer_Lock2D(IMF2DBuffer2 *iface, BYTE **scanline0, LONG *pitch)
 {
     FIXME("%p, %p, %p.\n", iface, scanline0, pitch);
@@ -862,13 +877,6 @@ static HRESULT WINAPI dxgi_surface_buffer_Unlock2D(IMF2DBuffer2 *iface)
 static HRESULT WINAPI dxgi_surface_buffer_GetScanline0AndPitch(IMF2DBuffer2 *iface, BYTE **scanline0, LONG *pitch)
 {
     FIXME("%p, %p, %p.\n", iface, scanline0, pitch);
-
-    return E_NOTIMPL;
-}
-
-static HRESULT WINAPI dxgi_surface_buffer_GetContiguousLength(IMF2DBuffer2 *iface, DWORD *length)
-{
-    FIXME("%p, %p.\n", iface, length);
 
     return E_NOTIMPL;
 }
@@ -905,7 +913,7 @@ static HRESULT WINAPI dxgi_buffer_GetResource(IMFDXGIBuffer *iface, REFIID riid,
 
     TRACE("%p, %s, %p.\n", iface, debugstr_guid(riid), obj);
 
-    return IUnknown_QueryInterface(buffer->dxgi_surface.surface, riid, obj);
+    return ID3D11Texture2D_QueryInterface(buffer->dxgi_surface.texture, riid, obj);
 }
 
 static HRESULT WINAPI dxgi_buffer_GetSubresourceIndex(IMFDXGIBuffer *iface, UINT *index)
@@ -966,7 +974,7 @@ static const IMFMediaBufferVtbl dxgi_surface_1d_buffer_vtbl =
     dxgi_surface_buffer_Lock,
     dxgi_surface_buffer_Unlock,
     memory_buffer_GetCurrentLength,
-    memory_buffer_SetCurrentLength,
+    dxgi_surface_buffer_SetCurrentLength,
     memory_buffer_GetMaxLength,
 };
 
@@ -979,7 +987,7 @@ static const IMF2DBuffer2Vtbl dxgi_surface_buffer_vtbl =
     dxgi_surface_buffer_Unlock2D,
     dxgi_surface_buffer_GetScanline0AndPitch,
     memory_2d_buffer_IsContiguousFormat,
-    dxgi_surface_buffer_GetContiguousLength,
+    memory_2d_buffer_GetContiguousLength,
     memory_2d_buffer_ContiguousCopyTo,
     memory_2d_buffer_ContiguousCopyFrom,
     dxgi_surface_buffer_Lock2DSize,
@@ -1162,32 +1170,44 @@ static HRESULT create_dxgi_surface_buffer(IUnknown *surface, UINT subresource, B
 {
     struct memory_buffer *object;
     D3D11_TEXTURE2D_DESC desc;
+    ID3D11Texture2D *texture;
     unsigned int stride;
     D3DFORMAT format;
     GUID subtype;
     BOOL is_yuv;
     HRESULT hr;
 
-    ID3D11Texture2D_GetDesc((ID3D11Texture2D *)surface, &desc);
+    if (FAILED(hr = IUnknown_QueryInterface(surface, &IID_ID3D11Texture2D, (void **)&texture)))
+    {
+        WARN("Failed to get texture interface, hr %#x.\n", hr);
+        return hr;
+    }
+
+    ID3D11Texture2D_GetDesc(texture, &desc);
     TRACE("format %#x, %u x %u.\n", desc.Format, desc.Width, desc.Height);
 
     memcpy(&subtype, &MFVideoFormat_Base, sizeof(subtype));
     subtype.Data1 = format = MFMapDXGIFormatToDX9Format(desc.Format);
 
     if (!(stride = mf_format_get_stride(&subtype, desc.Width, &is_yuv)))
+    {
+        ID3D11Texture2D_Release(texture);
         return MF_E_INVALIDMEDIATYPE;
+    }
 
     object = heap_alloc_zero(sizeof(*object));
     if (!object)
+    {
+        ID3D11Texture2D_Release(texture);
         return E_OUTOFMEMORY;
+    }
 
     object->IMFMediaBuffer_iface.lpVtbl = &dxgi_surface_1d_buffer_vtbl;
     object->IMF2DBuffer2_iface.lpVtbl = &dxgi_surface_buffer_vtbl;
     object->IMFDXGIBuffer_iface.lpVtbl = &dxgi_buffer_vtbl;
     object->refcount = 1;
     InitializeCriticalSection(&object->cs);
-    object->dxgi_surface.surface = surface;
-    IUnknown_AddRef(surface);
+    object->dxgi_surface.texture = texture;
     object->dxgi_surface.subresource = subresource;
 
     MFGetPlaneSize(format, desc.Width, desc.Height, &object->_2d.plane_size);

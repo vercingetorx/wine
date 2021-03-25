@@ -142,17 +142,62 @@ DECLSPEC_HIDDEN HRESULT __thiscall fnTextSrv_TxSendMessage( ITextServices *iface
     return hr;
 }
 
+static HRESULT update_client_rect( struct text_services *services, const RECT *client )
+{
+    RECT rect;
+    HRESULT hr;
+
+    if (!client)
+    {
+        if (!services->editor->in_place_active) return E_INVALIDARG;
+        hr = ITextHost_TxGetClientRect( services->host, &rect );
+        if (FAILED( hr )) return hr;
+    }
+    else rect = *client;
+
+    rect.left += services->editor->selofs;
+
+    if (EqualRect( &rect, &services->editor->rcFormat )) return S_FALSE;
+    services->editor->rcFormat = rect;
+    return S_OK;
+}
+
 DEFINE_THISCALL_WRAPPER(fnTextSrv_TxDraw,52)
-DECLSPEC_HIDDEN HRESULT __thiscall fnTextSrv_TxDraw(ITextServices *iface, DWORD dwDrawAspect, LONG lindex,
-                                                    void *pvAspect, DVTARGETDEVICE *ptd, HDC hdcDraw, HDC hdcTargetDev,
-                                                    LPCRECTL lprcBounds, LPCRECTL lprcWBounds, LPRECT lprcUpdate,
-                                                    BOOL (CALLBACK * pfnContinue)(DWORD), DWORD dwContinue,
-                                                    LONG lViewId)
+DECLSPEC_HIDDEN HRESULT __thiscall fnTextSrv_TxDraw( ITextServices *iface, DWORD aspect, LONG index, void *aspect_info,
+                                                     DVTARGETDEVICE *td, HDC draw, HDC target,
+                                                     const RECTL *bounds, const RECTL *mf_bounds, RECT *update,
+                                                     BOOL (CALLBACK *continue_fn)(DWORD), DWORD continue_param,
+                                                     LONG view_id )
 {
     struct text_services *services = impl_from_ITextServices( iface );
+    HRESULT hr;
+    HDC dc = draw;
+    BOOL rewrap = FALSE;
 
-    FIXME( "%p: STUB\n", services );
-    return E_NOTIMPL;
+    TRACE( "%p: aspect %d, %d, %p, %p, draw %p, target %p, bounds %s, mf_bounds %s, update %s, %p, %d, view %d\n",
+           services, aspect, index, aspect_info, td, draw, target, wine_dbgstr_rect( (RECT *)bounds ),
+           wine_dbgstr_rect( (RECT *)mf_bounds ), wine_dbgstr_rect( update ), continue_fn, continue_param, view_id );
+
+    if (aspect != DVASPECT_CONTENT || aspect_info || td || target || mf_bounds || continue_fn )
+        FIXME( "Many arguments are ignored\n" );
+
+    hr = update_client_rect( services, (RECT *)bounds );
+    if (FAILED( hr )) return hr;
+    if (hr == S_OK) rewrap = TRUE;
+
+    if (!dc && services->editor->in_place_active)
+        dc = ITextHost_TxGetDC( services->host );
+    if (!dc) return E_FAIL;
+
+    if (rewrap)
+    {
+        editor_mark_rewrap_all( services->editor );
+        wrap_marked_paras_dc( services->editor, dc );
+    }
+    editor_draw( services->editor, dc, update );
+
+    if (!draw) ITextHost_TxReleaseDC( services->host, dc );
+    return S_OK;
 }
 
 DEFINE_THISCALL_WRAPPER(fnTextSrv_TxGetHScroll,24)
@@ -165,7 +210,7 @@ DECLSPEC_HIDDEN HRESULT __thiscall fnTextSrv_TxGetHScroll( ITextServices *iface,
     if (max_pos) *max_pos = services->editor->horz_si.nMax;
     if (pos) *pos = services->editor->horz_si.nPos;
     if (page) *page = services->editor->horz_si.nPage;
-    if (enabled) *enabled = (services->editor->scrollbars & WS_HSCROLL) != 0;
+    if (enabled) *enabled = services->editor->horz_sb_enabled;
     return S_OK;
 }
 
@@ -179,7 +224,7 @@ DECLSPEC_HIDDEN HRESULT __thiscall fnTextSrv_TxGetVScroll( ITextServices *iface,
     if (max_pos) *max_pos = services->editor->vert_si.nMax;
     if (pos) *pos = services->editor->vert_si.nPos;
     if (page) *page = services->editor->vert_si.nPage;
-    if (enabled) *enabled = (services->editor->scrollbars & WS_VSCROLL) != 0;
+    if (enabled) *enabled = services->editor->vert_sb_enabled;
     return S_OK;
 }
 
@@ -213,32 +258,24 @@ DECLSPEC_HIDDEN HRESULT __thiscall fnTextSrv_TxQueryHitPoint(ITextServices *ifac
     return E_NOTIMPL;
 }
 
-static HRESULT update_client_rect( struct text_services *services, const RECT *client )
-{
-    RECT rect;
-    HRESULT hr = S_OK;
-
-    if (!client)
-    {
-        hr = ITextHost_TxGetClientRect( services->host, &rect );
-        client = &rect;
-    }
-
-    if (SUCCEEDED( hr ))
-    {
-        services->editor->rcFormat = *client;
-        services->editor->rcFormat.left += services->editor->selofs;
-    }
-    return hr;
-}
-
 DEFINE_THISCALL_WRAPPER(fnTextSrv_OnTxInPlaceActivate,8)
-DECLSPEC_HIDDEN HRESULT __thiscall fnTextSrv_OnTxInPlaceActivate(ITextServices *iface, LPCRECT prcClient)
+DECLSPEC_HIDDEN HRESULT __thiscall fnTextSrv_OnTxInPlaceActivate( ITextServices *iface, const RECT *client )
 {
     struct text_services *services = impl_from_ITextServices( iface );
+    HRESULT hr;
+    BOOL old_active = services->editor->in_place_active;
 
-    FIXME( "%p: STUB\n", services );
-    return E_NOTIMPL;
+    TRACE( "%p: %s\n", services, wine_dbgstr_rect( client ) );
+
+    services->editor->in_place_active = TRUE;
+    hr = update_client_rect( services, client );
+    if (FAILED( hr ))
+    {
+        services->editor->in_place_active = old_active;
+        return hr;
+    }
+    ME_RewrapRepaint( services->editor );
+    return S_OK;
 }
 
 DEFINE_THISCALL_WRAPPER(fnTextSrv_OnTxInPlaceDeactivate,4)
@@ -246,8 +283,9 @@ DECLSPEC_HIDDEN HRESULT __thiscall fnTextSrv_OnTxInPlaceDeactivate(ITextServices
 {
     struct text_services *services = impl_from_ITextServices( iface );
 
-    FIXME( "%p: STUB\n", services );
-    return E_NOTIMPL;
+    TRACE( "%p\n", services );
+    services->editor->in_place_active = FALSE;
+    return S_OK;
 }
 
 DEFINE_THISCALL_WRAPPER(fnTextSrv_OnTxUIActivate,4)

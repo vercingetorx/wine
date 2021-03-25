@@ -19,7 +19,16 @@
 #ifndef __WINE_UNIX_PRIVATE_H
 #define __WINE_UNIX_PRIVATE_H
 
-#include "opencl_private.h"
+#include <stdarg.h>
+#include <stdint.h>
+
+#include "ntstatus.h"
+#define WIN32_NO_STATUS
+#include "windef.h"
+#include "winbase.h"
+#include "winternl.h"
+
+#include "wine/debug.h"
 
 #define CL_SILENCE_DEPRECATION
 #if defined(HAVE_CL_CL_H)
@@ -53,6 +62,25 @@ cl_int WINAPI wrap_clEnqueueNativeKernel( cl_command_queue command_queue,
         void (WINAPI *user_func)(void *),
         void *args, size_t cb_args, cl_uint num_mem_objects, const cl_mem *mem_list, const void **args_mem_loc,
         cl_uint num_events_in_wait_list, const cl_event *event_wait_list, cl_event *event ) DECLSPEC_HIDDEN;
+
+cl_int WINAPI wrap_clSetEventCallback( cl_event event, cl_int type,
+        void (WINAPI *pfn_notify)(cl_event, cl_int, void *),
+        void *user_data) DECLSPEC_HIDDEN;
+
+cl_int WINAPI wrap_clSetMemObjectDestructorCallback(cl_mem memobj,
+        void (WINAPI *pfn_notify)(cl_mem, void *),
+        void *user_data) DECLSPEC_HIDDEN;
+
+cl_int WINAPI wrap_clCompileProgram( cl_program program, cl_uint num_devices,
+        const cl_device_id *device_list, const char *options, cl_uint num_input_headers,
+        const cl_program *input_headers, const char **header_include_names,
+        void (WINAPI *pfn_notify)(cl_program program, void *user_data),
+        void *user_data ) DECLSPEC_HIDDEN;
+
+cl_program WINAPI wrap_clLinkProgram( cl_context context, cl_uint num_devices, const cl_device_id *device_list,
+        const char *options, cl_uint num_input_programs, const cl_program *input_programs,
+        void (WINAPI *pfn_notify)(cl_program program, void *user_data),
+        void *user_data, cl_int *errcode_ret ) DECLSPEC_HIDDEN;
 
 extern const struct opencl_funcs funcs;
 
