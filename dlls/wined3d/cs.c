@@ -1191,17 +1191,29 @@ void wined3d_device_context_emit_set_scissor_rects(struct wined3d_device_context
 static void wined3d_cs_exec_set_rendertarget_view(struct wined3d_cs *cs, const void *data)
 {
     const struct wined3d_cs_set_rendertarget_view *op = data;
-    BOOL prev_alpha_swizzle, curr_alpha_swizzle;
+    bool prev_alpha_swizzle, curr_alpha_swizzle;
     struct wined3d_rendertarget_view *prev;
+    bool prev_srgb_write, curr_srgb_write;
+    struct wined3d_device *device;
 
+    device = cs->c.device;
     prev = cs->state.fb.render_targets[op->view_idx];
     cs->state.fb.render_targets[op->view_idx] = op->view;
-    device_invalidate_state(cs->c.device, STATE_FRAMEBUFFER);
+    device_invalidate_state(device, STATE_FRAMEBUFFER);
 
     prev_alpha_swizzle = prev && prev->format->id == WINED3DFMT_A8_UNORM;
     curr_alpha_swizzle = op->view && op->view->format->id == WINED3DFMT_A8_UNORM;
     if (prev_alpha_swizzle != curr_alpha_swizzle)
-        device_invalidate_state(cs->c.device, STATE_SHADER(WINED3D_SHADER_TYPE_PIXEL));
+        device_invalidate_state(device, STATE_SHADER(WINED3D_SHADER_TYPE_PIXEL));
+
+    if (!(device->adapter->d3d_info.wined3d_creation_flags & WINED3D_SRGB_READ_WRITE_CONTROL)
+            || cs->state.render_states[WINED3D_RS_SRGBWRITEENABLE])
+    {
+        prev_srgb_write = prev && prev->format_flags & WINED3DFMT_FLAG_SRGB_WRITE;
+        curr_srgb_write = op->view && op->view->format_flags & WINED3DFMT_FLAG_SRGB_WRITE;
+        if (prev_srgb_write != curr_srgb_write)
+            device_invalidate_state(device, STATE_RENDER(WINED3D_RS_SRGBWRITEENABLE));
+    }
 }
 
 void wined3d_device_context_emit_set_rendertarget_view(struct wined3d_device_context *context, unsigned int view_idx,
@@ -1273,15 +1285,16 @@ static void wined3d_cs_exec_set_vertex_declaration(struct wined3d_cs *cs, const 
     device_invalidate_state(cs->c.device, STATE_VDECL);
 }
 
-void wined3d_cs_emit_set_vertex_declaration(struct wined3d_cs *cs, struct wined3d_vertex_declaration *declaration)
+void wined3d_device_context_emit_set_vertex_declaration(struct wined3d_device_context *context,
+        struct wined3d_vertex_declaration *declaration)
 {
     struct wined3d_cs_set_vertex_declaration *op;
 
-    op = wined3d_device_context_require_space(&cs->c, sizeof(*op), WINED3D_CS_QUEUE_DEFAULT);
+    op = wined3d_device_context_require_space(context, sizeof(*op), WINED3D_CS_QUEUE_DEFAULT);
     op->opcode = WINED3D_CS_OP_SET_VERTEX_DECLARATION;
     op->declaration = declaration;
 
-    wined3d_device_context_submit(&cs->c, WINED3D_CS_QUEUE_DEFAULT);
+    wined3d_device_context_submit(context, WINED3D_CS_QUEUE_DEFAULT);
 }
 
 static void wined3d_cs_exec_set_stream_source(struct wined3d_cs *cs, const void *data)
@@ -1363,18 +1376,18 @@ static void wined3d_cs_exec_set_stream_output(struct wined3d_cs *cs, const void 
     device_invalidate_state(cs->c.device, STATE_STREAM_OUTPUT);
 }
 
-void wined3d_cs_emit_set_stream_output(struct wined3d_cs *cs, UINT stream_idx,
-        struct wined3d_buffer *buffer, UINT offset)
+void wined3d_device_context_emit_set_stream_output(struct wined3d_device_context *context, unsigned int stream_idx,
+        struct wined3d_buffer *buffer, unsigned int offset)
 {
     struct wined3d_cs_set_stream_output *op;
 
-    op = wined3d_device_context_require_space(&cs->c, sizeof(*op), WINED3D_CS_QUEUE_DEFAULT);
+    op = wined3d_device_context_require_space(context, sizeof(*op), WINED3D_CS_QUEUE_DEFAULT);
     op->opcode = WINED3D_CS_OP_SET_STREAM_OUTPUT;
     op->stream_idx = stream_idx;
     op->buffer = buffer;
     op->offset = offset;
 
-    wined3d_device_context_submit(&cs->c, WINED3D_CS_QUEUE_DEFAULT);
+    wined3d_device_context_submit(context, WINED3D_CS_QUEUE_DEFAULT);
 }
 
 static void wined3d_cs_exec_set_index_buffer(struct wined3d_cs *cs, const void *data)

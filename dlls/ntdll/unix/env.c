@@ -1871,7 +1871,7 @@ static RTL_USER_PROCESS_PARAMETERS *build_initial_params(void)
     add_registry_environment( &env, &env_pos, &env_size );
     env[env_pos++] = 0;
 
-    status = load_main_exe( main_wargv[0], curdir, &image, &module, &image_info );
+    status = load_main_exe( main_wargv[0], main_argv[0], curdir, &image, &module, &image_info );
     if (!status && image_info.Machine != current_machine)  /* need to restart for Wow64 */
     {
         NtUnmapViewOfSection( GetCurrentProcess(), module );
@@ -1880,23 +1880,16 @@ static RTL_USER_PROCESS_PARAMETERS *build_initial_params(void)
 
     if (status)  /* try launching it through start.exe */
     {
-        static const WCHAR startW[] = {'C',':','\\','w','i','n','d','o','w','s','\\',
-            's','y','s','t','e','m','3','2','\\','s','t','a','r','t','.','e','x','e',0};
-        static const WCHAR slashwW[] = {'/','w',0};
-        static const WCHAR slashbW[] = {'/','b',0};
-        const WCHAR *args[] = { startW, slashwW, slashbW };
+        static const WCHAR execW[] = {'/','e','x','e','c',0};
+        const WCHAR *args[] = { NULL, execW };
 
         free( image );
-        prepend_main_wargv( args, 3 );
-        if ((status = load_main_exe( startW, curdir, &image, &module, &image_info )))
-        {
-            MESSAGE( "wine: failed to start %s\n", debugstr_w(main_wargv[2]) );
-            NtTerminateProcess( GetCurrentProcess(), status );
-        }
+        prepend_main_wargv( args, 2 );
+        load_start_exe( &image, &module, &image_info );
     }
-    else main_wargv[0] = get_dos_path( image );
 
     NtCurrentTeb()->Peb->ImageBaseAddress = module;
+    main_wargv[0] = get_dos_path( image );
     cmdline = build_command_line( main_wargv );
 
     TRACE( "image %s cmdline %s dir %s\n",
@@ -2018,7 +2011,7 @@ void init_startup_info(void)
     params->CurrentDirectory.DosPath.MaximumLength = MAX_PATH * sizeof(WCHAR);
     dst = params->CurrentDirectory.DosPath.Buffer + MAX_PATH;
 
-    copy_unicode_string( &src, &dst, &params->DllPath, info->dllpath_len );
+    if (info->dllpath_len) copy_unicode_string( &src, &dst, &params->DllPath, info->dllpath_len );
     copy_unicode_string( &src, &dst, &params->ImagePathName, info->imagepath_len );
     copy_unicode_string( &src, &dst, &params->CommandLine, info->cmdline_len );
     copy_unicode_string( &src, &dst, &params->WindowTitle, info->title_len );
@@ -2042,7 +2035,7 @@ void init_startup_info(void)
     free( info );
     NtCurrentTeb()->Peb->ProcessParameters = params;
 
-    status = load_main_exe( params->ImagePathName.Buffer, params->CommandLine.Buffer,
+    status = load_main_exe( params->ImagePathName.Buffer, NULL, params->CommandLine.Buffer,
                             &image, &module, &image_info );
     if (status)
     {
