@@ -166,6 +166,8 @@
 @ cdecl wined3d_device_update_texture(ptr ptr ptr)
 @ cdecl wined3d_device_validate_device(ptr ptr)
 
+@ cdecl wined3d_device_context_dispatch(ptr long long long)
+@ cdecl wined3d_device_context_dispatch_indirect(ptr ptr long)
 @ cdecl wined3d_device_context_set_blend_state(ptr ptr ptr long)
 @ cdecl wined3d_device_context_set_constant_buffer(ptr long long ptr)
 @ cdecl wined3d_device_context_set_depth_stencil_state(ptr ptr long)
@@ -178,6 +180,7 @@
 @ cdecl wined3d_device_context_set_scissor_rects(ptr long ptr)
 @ cdecl wined3d_device_context_set_shader(ptr long ptr)
 @ cdecl wined3d_device_context_set_shader_resource_view(ptr long long ptr)
+@ cdecl wined3d_device_context_set_stream_output(ptr long ptr long)
 @ cdecl wined3d_device_context_set_stream_source(ptr long ptr long long)
 @ cdecl wined3d_device_context_set_unordered_access_view(ptr long long ptr long)
 @ cdecl wined3d_device_context_set_vertex_declaration(ptr ptr)

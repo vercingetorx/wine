@@ -1515,7 +1515,7 @@ static void test_user_agent(void)
 
         if (i != 7) {
             size = sizeof(ua);
-            hres = pObtainUserAgentString(i | 0x1000, ua, &size);
+            hres = pObtainUserAgentString(i | UAS_EXACTLEGACY, ua, &size);
             ok(hres == S_OK, "ObtainUserAgentString failed: %08x\n", hres);
             ok(size == strlen(ua) + 1, "unexpected size %u, expected %u\n", size, strlen(ua) + 1);
             ok(!strcmp(ua, str2), "unexpected UA for version %u %s, expected %s\n",
@@ -1523,7 +1523,7 @@ static void test_user_agent(void)
         }
 
         size = sizeof(ua);
-        hres = pObtainUserAgentString(i != 1 ? i : 0x1007, ua, &size);
+        hres = pObtainUserAgentString(i != 1 ? i : UAS_EXACTLEGACY | 7, ua, &size);
         ok(hres == S_OK, "ObtainUserAgentString failed: %08x\n", hres);
         ok(size == strlen(ua) + 1, "unexpected size %u, expected %u\n", size, strlen(ua) + 1);
         if(i < 8 && i != 1)
@@ -1560,6 +1560,9 @@ static void test_user_agent(void)
         if(i == 11) {
             p += check_prefix(p, "; rv:11.0) like Gecko");
         }else {
+            if(i != 1)
+                ok(*p == ';' || *p == ')', "unexpected suffix %s for version %u\n",
+                   wine_dbgstr_a(p), i);
             if(i < 9)
                 p = strchr(p, ')');
             p += check_prefix(p, ")");

@@ -114,8 +114,6 @@ static const BOOL use_preloader = TRUE;
 static const BOOL use_preloader = FALSE;
 #endif
 
-static const BOOL is_win64 = (sizeof(void *) > sizeof(int));
-
 static char *argv0;
 static const char *bin_dir;
 static const char *dll_dir;
@@ -1155,6 +1153,7 @@ static NTSTATUS CDECL load_so_dll( UNICODE_STRING *nt_name, void **module )
     NTSTATUS status;
     DWORD len;
 
+    if (get_load_order( nt_name ) == LO_DISABLED) return STATUS_DLL_NOT_FOUND;
     if (nt_to_unix_file_name( nt_name, &unix_name, NULL, FILE_OPEN )) return STATUS_DLL_NOT_FOUND;
 
     /* remove .so extension from Windows name */
@@ -1397,13 +1396,9 @@ NTSTATUS load_builtin( const pe_image_info_t *image_info, const WCHAR *filename,
     UNICODE_STRING nt_name;
     SECTION_IMAGE_INFORMATION info;
     enum loadorder loadorder;
-    const WCHAR *app_name = NULL;
-
-    if (NtCurrentTeb()->Peb->ImageBaseAddress)
-        app_name = NtCurrentTeb()->Peb->ProcessParameters->ImagePathName.Buffer;
 
     init_unicode_string( &nt_name, filename );
-    loadorder = get_load_order( app_name, &nt_name );
+    loadorder = get_load_order( &nt_name );
 
     if (image_info->image_flags & IMAGE_FLAGS_WineBuiltin)
     {
@@ -1449,6 +1444,42 @@ NTSTATUS load_builtin( const pe_image_info_t *image_info, const WCHAR *filename,
     default:
         return STATUS_DLL_NOT_FOUND;
     }
+}
+
+
+/***************************************************************************
+ *	is_builtin_path
+ */
+BOOL is_builtin_path( const UNICODE_STRING *path, WORD *machine )
+{
+    static const WCHAR wow64W[] = {'\\','?','?','\\','c',':','\\','w','i','n','d','o','w','s','\\',
+                                   's','y','s','w','o','w','6','4'};
+    unsigned int len;
+
+    *machine = current_machine;
+    if (path->Length > wcslen(system_dir) * sizeof(WCHAR) &&
+        !wcsnicmp( path->Buffer, system_dir, wcslen(system_dir) ))
+    {
+#ifndef _WIN64
+        if (NtCurrentTeb64() && NtCurrentTeb64()->TlsSlots[WOW64_TLS_FILESYSREDIR])
+            *machine = IMAGE_FILE_MACHINE_AMD64;
+#endif
+        goto found;
+    }
+    if ((is_win64 || is_wow64) && path->Length > sizeof(wow64W) &&
+        !wcsnicmp( path->Buffer, wow64W, ARRAY_SIZE(wow64W) ))
+    {
+        *machine = IMAGE_FILE_MACHINE_I386;
+        goto found;
+    }
+    return FALSE;
+
+found:
+    /* check that there are no other path components */
+    len = wcslen(system_dir);
+    while (len < path->Length / sizeof(WCHAR) && path->Buffer[len] == '\\') len++;
+    while (len < path->Length / sizeof(WCHAR) && path->Buffer[len] != '\\') len++;
+    return len == path->Length / sizeof(WCHAR);
 }
 
 
@@ -1507,7 +1538,7 @@ NTSTATUS load_main_exe( const WCHAR *name, const char *unix_name, const WCHAR *c
     NTSTATUS status;
     SIZE_T size;
     struct stat st;
-    const WCHAR *p;
+    WORD machine;
 
     /* special case for Unix file name */
     if (unix_name && unix_name[0] == '/' && !stat( unix_name, &st ))
@@ -1523,13 +1554,10 @@ NTSTATUS load_main_exe( const WCHAR *name, const char *unix_name, const WCHAR *c
     if (status != STATUS_DLL_NOT_FOUND) return status;
 
     /* if path is in system dir, we can load the builtin even if the file itself doesn't exist */
-    if (!wcsnicmp( *image, system_dir, wcslen(system_dir) ))
+    init_unicode_string( &nt_name, *image );
+    if (is_builtin_path( &nt_name, &machine ))
     {
-        p = *image + wcslen( system_dir );
-        while (*p == '\\') p++;
-        if (wcschr( p, '\\' )) goto failed;
-        init_unicode_string( &nt_name, *image );
-        status = find_builtin_dll( &nt_name, module, &size, image_info, current_machine, FALSE );
+        status = find_builtin_dll( &nt_name, module, &size, image_info, machine, FALSE );
         if (status != STATUS_DLL_NOT_FOUND) return status;
     }
     /* if name contains a path, bail out */

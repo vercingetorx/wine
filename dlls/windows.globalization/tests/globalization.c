@@ -47,7 +47,7 @@ static void test_GlobalizationPreferences(void)
     static const WCHAR *class_name = L"Windows.System.UserProfile.GlobalizationPreferences";
 
     IGlobalizationPreferencesStatics *preferences_statics = NULL;
-    IVectorView_HSTRING *languages = NULL;
+    IVectorView_HSTRING *languages = NULL, *calendars, *clocks, *currencies;
     IActivationFactory *factory = NULL;
     IInspectable *inspectable = NULL, *tmp_inspectable = NULL;
     IAgileObject *agile_object = NULL, *tmp_agile_object = NULL;
@@ -55,14 +55,11 @@ static void test_GlobalizationPreferences(void)
     BOOLEAN found;
     HRESULT hr;
     UINT32 len;
-    WCHAR *buf, locale[LOCALE_NAME_MAX_LENGTH], *country, *tmp;
+    WCHAR *buf, locale[LOCALE_NAME_MAX_LENGTH], country[16];
     UINT32 i, size;
 
     GetUserDefaultLocaleName(locale, LOCALE_NAME_MAX_LENGTH);
-    if ((tmp = wcsrchr(locale, '_'))) *tmp = 0;
-    if (!(tmp = wcschr(locale, '-')) || (wcslen(tmp) > 3 && !(tmp = wcschr(tmp + 1, '-')))) country = wcsdup(L"US");
-    else country = wcsdup(tmp + 1);
-    GetUserDefaultLocaleName(locale, LOCALE_NAME_MAX_LENGTH);
+    GetUserDefaultGeoName(country, 16);
 
     hr = pRoInitialize(RO_INIT_MULTITHREADED);
     ok(hr == S_OK, "RoInitialize failed, hr %#x\n", hr);
@@ -77,7 +74,6 @@ static void test_GlobalizationPreferences(void)
         win_skip("%s runtimeclass not registered, skipping tests.\n", wine_dbgstr_w(class_name));
         pWindowsDeleteString(str);
         pRoUninitialize();
-        free(country);
         return;
     }
 
@@ -101,8 +97,7 @@ static void test_GlobalizationPreferences(void)
     IAgileObject_Release(tmp_agile_object);
 
     hr = IGlobalizationPreferencesStatics_get_HomeGeographicRegion(preferences_statics, &tmp_str);
-    todo_wine ok(hr == S_OK, "IGlobalizationPreferencesStatics_get_HomeGeographicRegion failed, hr %#x\n", hr);
-    if (FAILED(hr)) goto done;
+    ok(hr == S_OK, "IGlobalizationPreferencesStatics_get_HomeGeographicRegion failed, hr %#x\n", hr);
 
     buf = pWindowsGetStringRawBuffer(tmp_str, &len);
     ok(buf != NULL && len > 0, "WindowsGetStringRawBuffer returned buf %p, len %u\n", buf, len);
@@ -147,14 +142,76 @@ static void test_GlobalizationPreferences(void)
 
     pWindowsDeleteString(tmp_str);
 
+    hr = pWindowsCreateString(L"deadbeef", 8, &tmp_str);
+    ok(hr == S_OK, "WindowsCreateString failed, hr %#x\n", hr);
+
+    i = 0xdeadbeef;
+    found = TRUE;
+    hr = IVectorView_HSTRING_IndexOf(languages, tmp_str, &i, &found);
+    ok(hr == S_OK, "IVectorView_HSTRING_IndexOf failed, hr %#x\n", hr);
+    ok(i == 0 && found == FALSE, "IVectorView_HSTRING_IndexOf returned size %d, found %d\n", size, found);
+
+    pWindowsDeleteString(tmp_str);
+
     tmp_str = (HSTRING)0xdeadbeef;
     hr = IVectorView_HSTRING_GetAt(languages, size, &tmp_str);
     ok(hr == E_BOUNDS, "IVectorView_HSTRING_GetAt failed, hr %#x\n", hr);
     ok(tmp_str == NULL, "IVectorView_HSTRING_GetAt returned %p\n", tmp_str);
 
+    tmp_str = (HSTRING)0xdeadbeef;
+    hr = IVectorView_HSTRING_GetMany(languages, size, 1, &tmp_str, &i);
+    ok(hr == S_OK, "IVectorView_HSTRING_GetAt failed, hr %#x\n", hr);
+    ok(i == 0 && tmp_str == NULL, "IVectorView_HSTRING_GetMany returned count %u, str %p\n", i, tmp_str);
+
+    hr = IVectorView_HSTRING_GetMany(languages, 0, 1, &tmp_str, &i);
+    ok(hr == S_OK, "IVectorView_HSTRING_GetAt failed, hr %#x\n", hr);
+    ok(i == 1, "IVectorView_HSTRING_GetMany returned count %u, expected 1\n", i);
+
+    buf = pWindowsGetStringRawBuffer(tmp_str, &len);
+    ok(buf != NULL && len > 0, "WindowsGetStringRawBuffer returned buf %p, len %u\n", buf, len);
+
+    ok(wcslen(locale) == len && !memcmp(buf, locale, len),
+       "IGlobalizationPreferencesStatics_get_Languages 0 returned len %u, str %s, expected %s\n",
+       len, wine_dbgstr_w(buf), wine_dbgstr_w(locale));
+
+    pWindowsDeleteString(tmp_str);
+
     IVectorView_HSTRING_Release(languages);
 
-done:
+
+    hr = IGlobalizationPreferencesStatics_get_Calendars(preferences_statics, &calendars);
+    ok(hr == S_OK, "IGlobalizationPreferencesStatics_get_Calendars failed, hr %#x\n", hr);
+
+    size = 0xdeadbeef;
+    hr = IVectorView_HSTRING_get_Size(calendars, &size);
+    ok(hr == S_OK, "IVectorView_HSTRING_get_Size failed, hr %#x\n", hr);
+    todo_wine ok(size != 0 && size != 0xdeadbeef, "IVectorView_HSTRING_get_Size returned %u\n", size);
+
+    IVectorView_HSTRING_Release(calendars);
+
+
+    hr = IGlobalizationPreferencesStatics_get_Clocks(preferences_statics, &clocks);
+    ok(hr == S_OK, "IGlobalizationPreferencesStatics_get_Clocks failed, hr %#x\n", hr);
+
+    size = 0xdeadbeef;
+    hr = IVectorView_HSTRING_get_Size(clocks, &size);
+    ok(hr == S_OK, "IVectorView_HSTRING_get_Size failed, hr %#x\n", hr);
+    todo_wine ok(size != 0 && size != 0xdeadbeef, "IVectorView_HSTRING_get_Size returned %u\n", size);
+
+    IVectorView_HSTRING_Release(clocks);
+
+
+    hr = IGlobalizationPreferencesStatics_get_Currencies(preferences_statics, &currencies);
+    ok(hr == S_OK, "IGlobalizationPreferencesStatics_get_Currencies failed, hr %#x\n", hr);
+
+    size = 0xdeadbeef;
+    hr = IVectorView_HSTRING_get_Size(currencies, &size);
+    ok(hr == S_OK, "IVectorView_HSTRING_get_Size failed, hr %#x\n", hr);
+    todo_wine ok(size != 0 && size != 0xdeadbeef, "IVectorView_HSTRING_get_Size returned %u\n", size);
+
+    IVectorView_HSTRING_Release(currencies);
+
+
     IGlobalizationPreferencesStatics_Release(preferences_statics);
 
     IAgileObject_Release(agile_object);
@@ -164,7 +221,6 @@ done:
     pWindowsDeleteString(str);
 
     pRoUninitialize();
-    free(country);
 }
 
 START_TEST(globalization)

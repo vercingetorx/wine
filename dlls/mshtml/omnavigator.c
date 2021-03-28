@@ -1150,11 +1150,33 @@ static HRESULT WINAPI OmNavigator_get_appName(IOmNavigator *iface, BSTR *p)
 
     TRACE("(%p)->(%p)\n", This, p);
 
-    *p = SysAllocString(L"Microsoft Internet Explorer");
+    *p = SysAllocString(dispex_compat_mode(&This->dispex) == COMPAT_MODE_IE11
+                        ? L"Netscape" : L"Microsoft Internet Explorer");
     if(!*p)
         return E_OUTOFMEMORY;
 
     return S_OK;
+}
+
+static unsigned int get_ua_version(OmNavigator *navigator)
+{
+    switch(dispex_compat_mode(&navigator->dispex)) {
+    case COMPAT_MODE_QUIRKS:
+        return UAS_EXACTLEGACY | 7;
+    case COMPAT_MODE_IE5:
+    case COMPAT_MODE_IE7:
+        return 7;
+    case COMPAT_MODE_IE8:
+        return 8;
+    case COMPAT_MODE_IE9:
+        return 9;
+    case COMPAT_MODE_IE10:
+        return 10;
+    case COMPAT_MODE_IE11:
+        return 11;
+    }
+    assert(0);
+    return 0;
 }
 
 static HRESULT WINAPI OmNavigator_get_appVersion(IOmNavigator *iface, BSTR *p)
@@ -1169,7 +1191,7 @@ static HRESULT WINAPI OmNavigator_get_appVersion(IOmNavigator *iface, BSTR *p)
     TRACE("(%p)->(%p)\n", This, p);
 
     size = sizeof(user_agent);
-    hres = ObtainUserAgentString(0, user_agent, &size);
+    hres = ObtainUserAgentString(get_ua_version(This), user_agent, &size);
     if(FAILED(hres))
         return hres;
 
@@ -1197,7 +1219,7 @@ static HRESULT WINAPI OmNavigator_get_userAgent(IOmNavigator *iface, BSTR *p)
     TRACE("(%p)->(%p)\n", This, p);
 
     size = sizeof(user_agent);
-    hres = ObtainUserAgentString(0, user_agent, &size);
+    hres = ObtainUserAgentString(get_ua_version(This), user_agent, &size);
     if(FAILED(hres))
         return hres;
 
@@ -1293,7 +1315,8 @@ static HRESULT WINAPI OmNavigator_toString(IOmNavigator *iface, BSTR *String)
     if(!String)
         return E_INVALIDARG;
 
-    *String = SysAllocString(L"[object]");
+    *String = SysAllocString(dispex_compat_mode(&This->dispex) < COMPAT_MODE_IE9
+                             ? L"[object]" : L"[object Navigator]");
     return *String ? S_OK : E_OUTOFMEMORY;
 }
 
