@@ -1368,27 +1368,12 @@ done:
 
 
 /***********************************************************************
- *           load_builtin_dll
- */
-static NTSTATUS CDECL load_builtin_dll( UNICODE_STRING *nt_name, void **module,
-                                        SECTION_IMAGE_INFORMATION *image_info, BOOL prefer_native )
-{
-    SIZE_T size;
-    NTSTATUS status;
-
-    status = find_builtin_dll( nt_name, module, &size, image_info, current_machine, prefer_native );
-    if (status == STATUS_IMAGE_NOT_AT_BASE) status = STATUS_SUCCESS;
-    return status;
-}
-
-
-/***********************************************************************
  *           load_builtin
  *
  * Load the builtin dll if specified by load order configuration.
  * Return STATUS_IMAGE_ALREADY_LOADED if we should keep the native one that we have found.
  */
-NTSTATUS load_builtin( const pe_image_info_t *image_info, const WCHAR *filename,
+NTSTATUS load_builtin( const pe_image_info_t *image_info, WCHAR *filename,
                        void **module, SIZE_T *size )
 {
     WORD machine = image_info->machine;  /* request same machine as the native one */
@@ -1397,38 +1382,32 @@ NTSTATUS load_builtin( const pe_image_info_t *image_info, const WCHAR *filename,
     SECTION_IMAGE_INFORMATION info;
     enum loadorder loadorder;
 
+    /* remove .fake extension if present */
+    if (image_info->image_flags & IMAGE_FLAGS_WineFakeDll)
+    {
+        static const WCHAR fakeW[] = {'.','f','a','k','e',0};
+        WCHAR *ext = wcsrchr( filename, '.' );
+
+        TRACE( "%s is a fake Wine dll\n", debugstr_w(filename) );
+        if (ext && !wcsicmp( ext, fakeW )) *ext = 0;
+    }
+
     init_unicode_string( &nt_name, filename );
     loadorder = get_load_order( &nt_name );
 
+    if (loadorder == LO_DISABLED) return STATUS_DLL_NOT_FOUND;
+
     if (image_info->image_flags & IMAGE_FLAGS_WineBuiltin)
     {
-        switch (loadorder)
-        {
-        case LO_NATIVE_BUILTIN:
-        case LO_BUILTIN:
-        case LO_BUILTIN_NATIVE:
-        case LO_DEFAULT:
-            status = find_builtin_dll( &nt_name, module, size, &info, machine, FALSE );
-            if (status == STATUS_DLL_NOT_FOUND) return STATUS_IMAGE_ALREADY_LOADED;
-            return status;
-        default:
-            return STATUS_DLL_NOT_FOUND;
-        }
+        if (loadorder == LO_NATIVE) return STATUS_DLL_NOT_FOUND;
+        loadorder = LO_BUILTIN_NATIVE;  /* load builtin, then fallback to the file we found */
     }
-    if (image_info->image_flags & IMAGE_FLAGS_WineFakeDll)
+    else if (image_info->image_flags & IMAGE_FLAGS_WineFakeDll)
     {
-        TRACE( "%s is a fake Wine dll\n", debugstr_us(&nt_name) );
-        switch (loadorder)
-        {
-        case LO_NATIVE_BUILTIN:
-        case LO_BUILTIN:
-        case LO_BUILTIN_NATIVE:
-        case LO_DEFAULT:
-            return find_builtin_dll( &nt_name, module, size, &info, machine, FALSE );
-        default:
-            return STATUS_DLL_NOT_FOUND;
-        }
+        if (loadorder == LO_NATIVE) return STATUS_DLL_NOT_FOUND;
+        loadorder = LO_BUILTIN;  /* builtin with no fallback since mapping a fake dll is not useful */
     }
+
     switch (loadorder)
     {
     case LO_NATIVE:
@@ -1436,13 +1415,10 @@ NTSTATUS load_builtin( const pe_image_info_t *image_info, const WCHAR *filename,
         return STATUS_IMAGE_ALREADY_LOADED;
     case LO_BUILTIN:
         return find_builtin_dll( &nt_name, module, size, &info, machine, FALSE );
-    case LO_BUILTIN_NATIVE:
-    case LO_DEFAULT:
+    default:
         status = find_builtin_dll( &nt_name, module, size, &info, machine, (loadorder == LO_DEFAULT) );
         if (status == STATUS_DLL_NOT_FOUND) return STATUS_IMAGE_ALREADY_LOADED;
         return status;
-    default:
-        return STATUS_DLL_NOT_FOUND;
     }
 }
 
@@ -1454,16 +1430,17 @@ BOOL is_builtin_path( const UNICODE_STRING *path, WORD *machine )
 {
     static const WCHAR wow64W[] = {'\\','?','?','\\','c',':','\\','w','i','n','d','o','w','s','\\',
                                    's','y','s','w','o','w','6','4'};
+    BOOL is_prefix_bootstrap;
     unsigned int len;
+    struct stat st;
+    char *ntdll;
 
     *machine = current_machine;
     if (path->Length > wcslen(system_dir) * sizeof(WCHAR) &&
         !wcsnicmp( path->Buffer, system_dir, wcslen(system_dir) ))
     {
-#ifndef _WIN64
         if (NtCurrentTeb64() && NtCurrentTeb64()->TlsSlots[WOW64_TLS_FILESYSREDIR])
             *machine = IMAGE_FILE_MACHINE_AMD64;
-#endif
         goto found;
     }
     if ((is_win64 || is_wow64) && path->Length > sizeof(wow64W) &&
@@ -1479,7 +1456,15 @@ found:
     len = wcslen(system_dir);
     while (len < path->Length / sizeof(WCHAR) && path->Buffer[len] == '\\') len++;
     while (len < path->Length / sizeof(WCHAR) && path->Buffer[len] != '\\') len++;
-    return len == path->Length / sizeof(WCHAR);
+    if (len != path->Length / sizeof(WCHAR)) return FALSE;
+
+    /* if the corresponding ntdll exists, don't fake the existence of the builtin */
+    ntdll = build_path( config_dir, *machine == IMAGE_FILE_MACHINE_I386 ?
+                        "dosdevices/c:/windows/syswow64/ntdll.dll" :
+                        "dosdevices/c:/windows/system32/ntdll.dll" );
+    is_prefix_bootstrap = stat( ntdll, &st ) == -1;
+    free( ntdll );
+    return is_prefix_bootstrap;
 }
 
 
@@ -1531,10 +1516,12 @@ static NTSTATUS open_main_image( WCHAR *image, void **module, SECTION_IMAGE_INFO
 /***********************************************************************
  *           load_main_exe
  */
-NTSTATUS load_main_exe( const WCHAR *name, const char *unix_name, const WCHAR *curdir,
+NTSTATUS load_main_exe( const WCHAR *dos_name, const char *unix_name, const WCHAR *curdir,
                         WCHAR **image, void **module, SECTION_IMAGE_INFORMATION *image_info )
 {
     UNICODE_STRING nt_name;
+    WCHAR *tmp = NULL;
+    BOOL contains_path;
     NTSTATUS status;
     SIZE_T size;
     struct stat st;
@@ -1549,7 +1536,18 @@ NTSTATUS load_main_exe( const WCHAR *name, const char *unix_name, const WCHAR *c
         free( *image );
     }
 
-    if ((status = get_full_path( name, curdir, image ))) goto failed;
+    if (!dos_name)
+    {
+        dos_name = tmp = malloc( (strlen(unix_name) + 1) * sizeof(WCHAR) );
+        ntdll_umbstowcs( unix_name, strlen(unix_name) + 1, tmp, strlen(unix_name) + 1 );
+    }
+    contains_path = (wcschr( dos_name, '/' ) ||
+                     wcschr( dos_name, '\\' ) ||
+                     (dos_name[0] && dos_name[1] == ':'));
+
+    if ((status = get_full_path( dos_name, curdir, image ))) goto failed;
+    free( tmp );
+
     status = open_main_image( *image, module, image_info );
     if (status != STATUS_DLL_NOT_FOUND) return status;
 
@@ -1560,13 +1558,11 @@ NTSTATUS load_main_exe( const WCHAR *name, const char *unix_name, const WCHAR *c
         status = find_builtin_dll( &nt_name, module, &size, image_info, machine, FALSE );
         if (status != STATUS_DLL_NOT_FOUND) return status;
     }
-    /* if name contains a path, bail out */
-    if (wcschr( name, '/' ) || wcschr( name, '\\' ) || (name[0] && name[1] == ':')) goto failed;
-
-    return STATUS_DLL_NOT_FOUND;
+    if (!contains_path) return STATUS_DLL_NOT_FOUND;
 
 failed:
-    MESSAGE( "wine: failed to open %s: %x\n", debugstr_w(name), status );
+    MESSAGE( "wine: failed to open %s: %x\n",
+             unix_name ? debugstr_a(unix_name) : debugstr_w(dos_name), status );
     NtTerminateProcess( GetCurrentProcess(), status );
     return status;  /* unreached */
 }
@@ -1783,11 +1779,9 @@ static struct unix_funcs unix_funcs =
     ntdll_tan,
     virtual_release_address_space,
     load_so_dll,
-    load_builtin_dll,
     init_builtin_dll,
     init_unix_lib,
     unwind_builtin_dll,
-    get_load_order,
     __wine_dbg_get_channel_flags,
     __wine_dbg_strdup,
     __wine_dbg_output,
@@ -1801,6 +1795,7 @@ static struct unix_funcs unix_funcs =
 static void start_main_thread(void)
 {
     NTSTATUS status;
+    INITIAL_TEB stack;
     TEB *teb = virtual_alloc_first_teb();
 
     signal_init_threading();
@@ -1813,6 +1808,10 @@ static void start_main_thread(void)
     syscall_dispatcher = signal_init_syscalls();
     init_files();
     init_startup_info();
+    virtual_alloc_thread_stack( &stack, 0, 0, NULL );
+    teb->Tib.StackBase = stack.StackBase;
+    teb->Tib.StackLimit = stack.StackLimit;
+    teb->DeallocationStack = stack.DeallocationStack;
     NtCreateKeyedEvent( &keyed_event, GENERIC_READ | GENERIC_WRITE, NULL, 0 );
     load_ntdll();
     load_libwine();

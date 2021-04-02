@@ -3861,15 +3861,15 @@ msgstr "Sąlyginis kompiliavimas išjungtas"
 msgid "Expected '@'"
 msgstr "Tikėtasi „@“"
 
-#: dlls/jscript/jscript.rc:78
+#: dlls/jscript/jscript.rc:79
 msgid "Microsoft JScript compilation error"
 msgstr "Microsoft JScript kompiliavimo klaida"
 
-#: dlls/jscript/jscript.rc:79
+#: dlls/jscript/jscript.rc:80
 msgid "Microsoft JScript runtime error"
 msgstr "Microsoft JScript vykdymo klaida"
 
-#: dlls/jscript/jscript.rc:80 dlls/vbscript/vbscript.rc:64
+#: dlls/jscript/jscript.rc:81 dlls/vbscript/vbscript.rc:64
 msgid "Unknown runtime error"
 msgstr "Nežinoma vykdymo klaida"
 
@@ -3962,14 +3962,18 @@ msgstr ""
 "objektui"
 
 #: dlls/jscript/jscript.rc:74
+msgid "Cannot define property '|': object is not extensible"
+msgstr ""
+
+#: dlls/jscript/jscript.rc:75
 msgid "Cannot redefine non-configurable property '|'"
 msgstr "Negalima iš naujo apibrėžti nekonfigūruojamos savybės „|“"
 
-#: dlls/jscript/jscript.rc:75
+#: dlls/jscript/jscript.rc:76
 msgid "Cannot modify non-writable property '|'"
 msgstr "Negalima modifikuoti nerašomos savybės „|“"
 
-#: dlls/jscript/jscript.rc:76
+#: dlls/jscript/jscript.rc:77
 msgid "Property cannot have both accessors and a value"
 msgstr "Savybė negali turėti ir kreipiklių, ir reikšmės"
 
@@ -14491,7 +14495,9 @@ msgstr ""
 "\n"
 
 #: programs/reg/reg.rc:116
-msgid "The operation completed successfully\n"
+#, fuzzy
+#| msgid "The operation completed successfully\n"
+msgid "reg: The operation completed successfully\n"
 msgstr "Operacija sėkmingai įvykdyta\n"
 
 #: programs/reg/reg.rc:117
@@ -14507,8 +14513,10 @@ msgid "reg: Unable to access remote machine\n"
 msgstr "reg: Nepavyko prieiti prie nuotolinio kompiuterio\n"
 
 #: programs/reg/reg.rc:120
-msgid ""
-"reg: The system was unable to find the specified registry key or value\n"
+#, fuzzy
+#| msgid ""
+#| "reg: The system was unable to find the specified registry key or value\n"
+msgid "reg: Unable to find the specified registry value\n"
 msgstr "reg: Sistemai nepavyko rasti nurodyto registro rakto ar reikšmės\n"
 
 #: programs/reg/reg.rc:121
@@ -14532,7 +14540,9 @@ msgid "The registry value '%1' already exists. Do you want to overwrite it?"
 msgstr "Registro reikšmė „%1“ jau egzistuoja. Ar norite ją perrašyti?"
 
 #: programs/reg/reg.rc:129
-msgid "The registry operation was cancelled\n"
+#, fuzzy
+#| msgid "The registry operation was cancelled\n"
+msgid "reg: The registry operation was cancelled\n"
 msgstr "Registro operacija buvo nutraukta\n"
 
 #: programs/reg/reg.rc:130 programs/regedit/regedit.rc:239
@@ -14688,6 +14698,19 @@ msgstr "reg: Netinkamas sisteminis raktas [%1]\n"
 #: programs/reg/reg.rc:173
 msgid "The file '%1' already exists. Do you want to overwrite it?"
 msgstr "Failas „%1“ jau egzistuoja. Ar norite jį perrašyti?"
+
+#: programs/reg/reg.rc:174
+#, fuzzy
+#| msgid ""
+#| "reg: The system was unable to find the specified registry key or value\n"
+msgid "reg: Unable to find the specified registry key\n"
+msgstr "reg: Sistemai nepavyko rasti nurodyto registro rakto ar reikšmės\n"
+
+#: programs/reg/reg.rc:175
+#, fuzzy
+#| msgid "reg: Unable to open the registry key '%1'.\n"
+msgid "reg: Unable to import the registry key '%1'\n"
+msgstr "reg: Nepavyko atverti registro rakto „%1“.\n"
 
 #: programs/regedit/regedit.rc:34
 msgid "&Registry"

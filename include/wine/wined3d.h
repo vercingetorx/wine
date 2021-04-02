@@ -2014,6 +2014,7 @@ struct wined3d_blt_fx
     DWORD fx;
     struct wined3d_color_key dst_color_key;
     struct wined3d_color_key src_color_key;
+    enum wined3d_format_id resolve_format_id;
 };
 
 struct wined3d_buffer_desc
@@ -2372,7 +2373,7 @@ void __cdecl wined3d_device_dispatch_compute(struct wined3d_device *device,
         unsigned int group_count_x, unsigned int group_count_y, unsigned int group_count_z);
 void __cdecl wined3d_device_dispatch_compute_indirect(struct wined3d_device *device,
         struct wined3d_buffer *buffer, unsigned int offset);
-HRESULT __cdecl wined3d_device_draw_indexed_primitive(struct wined3d_device *device, UINT start_idx, UINT index_count);
+void __cdecl wined3d_device_draw_indexed_primitive(struct wined3d_device *device, UINT start_idx, UINT index_count);
 void __cdecl wined3d_device_draw_indexed_primitive_instanced(struct wined3d_device *device,
         UINT start_idx, UINT index_count, UINT start_instance, UINT instance_count);
 void __cdecl wined3d_device_draw_indexed_primitive_instanced_indirect(struct wined3d_device *device,
@@ -2559,6 +2560,8 @@ void __cdecl wined3d_device_context_dispatch(struct wined3d_device_context *cont
         unsigned int group_count_x, unsigned int group_count_y, unsigned int group_count_z);
 void __cdecl wined3d_device_context_dispatch_indirect(struct wined3d_device_context *context,
         struct wined3d_buffer *buffer, unsigned int offset);
+void __cdecl wined3d_device_context_draw(struct wined3d_device_context *context, unsigned int start_vertex,
+        unsigned int vertex_count, unsigned int start_instance, unsigned int instance_count);
 void __cdecl wined3d_device_context_set_blend_state(struct wined3d_device_context *context,
         struct wined3d_blend_state *state, const struct wined3d_color *blend_factor, unsigned int sample_mask);
 void __cdecl wined3d_device_context_set_constant_buffer(struct wined3d_device_context *context,

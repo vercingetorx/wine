@@ -2764,7 +2764,7 @@ struct wined3d_blitter_ops
             struct wined3d_texture *src_texture, unsigned int src_sub_resource_idx, DWORD src_location,
             const RECT *src_rect, struct wined3d_texture *dst_texture, unsigned int dst_sub_resource_idx,
             DWORD dst_location, const RECT *dst_rect, const struct wined3d_color_key *colour_key,
-            enum wined3d_texture_filter_type filter);
+            enum wined3d_texture_filter_type filter, const struct wined3d_format *resolve_format);
 };
 
 void wined3d_arbfp_blitter_create(struct wined3d_blitter **next,
@@ -4735,9 +4735,6 @@ void wined3d_cs_emit_clear_unordered_access_view_uint(struct wined3d_cs *cs,
         struct wined3d_unordered_access_view *view, const struct wined3d_uvec4 *clear_value) DECLSPEC_HIDDEN;
 void wined3d_cs_emit_copy_uav_counter(struct wined3d_cs *cs, struct wined3d_buffer *dst_buffer,
         unsigned int offset, struct wined3d_unordered_access_view *uav) DECLSPEC_HIDDEN;
-void wined3d_cs_emit_draw(struct wined3d_cs *cs, enum wined3d_primitive_type primitive_type,
-        unsigned int patch_vertex_count, int base_vertex_idx, unsigned int start_idx, unsigned int index_count,
-        unsigned int start_instance, unsigned int instance_count, bool indexed) DECLSPEC_HIDDEN;
 void wined3d_cs_emit_draw_indirect(struct wined3d_cs *cs, enum wined3d_primitive_type primitive_type,
         unsigned int patch_vertex_count, struct wined3d_buffer *buffer,
         unsigned int offset, bool indexed) DECLSPEC_HIDDEN;
@@ -4789,6 +4786,10 @@ static inline void wined3d_cs_push_constants(struct wined3d_cs *cs, enum wined3d
     cs->c.ops->push_constants(&cs->c, p, start_idx, count, constants);
 }
 
+void wined3d_device_context_emit_draw(struct wined3d_device_context *context,
+        enum wined3d_primitive_type primitive_type, unsigned int patch_vertex_count, int base_vertex_idx,
+        unsigned int start_idx, unsigned int index_count, unsigned int start_instance, unsigned int instance_count,
+        bool indexed) DECLSPEC_HIDDEN;
 void wined3d_device_context_emit_set_blend_state(struct wined3d_device_context *context,
         struct wined3d_blend_state *state, const struct wined3d_color *blend_factor,
         unsigned int sample_mask) DECLSPEC_HIDDEN;
@@ -5927,6 +5928,17 @@ static inline GLuint wined3d_texture_gl_get_texture_name(const struct wined3d_te
 {
     return srgb && needs_separate_srgb_gl_texture(context, &texture_gl->t)
             ? texture_gl->texture_srgb.name : texture_gl->texture_rgb.name;
+}
+
+static inline GLuint wined3d_gl_get_internal_format(struct wined3d_resource *resource,
+    const struct wined3d_format_gl *format_gl, bool srgb)
+{
+    if (srgb)
+        return format_gl->srgb_internal;
+    else if (resource->bind_flags & WINED3D_BIND_RENDER_TARGET && wined3d_resource_is_offscreen(resource))
+        return format_gl->rt_internal;
+    else
+        return format_gl->internal;
 }
 
 static inline BOOL can_use_texture_swizzle(const struct wined3d_d3d_info *d3d_info, const struct wined3d_format *format)
