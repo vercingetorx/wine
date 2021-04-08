@@ -38,15 +38,19 @@
 
 static const char teststr[] = "Wine is not an emulator";
 
-struct test_input
+struct test_data
 {
     int running_under_wine;
     int winetest_report_success;
     int winetest_debug;
+    int successes, failures, skipped, todo_successes, todo_failures;
+};
+
+struct main_test_input
+{
     DWORD process_id;
     SIZE_T teststr_offset;
     ULONG64 *modified_value;
-    WCHAR path[1];
 };
 
 static inline char *drv_strrchr( const char *str, char ch )

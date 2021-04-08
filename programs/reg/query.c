@@ -329,42 +329,46 @@ int reg_query(int argc, WCHAR *argvW[])
     BOOL value_empty = FALSE, recurse = FALSE;
     int i;
 
-    if (!parse_registry_key(argvW[2], &root, &path, &key_name))
+    if (!parse_registry_key(argvW[2], &root, &path))
         return 1;
 
     for (i = 3; i < argc; i++)
     {
-        if (argvW[i][0] == '/' || argvW[i][0] == '-')
+        WCHAR *str;
+
+        if (argvW[i][0] != '/' && argvW[i][0] != '-')
+            goto invalid;
+
+        str = &argvW[i][1];
+
+        if (!lstrcmpiW(str, L"ve"))
         {
-            WCHAR *str = &argvW[i][1];
+            if (value_empty) goto invalid;
+            value_empty = TRUE;
+            continue;
+        }
+        else if (!str[0] || str[1])
+            goto invalid;
 
-            if (!lstrcmpiW(str, L"ve"))
-            {
-                if (value_empty) goto invalid;
-                value_empty = TRUE;
-                continue;
-            }
-            else if (!str[0] || str[1])
+        switch (towlower(*str))
+        {
+        case 'v':
+            if (value_name || !(value_name = argvW[++i]))
                 goto invalid;
-
-            switch (towlower(*str))
-            {
-            case 'v':
-                if (value_name || !(value_name = argvW[++i]))
-                    goto invalid;
-                break;
-            case 's':
-                if (recurse) goto invalid;
-                recurse = TRUE;
-                break;
-            default:
-                goto invalid;
-            }
+            break;
+        case 's':
+            if (recurse) goto invalid;
+            recurse = TRUE;
+            break;
+        default:
+            goto invalid;
         }
     }
 
     if (value_name && value_empty)
         goto invalid;
+
+    key_name = get_long_key(root, path);
 
     return run_query(root, path, key_name, value_name, value_empty, recurse);
 

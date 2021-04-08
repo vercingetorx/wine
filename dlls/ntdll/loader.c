@@ -154,7 +154,14 @@ static RTL_CRITICAL_SECTION_DEBUG peb_critsect_debug =
 };
 static RTL_CRITICAL_SECTION peb_lock = { &peb_critsect_debug, -1, 0, 0, 0, 0 };
 
-static PEB_LDR_DATA ldr = { sizeof(ldr), TRUE };
+static PEB_LDR_DATA ldr =
+{
+    sizeof(ldr), TRUE, NULL,
+    { &ldr.InLoadOrderModuleList, &ldr.InLoadOrderModuleList },
+    { &ldr.InMemoryOrderModuleList, &ldr.InMemoryOrderModuleList },
+    { &ldr.InInitializationOrderModuleList, &ldr.InInitializationOrderModuleList }
+};
+
 static RTL_BITMAP tls_bitmap;
 static RTL_BITMAP tls_expansion_bitmap;
 
@@ -2275,6 +2282,7 @@ static NTSTATUS open_dll_file( UNICODE_STRING *nt_name, WINE_MODREF **pwm, HANDL
             TRACE( "%s is for arch %x, continuing search\n", debugstr_us(nt_name), image_info->Machine );
             status = STATUS_IMAGE_MACHINE_TYPE_MISMATCH;
             NtClose( *mapping );
+            *mapping = NULL;
         }
     }
     NtClose( handle );
@@ -3484,6 +3492,104 @@ static void process_breakpoint(void)
 }
 
 
+/***********************************************************************
+ *           load_global_options
+ */
+static void load_global_options(void)
+{
+    OBJECT_ATTRIBUTES attr;
+    UNICODE_STRING name_str;
+    HANDLE hkey;
+    ULONG value;
+
+    attr.Length = sizeof(attr);
+    attr.RootDirectory = 0;
+    attr.ObjectName = &name_str;
+    attr.Attributes = OBJ_CASE_INSENSITIVE;
+    attr.SecurityDescriptor = NULL;
+    attr.SecurityQualityOfService = NULL;
+    RtlInitUnicodeString( &name_str, L"Machine\\System\\CurrentControlSet\\Control\\Session Manager" );
+
+    if (!NtOpenKey( &hkey, KEY_QUERY_VALUE, &attr ))
+    {
+        query_dword_option( hkey, L"GlobalFlag", &NtCurrentTeb()->Peb->NtGlobalFlag );
+        query_dword_option( hkey, L"SafeProcessSearchMode", &path_safe_mode );
+        query_dword_option( hkey, L"SafeDllSearchMode", &dll_safe_mode );
+
+        if (!query_dword_option( hkey, L"CriticalSectionTimeout", &value ))
+            NtCurrentTeb()->Peb->CriticalSectionTimeout.QuadPart = (ULONGLONG)value * -10000000;
+
+        if (!query_dword_option( hkey, L"HeapSegmentReserve", &value ))
+            NtCurrentTeb()->Peb->HeapSegmentReserve = value;
+
+        if (!query_dword_option( hkey, L"HeapSegmentCommit", &value ))
+            NtCurrentTeb()->Peb->HeapSegmentCommit = value;
+
+        if (!query_dword_option( hkey, L"HeapDeCommitTotalFreeThreshold", &value ))
+            NtCurrentTeb()->Peb->HeapDeCommitTotalFreeThreshold = value;
+
+        if (!query_dword_option( hkey, L"HeapDeCommitFreeBlockThreshold", &value ))
+            NtCurrentTeb()->Peb->HeapDeCommitFreeBlockThreshold = value;
+
+        NtClose( hkey );
+    }
+    LdrQueryImageFileExecutionOptions( &NtCurrentTeb()->Peb->ProcessParameters->ImagePathName,
+                                       L"GlobalFlag", REG_DWORD, &NtCurrentTeb()->Peb->NtGlobalFlag,
+                                       sizeof(DWORD), NULL );
+    heap_set_debug_flags( GetProcessHeap() );
+}
+
+
+#ifndef _WIN64
+void *Wow64Transition = NULL;
+
+static void map_wow64cpu(void)
+{
+    SIZE_T size = 0;
+    OBJECT_ATTRIBUTES attr;
+    UNICODE_STRING string;
+    HANDLE file, section;
+    IO_STATUS_BLOCK io;
+    NTSTATUS status;
+
+    RtlInitUnicodeString( &string, L"\\??\\C:\\windows\\sysnative\\wow64cpu.dll" );
+    InitializeObjectAttributes( &attr, &string, 0, NULL, NULL );
+    if ((status = NtOpenFile( &file, GENERIC_READ | SYNCHRONIZE, &attr, &io, FILE_SHARE_READ,
+                              FILE_SYNCHRONOUS_IO_NONALERT | FILE_NON_DIRECTORY_FILE )))
+    {
+        WARN("failed to open wow64cpu, status %#x\n", status);
+        return;
+    }
+    if (!NtCreateSection( &section, STANDARD_RIGHTS_REQUIRED | SECTION_QUERY |
+                          SECTION_MAP_READ | SECTION_MAP_EXECUTE,
+                          NULL, NULL, PAGE_EXECUTE_READ, SEC_COMMIT, file ))
+    {
+        NtMapViewOfSection( section, NtCurrentProcess(), &Wow64Transition, 0,
+                            0, NULL, &size, ViewShare, 0, PAGE_EXECUTE_READ );
+        NtClose( section );
+    }
+    NtClose( file );
+}
+
+static void init_wow64(void)
+{
+    PEB *peb = NtCurrentTeb()->Peb;
+    PEB64 *peb64;
+
+    if (!NtCurrentTeb64()) return;
+    peb64 = UlongToPtr( NtCurrentTeb64()->Peb );
+    peb64->ImageBaseAddress = PtrToUlong( peb->ImageBaseAddress );
+    peb64->OSMajorVersion   = peb->OSMajorVersion;
+    peb64->OSMinorVersion   = peb->OSMinorVersion;
+    peb64->OSBuildNumber    = peb->OSBuildNumber;
+    peb64->OSPlatformId     = peb->OSPlatformId;
+    peb64->SessionId        = peb->SessionId;
+
+    map_wow64cpu();
+}
+#endif
+
+
 /******************************************************************
  *		LdrInitializeThunk (NTDLL.@)
  *
@@ -3517,7 +3623,31 @@ void WINAPI LdrInitializeThunk( CONTEXT *context, ULONG_PTR unknown2, ULONG_PTR 
     {
         ANSI_STRING func_name;
         WINE_MODREF *kernel32;
+        PEB *peb = NtCurrentTeb()->Peb;
 
+        peb->LdrData            = &ldr;
+        peb->FastPebLock        = &peb_lock;
+        peb->TlsBitmap          = &tls_bitmap;
+        peb->TlsExpansionBitmap = &tls_expansion_bitmap;
+        peb->LoaderLock         = &loader_section;
+        peb->OSMajorVersion     = 5;
+        peb->OSMinorVersion     = 1;
+        peb->OSBuildNumber      = 0xA28;
+        peb->OSPlatformId       = VER_PLATFORM_WIN32_NT;
+        peb->SessionId          = 1;
+        peb->ProcessHeap        = RtlCreateHeap( HEAP_GROWABLE, NULL, 0, 0, NULL, NULL );
+
+        RtlInitializeBitMap( &tls_bitmap, peb->TlsBitmapBits, sizeof(peb->TlsBitmapBits) * 8 );
+        RtlInitializeBitMap( &tls_expansion_bitmap, peb->TlsExpansionBitmapBits,
+                             sizeof(peb->TlsExpansionBitmapBits) * 8 );
+        RtlSetBits( peb->TlsBitmap, 0, 1 ); /* TLS index 0 is reserved and should be initialized to NULL. */
+
+        init_user_process_params();
+        load_global_options();
+        version_init();
+#ifndef _WIN64
+        init_wow64();
+#endif
         wm = build_main_module();
         wm->ldr.LoadCount = -1;
 
@@ -3601,54 +3731,6 @@ void WINAPI LdrInitializeThunk( CONTEXT *context, ULONG_PTR unknown2, ULONG_PTR 
 
     RtlLeaveCriticalSection( &loader_section );
     signal_start_thread( context );
-}
-
-
-/***********************************************************************
- *           load_global_options
- */
-static void load_global_options(void)
-{
-    OBJECT_ATTRIBUTES attr;
-    UNICODE_STRING name_str;
-    HANDLE hkey;
-    ULONG value;
-
-    attr.Length = sizeof(attr);
-    attr.RootDirectory = 0;
-    attr.ObjectName = &name_str;
-    attr.Attributes = OBJ_CASE_INSENSITIVE;
-    attr.SecurityDescriptor = NULL;
-    attr.SecurityQualityOfService = NULL;
-    RtlInitUnicodeString( &name_str, L"Machine\\System\\CurrentControlSet\\Control\\Session Manager" );
-
-    if (!NtOpenKey( &hkey, KEY_QUERY_VALUE, &attr ))
-    {
-        query_dword_option( hkey, L"GlobalFlag", &NtCurrentTeb()->Peb->NtGlobalFlag );
-        query_dword_option( hkey, L"SafeProcessSearchMode", &path_safe_mode );
-        query_dword_option( hkey, L"SafeDllSearchMode", &dll_safe_mode );
-
-        if (!query_dword_option( hkey, L"CriticalSectionTimeout", &value ))
-            NtCurrentTeb()->Peb->CriticalSectionTimeout.QuadPart = (ULONGLONG)value * -10000000;
-
-        if (!query_dword_option( hkey, L"HeapSegmentReserve", &value ))
-            NtCurrentTeb()->Peb->HeapSegmentReserve = value;
-
-        if (!query_dword_option( hkey, L"HeapSegmentCommit", &value ))
-            NtCurrentTeb()->Peb->HeapSegmentCommit = value;
-
-        if (!query_dword_option( hkey, L"HeapDeCommitTotalFreeThreshold", &value ))
-            NtCurrentTeb()->Peb->HeapDeCommitTotalFreeThreshold = value;
-
-        if (!query_dword_option( hkey, L"HeapDeCommitFreeBlockThreshold", &value ))
-            NtCurrentTeb()->Peb->HeapDeCommitFreeBlockThreshold = value;
-
-        NtClose( hkey );
-    }
-    LdrQueryImageFileExecutionOptions( &NtCurrentTeb()->Peb->ProcessParameters->ImagePathName,
-                                       L"GlobalFlag", REG_DWORD, &NtCurrentTeb()->Peb->NtGlobalFlag,
-                                       sizeof(DWORD), NULL );
-    heap_set_debug_flags( GetProcessHeap() );
 }
 
 
@@ -3984,89 +4066,6 @@ BOOL WINAPI DllMain( HINSTANCE inst, DWORD reason, LPVOID reserved )
 }
 
 
-#ifndef _WIN64
-void *Wow64Transition = NULL;
-
-static void map_wow64cpu(void)
-{
-    SIZE_T size = 0;
-    OBJECT_ATTRIBUTES attr;
-    UNICODE_STRING string;
-    HANDLE file, section;
-    IO_STATUS_BLOCK io;
-    NTSTATUS status;
-
-    RtlInitUnicodeString( &string, L"\\??\\C:\\windows\\sysnative\\wow64cpu.dll" );
-    InitializeObjectAttributes( &attr, &string, 0, NULL, NULL );
-    if ((status = NtOpenFile( &file, GENERIC_READ | SYNCHRONIZE, &attr, &io, FILE_SHARE_READ,
-                              FILE_SYNCHRONOUS_IO_NONALERT | FILE_NON_DIRECTORY_FILE )))
-    {
-        WARN("failed to open wow64cpu, status %#x\n", status);
-        return;
-    }
-    if (!NtCreateSection( &section, STANDARD_RIGHTS_REQUIRED | SECTION_QUERY |
-                          SECTION_MAP_READ | SECTION_MAP_EXECUTE,
-                          NULL, NULL, PAGE_EXECUTE_READ, SEC_COMMIT, file ))
-    {
-        NtMapViewOfSection( section, NtCurrentProcess(), &Wow64Transition, 0,
-                            0, NULL, &size, ViewShare, 0, PAGE_EXECUTE_READ );
-        NtClose( section );
-    }
-    NtClose( file );
-}
-#endif
-
-
-/***********************************************************************
- *           process_init
- */
-static NTSTATUS process_init(void)
-{
-    TEB *teb = NtCurrentTeb();
-    PEB *peb = teb->Peb;
-
-    peb->LdrData            = &ldr;
-    peb->FastPebLock        = &peb_lock;
-    peb->TlsBitmap          = &tls_bitmap;
-    peb->TlsExpansionBitmap = &tls_expansion_bitmap;
-    peb->LoaderLock         = &loader_section;
-    peb->OSMajorVersion     = 5;
-    peb->OSMinorVersion     = 1;
-    peb->OSBuildNumber      = 0xA28;
-    peb->OSPlatformId       = VER_PLATFORM_WIN32_NT;
-    peb->SessionId          = 1;
-    peb->ProcessHeap        = RtlCreateHeap( HEAP_GROWABLE, NULL, 0, 0, NULL, NULL );
-
-    RtlInitializeBitMap( &tls_bitmap, peb->TlsBitmapBits, sizeof(peb->TlsBitmapBits) * 8 );
-    RtlInitializeBitMap( &tls_expansion_bitmap, peb->TlsExpansionBitmapBits,
-                         sizeof(peb->TlsExpansionBitmapBits) * 8 );
-    RtlSetBits( peb->TlsBitmap, 0, 1 ); /* TLS index 0 is reserved and should be initialized to NULL. */
-    init_global_fls_data();
-
-    InitializeListHead( &ldr.InLoadOrderModuleList );
-    InitializeListHead( &ldr.InMemoryOrderModuleList );
-    InitializeListHead( &ldr.InInitializationOrderModuleList );
-
-    init_user_process_params();
-    load_global_options();
-    version_init();
-
-#ifndef _WIN64
-    if (NtCurrentTeb64())
-    {
-        PEB64 *peb64 = UlongToPtr( NtCurrentTeb64()->Peb );
-        peb64->ImageBaseAddress = PtrToUlong( peb->ImageBaseAddress );
-        peb64->OSMajorVersion   = peb->OSMajorVersion;
-        peb64->OSMinorVersion   = peb->OSMinorVersion;
-        peb64->OSBuildNumber    = peb->OSBuildNumber;
-        peb64->OSPlatformId     = peb->OSPlatformId;
-        peb64->SessionId        = peb->SessionId;
-        map_wow64cpu();
-    }
-#endif
-    return STATUS_SUCCESS;
-}
-
 /***********************************************************************
  *           __wine_set_unix_funcs
  */
@@ -4074,5 +4073,5 @@ NTSTATUS CDECL __wine_set_unix_funcs( int version, const struct unix_funcs *func
 {
     if (version != NTDLL_UNIXLIB_VERSION) return STATUS_REVISION_MISMATCH;
     unix_funcs = funcs;
-    return process_init();
+    return STATUS_SUCCESS;
 }

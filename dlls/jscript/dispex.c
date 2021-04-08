@@ -2145,7 +2145,7 @@ HRESULT disp_call_value(script_ctx_t *ctx, IDispatch *disp, IDispatch *jsthis, W
     return hres;
 }
 
-HRESULT jsdisp_propput(jsdisp_t *obj, const WCHAR *name, DWORD flags, jsval_t val)
+HRESULT jsdisp_propput(jsdisp_t *obj, const WCHAR *name, DWORD flags, BOOL throw, jsval_t val)
 {
     dispex_prop_t *prop;
     HRESULT hres;
@@ -2153,16 +2153,18 @@ HRESULT jsdisp_propput(jsdisp_t *obj, const WCHAR *name, DWORD flags, jsval_t va
     if(obj->extensible)
         hres = ensure_prop_name(obj, name, flags, &prop);
     else
-        hres = find_prop_name_prot(obj, string_hash(name), name, &prop);
-    if(FAILED(hres) || !prop)
+        hres = find_prop_name(obj, string_hash(name), name, &prop);
+    if(FAILED(hres))
         return hres;
+    if(!prop || (prop->type == PROP_DELETED && !obj->extensible))
+        return throw ? JS_E_INVALID_ACTION : S_OK;
 
     return prop_put(obj, prop, val);
 }
 
 HRESULT jsdisp_propput_name(jsdisp_t *obj, const WCHAR *name, jsval_t val)
 {
-    return jsdisp_propput(obj, name, PROPF_ENUMERABLE | PROPF_CONFIGURABLE | PROPF_WRITABLE, val);
+    return jsdisp_propput(obj, name, PROPF_ENUMERABLE | PROPF_CONFIGURABLE | PROPF_WRITABLE, FALSE, val);
 }
 
 HRESULT jsdisp_propput_idx(jsdisp_t *obj, DWORD idx, jsval_t val)
@@ -2170,7 +2172,7 @@ HRESULT jsdisp_propput_idx(jsdisp_t *obj, DWORD idx, jsval_t val)
     WCHAR buf[12];
 
     swprintf(buf, ARRAY_SIZE(buf), L"%d", idx);
-    return jsdisp_propput_name(obj, buf, val);
+    return jsdisp_propput(obj, buf, PROPF_ENUMERABLE | PROPF_CONFIGURABLE | PROPF_WRITABLE, TRUE, val);
 }
 
 HRESULT disp_propput(script_ctx_t *ctx, IDispatch *disp, DISPID id, jsval_t val)
@@ -2325,7 +2327,10 @@ HRESULT jsdisp_delete_idx(jsdisp_t *obj, DWORD idx)
     if(FAILED(hres) || !prop)
         return hres;
 
-    return delete_prop(prop, &b);
+    hres = delete_prop(prop, &b);
+    if(FAILED(hres))
+        return hres;
+    return b ? S_OK : JS_E_INVALID_ACTION;
 }
 
 HRESULT disp_delete(IDispatch *disp, DISPID id, BOOL *ret)
@@ -2639,6 +2644,26 @@ void jsdisp_freeze(jsdisp_t *obj, BOOL seal)
     }
 
     obj->extensible = FALSE;
+}
+
+BOOL jsdisp_is_frozen(jsdisp_t *obj, BOOL sealed)
+{
+    unsigned int i;
+
+    if(obj->extensible)
+        return FALSE;
+
+    for(i = 0; i < obj->prop_cnt; i++) {
+        if(obj->props[i].type == PROP_JSVAL) {
+            if(!sealed && (obj->props[i].flags & PROPF_WRITABLE))
+                return FALSE;
+        }else if(obj->props[i].type != PROP_ACCESSOR)
+            continue;
+        if(obj->props[i].flags & PROPF_CONFIGURABLE)
+            return FALSE;
+    }
+
+    return TRUE;
 }
 
 HRESULT jsdisp_get_prop_name(jsdisp_t *obj, DISPID id, jsstr_t **r)

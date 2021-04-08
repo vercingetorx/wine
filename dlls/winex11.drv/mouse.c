@@ -592,22 +592,41 @@ static BOOL is_old_motion_event( unsigned long serial )
  *
  * Map the input event coordinates so they're relative to the desktop.
  */
-static void map_event_coords( HWND hwnd, Window window, struct x11drv_win_data *data, INPUT *input )
+static void map_event_coords( HWND hwnd, Window window, Window event_root, int x_root, int y_root, INPUT *input )
 {
+    struct x11drv_thread_data *thread_data;
+    struct x11drv_win_data *data;
     POINT pt = { input->u.mi.dx, input->u.mi.dy };
 
-    TRACE( "hwnd %p, window %lx, data %p, input %p\n", hwnd, window, data, input );
+    TRACE( "hwnd %p, window %lx, event_root %lx, x_root %d, y_root %d, input %p\n", hwnd, window, event_root,
+           x_root, y_root, input );
 
-    if (window == root_window) pt = root_to_virtual_screen( pt.x, pt.y );
-    if (window == data->whole_window)
+    if (!hwnd)
     {
-        pt.x += data->whole_rect.left - data->client_rect.left;
-        pt.y += data->whole_rect.top - data->client_rect.top;
+        thread_data = x11drv_thread_data();
+        if (!thread_data->clip_hwnd) return;
+        if (thread_data->clip_window != window) return;
+        pt.x += clip_rect.left;
+        pt.y += clip_rect.top;
     }
+    else if ((data = get_win_data( hwnd )))
+    {
+        if (window == root_window) pt = root_to_virtual_screen( pt.x, pt.y );
+        else if (event_root == root_window) pt = root_to_virtual_screen( x_root, y_root );
+        else
+        {
+            if (window == data->whole_window)
+            {
+                pt.x += data->whole_rect.left - data->client_rect.left;
+                pt.y += data->whole_rect.top - data->client_rect.top;
+            }
 
-    if (GetWindowLongW( hwnd, GWL_EXSTYLE ) & WS_EX_LAYOUTRTL)
-        pt.x = data->client_rect.right - data->client_rect.left - 1 - pt.x;
-    MapWindowPoints( hwnd, 0, &pt, 1 );
+            if (GetWindowLongW( hwnd, GWL_EXSTYLE ) & WS_EX_LAYOUTRTL)
+                pt.x = data->client_rect.right - data->client_rect.left - 1 - pt.x;
+            MapWindowPoints( hwnd, 0, &pt, 1 );
+        }
+        release_win_data( data );
+    }
 
     TRACE( "mapped %s to %s\n", wine_dbgstr_point( (POINT *)&input->u.mi.dx ), wine_dbgstr_point( &pt ) );
 
@@ -640,15 +659,11 @@ static void send_mouse_input( HWND hwnd, Window window, unsigned int state, INPU
             sync_window_cursor( window );
             last_cursor_change = input->u.mi.time;
         }
-        input->u.mi.dx += clip_rect.left;
-        input->u.mi.dy += clip_rect.top;
         __wine_send_input( hwnd, input );
         return;
     }
 
     if (!(data = get_win_data( hwnd ))) return;
-    map_event_coords( hwnd, window, data, input );
-
     if (InterlockedExchangePointer( (void **)&cursor_window, hwnd ) != hwnd ||
         input->u.mi.time - last_cursor_change > 100)
     {
@@ -1696,6 +1711,7 @@ BOOL X11DRV_ButtonPress( HWND hwnd, XEvent *xev )
     input.u.mi.dwExtraInfo = 0;
 
     update_user_time( event->time );
+    map_event_coords( hwnd, event->window, event->root, event->x_root, event->y_root, &input );
     send_mouse_input( hwnd, event->window, event->state, &input );
     return TRUE;
 }
@@ -1721,6 +1737,7 @@ BOOL X11DRV_ButtonRelease( HWND hwnd, XEvent *xev )
     input.u.mi.time        = EVENT_x11_time_to_win32_time( event->time );
     input.u.mi.dwExtraInfo = 0;
 
+    map_event_coords( hwnd, event->window, event->root, event->x_root, event->y_root, &input );
     send_mouse_input( hwnd, event->window, event->state, &input );
     return TRUE;
 }
@@ -1749,6 +1766,7 @@ BOOL X11DRV_MotionNotify( HWND hwnd, XEvent *xev )
         TRACE( "pos %d,%d old serial %lu, ignoring\n", input.u.mi.dx, input.u.mi.dy, event->serial );
         return FALSE;
     }
+    map_event_coords( hwnd, event->window, event->root, event->x_root, event->y_root, &input );
     send_mouse_input( hwnd, event->window, event->state, &input );
     return TRUE;
 }
@@ -1780,6 +1798,7 @@ BOOL X11DRV_EnterNotify( HWND hwnd, XEvent *xev )
         TRACE( "pos %d,%d old serial %lu, ignoring\n", input.u.mi.dx, input.u.mi.dy, event->serial );
         return FALSE;
     }
+    map_event_coords( hwnd, event->window, event->root, event->x_root, event->y_root, &input );
     send_mouse_input( hwnd, event->window, event->state, &input );
     return TRUE;
 }

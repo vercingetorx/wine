@@ -797,7 +797,7 @@ unsigned int server_queue_process_apc( HANDLE process, const apc_call_t *call, a
  *
  * Send a file descriptor to the server.
  */
-void CDECL wine_server_send_fd( int fd )
+void wine_server_send_fd( int fd )
 {
     struct send_fd data;
     struct msghdr msghdr;
@@ -1117,15 +1117,6 @@ NTSTATUS CDECL wine_server_handle_to_fd( HANDLE handle, unsigned int access, int
         if ((*unix_fd = dup(*unix_fd)) == -1) ret = STATUS_TOO_MANY_OPENED_FILES;
     }
     return ret;
-}
-
-
-/***********************************************************************
- *           wine_server_release_fd
- */
-void CDECL wine_server_release_fd( HANDLE handle, int unix_fd )
-{
-    close( unix_fd );
 }
 
 
@@ -1614,7 +1605,6 @@ size_t server_init_process(void)
 void server_init_process_done(void)
 {
     PEB *peb = NtCurrentTeb()->Peb;
-    IMAGE_NT_HEADERS *nt = get_exe_nt_header();
     void *entry;
     NTSTATUS status;
     int suspend, needs_close, unixdir;
@@ -1631,7 +1621,8 @@ void server_init_process_done(void)
 #ifdef __APPLE__
     send_server_task_port();
 #endif
-    if (nt->FileHeader.Characteristics & IMAGE_FILE_LARGE_ADDRESS_AWARE) virtual_set_large_address_space();
+    if (main_image_info.ImageCharacteristics & IMAGE_FILE_LARGE_ADDRESS_AWARE)
+        virtual_set_large_address_space();
 
     /* Install signal handlers; this cannot be done earlier, since we cannot
      * send exceptions to the debugger before the create process event that

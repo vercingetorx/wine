@@ -303,7 +303,7 @@ HRESULT disp_propget(script_ctx_t*,IDispatch*,DISPID,jsval_t*) DECLSPEC_HIDDEN;
 HRESULT disp_propput(script_ctx_t*,IDispatch*,DISPID,jsval_t) DECLSPEC_HIDDEN;
 HRESULT disp_propput_name(script_ctx_t*,IDispatch*,const WCHAR*,jsval_t) DECLSPEC_HIDDEN;
 HRESULT jsdisp_propget(jsdisp_t*,DISPID,jsval_t*) DECLSPEC_HIDDEN;
-HRESULT jsdisp_propput(jsdisp_t*,const WCHAR*,DWORD,jsval_t) DECLSPEC_HIDDEN;
+HRESULT jsdisp_propput(jsdisp_t*,const WCHAR*,DWORD,BOOL,jsval_t) DECLSPEC_HIDDEN;
 HRESULT jsdisp_propput_name(jsdisp_t*,const WCHAR*,jsval_t) DECLSPEC_HIDDEN;
 HRESULT jsdisp_propput_idx(jsdisp_t*,DWORD,jsval_t) DECLSPEC_HIDDEN;
 HRESULT jsdisp_propget_name(jsdisp_t*,LPCWSTR,jsval_t*) DECLSPEC_HIDDEN;
@@ -318,6 +318,7 @@ HRESULT jsdisp_define_data_property(jsdisp_t*,const WCHAR*,unsigned,jsval_t) DEC
 HRESULT jsdisp_next_prop(jsdisp_t*,DISPID,BOOL,DISPID*) DECLSPEC_HIDDEN;
 HRESULT jsdisp_get_prop_name(jsdisp_t*,DISPID,jsstr_t**);
 void jsdisp_freeze(jsdisp_t*,BOOL) DECLSPEC_HIDDEN;
+BOOL jsdisp_is_frozen(jsdisp_t*,BOOL) DECLSPEC_HIDDEN;
 
 HRESULT create_builtin_function(script_ctx_t*,builtin_invoke_t,const WCHAR*,const builtin_info_t*,DWORD,
         jsdisp_t*,jsdisp_t**) DECLSPEC_HIDDEN;

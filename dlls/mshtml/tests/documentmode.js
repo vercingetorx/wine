@@ -32,6 +32,7 @@ sync_test("elem_props", function() {
     var v = document.documentMode;
 
     test_exposed("doScroll", v < 11);
+    test_exposed("readyState", v < 11);
     test_exposed("querySelectorAll", v >= 8);
     test_exposed("textContent", v >= 9);
     test_exposed("prefix", v >= 9);
@@ -44,6 +45,15 @@ sync_test("elem_props", function() {
     test_exposed("dispatchEvent", v >= 9);
     test_exposed("msSetPointerCapture", v >= 10);
     if (v >= 9) test_exposed("spellcheck", v >= 10);
+
+    elem = document.createElement("style");
+    test_exposed("media", true);
+    test_exposed("type", true);
+    test_exposed("disabled", true);
+    test_exposed("media", true);
+    test_exposed("sheet", v >= 9);
+    test_exposed("readyState", v < 11);
+    test_exposed("styleSheet", v < 11);
 });
 
 sync_test("doc_props", function() {
@@ -122,6 +132,42 @@ sync_test("xhr_props", function() {
     test_exposed("addEventListener", v >= 9);
     test_exposed("removeEventListener", v >= 9);
     test_exposed("dispatchEvent", v >= 9);
+});
+
+sync_test("stylesheet_props", function() {
+    var v = document.documentMode;
+    var elem = document.createElement("style");
+    document.body.appendChild(elem);
+    var sheet = v >= 9 ? elem.sheet : elem.styleSheet;
+
+    function test_exposed(prop, expect) {
+        if(expect)
+            ok(prop in sheet, prop + " not found in style sheet.");
+        else
+            ok(!(prop in sheet), prop + " found in style sheet.");
+    }
+
+    test_exposed("href", true);
+    test_exposed("title", true);
+    test_exposed("type", true);
+    test_exposed("media", true);
+    test_exposed("ownerNode", v >= 9);
+    test_exposed("ownerRule", v >= 9);
+    test_exposed("cssRules", v >= 9);
+    test_exposed("insertRule", v >= 9);
+    test_exposed("deleteRule", v >= 9);
+    test_exposed("disabled", true);
+    test_exposed("parentStyleSheet", true);
+    test_exposed("owningElement", true);
+    test_exposed("readOnly", true);
+    test_exposed("imports", true);
+    test_exposed("id", true);
+    test_exposed("addImport", true);
+    test_exposed("addRule", true);
+    test_exposed("removeImport", true);
+    test_exposed("removeRule", true);
+    test_exposed("cssText", true);
+    test_exposed("rules", true);
 });
 
 sync_test("xhr open", function() {

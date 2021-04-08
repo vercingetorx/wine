@@ -29,7 +29,17 @@ typedef struct
 {
     IDHTMLEdit IDHTMLEdit_iface;
     IOleObject IOleObject_iface;
+    IProvideClassInfo2 IProvideClassInfo2_iface;
+    IPersistStorage IPersistStorage_iface;
     IPersistStreamInit IPersistStreamInit_iface;
+    IOleControl IOleControl_iface;
+    IViewObjectEx IViewObjectEx_iface;
+    IOleInPlaceObjectWindowless IOleInPlaceObjectWindowless_iface;
+    IOleInPlaceActiveObject IOleInPlaceActiveObject_iface;
+    IConnectionPointContainer IConnectionPointContainer_iface;
+    IDataObject IDataObject_iface;
+    IServiceProvider IServiceProvider_iface;
+
     IOleClientSite *client_site;
     SIZEL extent;
     LONG ref;
@@ -45,9 +55,54 @@ static inline DHTMLEditImpl *impl_from_IOleObject(IOleObject *iface)
     return CONTAINING_RECORD(iface, DHTMLEditImpl, IOleObject_iface);
 }
 
+static inline DHTMLEditImpl *impl_from_IProvideClassInfo2(IProvideClassInfo2 *iface)
+{
+    return CONTAINING_RECORD(iface, DHTMLEditImpl, IProvideClassInfo2_iface);
+}
+
+static inline DHTMLEditImpl *impl_from_IPersistStorage(IPersistStorage *iface)
+{
+    return CONTAINING_RECORD(iface, DHTMLEditImpl, IPersistStorage_iface);
+}
+
 static inline DHTMLEditImpl *impl_from_IPersistStreamInit(IPersistStreamInit *iface)
 {
     return CONTAINING_RECORD(iface, DHTMLEditImpl, IPersistStreamInit_iface);
+}
+
+static inline DHTMLEditImpl *impl_from_IOleControl(IOleControl *iface)
+{
+    return CONTAINING_RECORD(iface, DHTMLEditImpl, IOleControl_iface);
+}
+
+static inline DHTMLEditImpl *impl_from_IViewObjectEx(IViewObjectEx *iface)
+{
+    return CONTAINING_RECORD(iface, DHTMLEditImpl, IViewObjectEx_iface);
+}
+
+static inline DHTMLEditImpl *impl_from_IOleInPlaceObjectWindowless(IOleInPlaceObjectWindowless *iface)
+{
+    return CONTAINING_RECORD(iface, DHTMLEditImpl, IOleInPlaceObjectWindowless_iface);
+}
+
+static inline DHTMLEditImpl *impl_from_IOleInPlaceActiveObject(IOleInPlaceActiveObject *iface)
+{
+    return CONTAINING_RECORD(iface, DHTMLEditImpl, IOleInPlaceActiveObject_iface);
+}
+
+static inline DHTMLEditImpl *impl_from_IConnectionPointContainer(IConnectionPointContainer *iface)
+{
+    return CONTAINING_RECORD(iface, DHTMLEditImpl, IConnectionPointContainer_iface);
+}
+
+static inline DHTMLEditImpl *impl_from_IDataObject(IDataObject *iface)
+{
+    return CONTAINING_RECORD(iface, DHTMLEditImpl, IDataObject_iface);
+}
+
+static inline DHTMLEditImpl *impl_from_IServiceProvider(IServiceProvider *iface)
+{
+    return CONTAINING_RECORD(iface, DHTMLEditImpl, IServiceProvider_iface);
 }
 
 static ULONG dhtml_edit_addref(DHTMLEditImpl *This)
@@ -77,12 +132,72 @@ static HRESULT dhtml_edit_qi(DHTMLEditImpl *This, REFIID iid, void **out)
         *out = &This->IOleObject_iface;
         return S_OK;
     }
+    else if (IsEqualGUID(iid, &IID_IProvideClassInfo) ||
+             IsEqualGUID(iid, &IID_IProvideClassInfo2))
+    {
+        dhtml_edit_addref(This);
+        *out = &This->IProvideClassInfo2_iface;
+        return S_OK;
+    }
+    else if (IsEqualGUID(iid, &IID_IPersistStorage))
+    {
+        dhtml_edit_addref(This);
+        *out = &This->IPersistStorage_iface;
+        return S_OK;
+    }
     else if (IsEqualGUID(iid, &IID_IPersistStreamInit))
     {
         dhtml_edit_addref(This);
         *out = &This->IPersistStreamInit_iface;
         return S_OK;
     }
+    else if(IsEqualGUID(iid, &IID_IOleControl))
+    {
+        dhtml_edit_addref(This);
+        *out = &This->IOleControl_iface;
+        return S_OK;
+    }
+    else if (IsEqualGUID(iid, &IID_IViewObject) ||
+             IsEqualGUID(iid, &IID_IViewObject2) ||
+             IsEqualGUID(iid, &IID_IViewObjectEx))
+    {
+        dhtml_edit_addref(This);
+        *out = &This->IViewObjectEx_iface;
+        return S_OK;
+    }
+    else if (IsEqualGUID(iid, &IID_IOleWindow) ||
+             IsEqualGUID(iid, &IID_IOleInPlaceObject) ||
+             IsEqualGUID(iid, &IID_IOleInPlaceObjectWindowless))
+    {
+        dhtml_edit_addref(This);
+        *out = &This->IOleInPlaceObjectWindowless_iface;
+        return S_OK;
+    }
+    else if(IsEqualGUID(iid, &IID_IOleInPlaceActiveObject))
+    {
+        dhtml_edit_addref(This);
+        *out = &This->IOleInPlaceActiveObject_iface;
+        return S_OK;
+    }
+    else if(IsEqualGUID(iid, &IID_IConnectionPointContainer))
+    {
+        dhtml_edit_addref(This);
+        *out = &This->IConnectionPointContainer_iface;
+        return S_OK;
+    }
+    else if(IsEqualGUID(iid, &IID_IDataObject))
+    {
+        dhtml_edit_addref(This);
+        *out = &This->IDataObject_iface;
+        return S_OK;
+    }
+    else if(IsEqualGUID(iid, &IID_IServiceProvider))
+    {
+        dhtml_edit_addref(This);
+        *out = &This->IServiceProvider_iface;
+        return S_OK;
+    }
+
 
     *out = NULL;
     ERR("no interface for %s\n", debugstr_guid(iid));
@@ -179,7 +294,7 @@ static HRESULT WINAPI DHTMLEdit_NewDocument(IDHTMLEdit *iface)
 {
     DHTMLEditImpl *This = impl_from_IDHTMLEdit(iface);
     FIXME("(%p)->() stub\n", This);
-    return E_NOTIMPL;
+    return S_OK;
 }
 
 static HRESULT WINAPI DHTMLEdit_LoadURL(IDHTMLEdit *iface, BSTR url)
@@ -788,6 +903,113 @@ static const IOleObjectVtbl OleObjectVtbl = {
     OleObject_SetColorScheme
 };
 
+static HRESULT WINAPI ProvideClassInfo2_QueryInterface(IProvideClassInfo2 *iface, REFIID iid, LPVOID *out)
+{
+    return dhtml_edit_qi(impl_from_IProvideClassInfo2(iface), iid, out);
+}
+
+static ULONG WINAPI ProvideClassInfo2_AddRef(IProvideClassInfo2 *iface)
+{
+    return dhtml_edit_addref(impl_from_IProvideClassInfo2(iface));
+}
+
+static ULONG WINAPI ProvideClassInfo2_Release(IProvideClassInfo2 *iface)
+{
+    return dhtml_edit_release(impl_from_IProvideClassInfo2(iface));
+}
+
+static HRESULT WINAPI ProvideClassInfo2_GetClassInfo(IProvideClassInfo2 *iface, ITypeInfo **ppTI)
+{
+    DHTMLEditImpl *This = impl_from_IProvideClassInfo2(iface);
+    FIXME("(%p)->(%p)\n", This, ppTI);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI ProvideClassInfo2_GetGUID(IProvideClassInfo2 *iface, DWORD dwGuidKind, GUID *pGUID)
+{
+    DHTMLEditImpl *This = impl_from_IProvideClassInfo2(iface);
+    FIXME("(%p)->(%d %p)\n", This, dwGuidKind, pGUID);
+    return E_NOTIMPL;
+}
+
+static const IProvideClassInfo2Vtbl ProvideClassInfo2Vtbl = {
+    ProvideClassInfo2_QueryInterface,
+    ProvideClassInfo2_AddRef,
+    ProvideClassInfo2_Release,
+    ProvideClassInfo2_GetClassInfo,
+    ProvideClassInfo2_GetGUID
+};
+
+static HRESULT WINAPI PersistStorage_QueryInterface(IPersistStorage *iface, REFIID iid, void **out)
+{
+    return dhtml_edit_qi(impl_from_IPersistStorage(iface), iid, out);
+}
+
+static ULONG WINAPI PersistStorage_AddRef(IPersistStorage *iface)
+{
+    return dhtml_edit_addref(impl_from_IPersistStorage(iface));
+}
+
+static ULONG WINAPI PersistStorage_Release(IPersistStorage *iface)
+{
+    return dhtml_edit_release(impl_from_IPersistStorage(iface));
+}
+
+static HRESULT WINAPI PersistStorage_GetClassID(IPersistStorage *iface, CLSID *clsid)
+{
+    DHTMLEditImpl *This = impl_from_IPersistStorage(iface);
+    FIXME("(%p)->(%p) stub\n", This, clsid);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI PersistStorage_IsDirty(IPersistStorage *iface)
+{
+    DHTMLEditImpl *This = impl_from_IPersistStorage(iface);
+    FIXME("(%p) stub\n", This);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI PersistStorage_InitNew(IPersistStorage *iface, LPSTORAGE storage)
+{
+    DHTMLEditImpl *This = impl_from_IPersistStorage(iface);
+    FIXME("(%p)->(%p) stub\n", This, storage);
+    return S_OK;
+}
+
+static HRESULT WINAPI PersistStorage_Load(IPersistStorage *iface, LPSTORAGE storage)
+{
+    DHTMLEditImpl *This = impl_from_IPersistStorage(iface);
+    FIXME("(%p)->(%p) stub\n", This, storage);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI PersistStorage_Save(IPersistStorage *iface, LPSTORAGE storage, BOOL sameasld)
+{
+    DHTMLEditImpl *This = impl_from_IPersistStorage(iface);
+    FIXME("(%p)->(%p, %u) stub\n", This, storage, sameasld);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI PersistStorage_SaveCompleted(IPersistStorage *iface, LPSTORAGE storage)
+{
+    DHTMLEditImpl *This = impl_from_IPersistStorage(iface);
+    FIXME("(%p)->(%p)\n", This, storage);
+    return E_NOTIMPL;
+}
+
+static const IPersistStorageVtbl PersistStorageVtbl =
+{
+    PersistStorage_QueryInterface,
+    PersistStorage_AddRef,
+    PersistStorage_Release,
+    PersistStorage_GetClassID,
+    PersistStorage_IsDirty,
+    PersistStorage_InitNew,
+    PersistStorage_Load,
+    PersistStorage_Save,
+    PersistStorage_SaveCompleted
+};
+
 static HRESULT WINAPI PersistStreamInit_QueryInterface(IPersistStreamInit *iface, REFIID iid, void **out)
 {
     return dhtml_edit_qi(impl_from_IPersistStreamInit(iface), iid, out);
@@ -858,6 +1080,555 @@ static const IPersistStreamInitVtbl PersistStreamInitVtbl = {
     PersistStreamInit_InitNew
 };
 
+static HRESULT WINAPI OleControl_QueryInterface(IOleControl *iface, REFIID iid, void **out)
+{
+    return dhtml_edit_qi(impl_from_IOleControl(iface), iid, out);
+}
+
+static ULONG WINAPI OleControl_AddRef(IOleControl *iface)
+{
+    return dhtml_edit_addref(impl_from_IOleControl(iface));
+}
+
+static ULONG WINAPI OleControl_Release(IOleControl *iface)
+{
+    return dhtml_edit_release(impl_from_IOleControl(iface));
+}
+
+static HRESULT WINAPI OleControl_GetControlInfo(IOleControl *iface, CONTROLINFO *pCI)
+{
+    DHTMLEditImpl *This = impl_from_IOleControl(iface);
+    FIXME("(%p)->(%p)\n", This, pCI);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI OleControl_OnMnemonic(IOleControl *iface, MSG *msg)
+{
+    DHTMLEditImpl *This = impl_from_IOleControl(iface);
+    FIXME("(%p)->(%p)\n", This, msg);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI OleControl_OnAmbientPropertyChange(IOleControl *iface, DISPID dispID)
+{
+    DHTMLEditImpl *This = impl_from_IOleControl(iface);
+    FIXME("(%p)->(%d)\n", This, dispID);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI OleControl_FreezeEvents(IOleControl *iface, BOOL freeze)
+{
+    DHTMLEditImpl *This = impl_from_IOleControl(iface);
+    FIXME("(%p)->(%x)\n", This, freeze);
+    return E_NOTIMPL;
+}
+
+static const IOleControlVtbl OleControlVtbl = {
+    OleControl_QueryInterface,
+    OleControl_AddRef,
+    OleControl_Release,
+    OleControl_GetControlInfo,
+    OleControl_OnMnemonic,
+    OleControl_OnAmbientPropertyChange,
+    OleControl_FreezeEvents
+};
+
+static HRESULT WINAPI ViewObjectEx_QueryInterface(IViewObjectEx *iface, REFIID iid, LPVOID *out)
+{
+    return dhtml_edit_qi(impl_from_IViewObjectEx(iface), iid, out);
+}
+
+static ULONG WINAPI ViewObjectEx_AddRef(IViewObjectEx *iface)
+{
+    return dhtml_edit_addref(impl_from_IViewObjectEx(iface));
+}
+
+static ULONG WINAPI ViewObjectEx_Release(IViewObjectEx *iface)
+{
+    return dhtml_edit_release(impl_from_IViewObjectEx(iface));
+}
+
+static HRESULT WINAPI ViewObjectEx_Draw(IViewObjectEx *iface, DWORD drawaspect, LONG index, void *aspect,
+    DVTARGETDEVICE *device, HDC target_dev, HDC hdc_draw, const RECTL *bounds, const RECTL *win_bounds,
+    BOOL (STDMETHODCALLTYPE *fn_continue)(ULONG_PTR cont), ULONG_PTR cont)
+{
+    DHTMLEditImpl *This = impl_from_IViewObjectEx(iface);
+
+    FIXME("(%p)->(%d %d %p %p %p %p %p %p %p %lu)\n", This, drawaspect, index, aspect, device, target_dev,
+        hdc_draw, bounds, win_bounds, fn_continue, cont);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI ViewObjectEx_GetColorSet(IViewObjectEx *iface, DWORD drawaspect, LONG index, void *aspect,
+    DVTARGETDEVICE *device, HDC hic_target, LOGPALETTE **colorset)
+{
+    DHTMLEditImpl *This = impl_from_IViewObjectEx(iface);
+
+    FIXME("(%p)->(%d %d %p %p %p %p)\n", This, drawaspect, index, aspect, device, hic_target,
+        colorset);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI ViewObjectEx_Freeze(IViewObjectEx *iface, DWORD drawaspect, LONG index, void *aspect,
+    DWORD *freeze)
+{
+    DHTMLEditImpl *This = impl_from_IViewObjectEx(iface);
+
+    FIXME("(%p)->(%d %d %p %p)\n", This, drawaspect, index, aspect, freeze);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI ViewObjectEx_Unfreeze(IViewObjectEx *iface, DWORD freeze)
+{
+    DHTMLEditImpl *This = impl_from_IViewObjectEx(iface);
+
+    FIXME("(%p)->(%d)\n", This, freeze);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI ViewObjectEx_SetAdvise(IViewObjectEx *iface, DWORD aspects, DWORD advf, IAdviseSink *sink)
+{
+    DHTMLEditImpl *This = impl_from_IViewObjectEx(iface);
+
+    FIXME("(%p)->(%d %d %p)\n", This, aspects, advf, sink);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI ViewObjectEx_GetAdvise(IViewObjectEx *iface, DWORD *aspects, DWORD *advf, IAdviseSink **sink)
+{
+    DHTMLEditImpl *This = impl_from_IViewObjectEx(iface);
+
+    FIXME("(%p)->(%p %p %p)\n", This, aspects, advf, sink);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI ViewObjectEx_GetExtent(IViewObjectEx *iface, DWORD draw_aspect, LONG index,
+    DVTARGETDEVICE *device, SIZEL *size)
+{
+    DHTMLEditImpl *This = impl_from_IViewObjectEx(iface);
+
+    FIXME("(%p)->(%d %d %p %p)\n", This, draw_aspect, index, device, size);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI ViewObjectEx_GetRect(IViewObjectEx *iface, DWORD aspect, RECTL *rect)
+{
+    DHTMLEditImpl *This = impl_from_IViewObjectEx(iface);
+
+    FIXME("(%p)->(%d %p)\n", This, aspect, rect);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI ViewObjectEx_GetViewStatus(IViewObjectEx *iface, DWORD *status)
+{
+    DHTMLEditImpl *This = impl_from_IViewObjectEx(iface);
+
+    FIXME("(%p)->(%p)\n", This, status);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI ViewObjectEx_QueryHitPoint(IViewObjectEx *iface, DWORD aspect, const RECT *bounds,
+    POINT pt, LONG close_hint, DWORD *hit_result)
+{
+    DHTMLEditImpl *This = impl_from_IViewObjectEx(iface);
+
+    FIXME("(%p)->(%d %s %s %d %p)\n", This, aspect, wine_dbgstr_rect(bounds), wine_dbgstr_point(&pt), close_hint, hit_result);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI ViewObjectEx_QueryHitRect(IViewObjectEx *iface, DWORD aspect, const RECT *bounds,
+    const RECT *loc, LONG close_hint, DWORD *hit_result)
+{
+    DHTMLEditImpl *This = impl_from_IViewObjectEx(iface);
+
+    FIXME("(%p)->(%d %s %s %d %p)\n", This, aspect, wine_dbgstr_rect(bounds), wine_dbgstr_rect(loc), close_hint, hit_result);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI ViewObjectEx_GetNaturalExtent(IViewObjectEx *iface, DWORD aspect, LONG index,
+    DVTARGETDEVICE *device, HDC target_hdc, DVEXTENTINFO *extent_info, SIZEL *size)
+{
+    DHTMLEditImpl *This = impl_from_IViewObjectEx(iface);
+
+    FIXME("(%p)->(%d %d %p %p %p %p)\n", This, aspect, index, device, target_hdc, extent_info, size);
+
+    return E_NOTIMPL;
+}
+
+static const IViewObjectExVtbl ViewObjectExVtbl = {
+    ViewObjectEx_QueryInterface,
+    ViewObjectEx_AddRef,
+    ViewObjectEx_Release,
+    ViewObjectEx_Draw,
+    ViewObjectEx_GetColorSet,
+    ViewObjectEx_Freeze,
+    ViewObjectEx_Unfreeze,
+    ViewObjectEx_SetAdvise,
+    ViewObjectEx_GetAdvise,
+    ViewObjectEx_GetExtent,
+    ViewObjectEx_GetRect,
+    ViewObjectEx_GetViewStatus,
+    ViewObjectEx_QueryHitPoint,
+    ViewObjectEx_QueryHitRect,
+    ViewObjectEx_GetNaturalExtent
+};
+
+static HRESULT WINAPI OleInPlaceObjectWindowless_QueryInterface(IOleInPlaceObjectWindowless *iface,
+        REFIID iid, LPVOID *out)
+{
+    return dhtml_edit_qi(impl_from_IOleInPlaceObjectWindowless(iface), iid, out);
+}
+
+static ULONG WINAPI OleInPlaceObjectWindowless_AddRef(IOleInPlaceObjectWindowless *iface)
+{
+    return dhtml_edit_addref(impl_from_IOleInPlaceObjectWindowless(iface));
+}
+
+static ULONG WINAPI OleInPlaceObjectWindowless_Release(IOleInPlaceObjectWindowless *iface)
+{
+    return dhtml_edit_release(impl_from_IOleInPlaceObjectWindowless(iface));
+}
+
+static HRESULT WINAPI OleInPlaceObjectWindowless_GetWindow(IOleInPlaceObjectWindowless *iface, HWND *phwnd)
+{
+    DHTMLEditImpl *This = impl_from_IOleInPlaceObjectWindowless(iface);
+    FIXME("(%p)->(%p)\n", This, phwnd);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI OleInPlaceObjectWindowless_ContextSensitiveHelp(IOleInPlaceObjectWindowless *iface,
+        BOOL fEnterMode)
+{
+    DHTMLEditImpl *This = impl_from_IOleInPlaceObjectWindowless(iface);
+    FIXME("(%p)->(%x)\n", This, fEnterMode);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI OleInPlaceObjectWindowless_InPlaceDeactivate(IOleInPlaceObjectWindowless *iface)
+{
+    DHTMLEditImpl *This = impl_from_IOleInPlaceObjectWindowless(iface);
+    FIXME("(%p)\n", This);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI OleInPlaceObjectWindowless_UIDeactivate(IOleInPlaceObjectWindowless *iface)
+{
+    DHTMLEditImpl *This = impl_from_IOleInPlaceObjectWindowless(iface);
+    FIXME("(%p)\n", This);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI OleInPlaceObjectWindowless_SetObjectRects(IOleInPlaceObjectWindowless *iface,
+        LPCRECT lprcPosRect, LPCRECT lprcClipRect)
+{
+    DHTMLEditImpl *This = impl_from_IOleInPlaceObjectWindowless(iface);
+    FIXME("(%p)->(%p %p)\n", This, lprcPosRect, lprcClipRect);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI OleInPlaceObjectWindowless_ReactivateAndUndo(IOleInPlaceObjectWindowless *iface)
+{
+    DHTMLEditImpl *This = impl_from_IOleInPlaceObjectWindowless(iface);
+    FIXME("(%p)\n", This);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI OleInPlaceObjectWindowless_OnWindowMessage(IOleInPlaceObjectWindowless *iface,
+        UINT msg, WPARAM wParam, LPARAM lParam, LRESULT *lpResult)
+{
+    DHTMLEditImpl *This = impl_from_IOleInPlaceObjectWindowless(iface);
+    FIXME("(%p)->(%u %lu %lu %p)\n", This, msg, wParam, lParam, lpResult);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI OleInPlaceObjectWindowless_GetDropTarget(IOleInPlaceObjectWindowless *iface,
+        IDropTarget **ppDropTarget)
+{
+    DHTMLEditImpl *This = impl_from_IOleInPlaceObjectWindowless(iface);
+    FIXME("(%p)->(%p)\n", This, ppDropTarget);
+    return E_NOTIMPL;
+}
+
+static const IOleInPlaceObjectWindowlessVtbl OleInPlaceObjectWindowlessVtbl = {
+    OleInPlaceObjectWindowless_QueryInterface,
+    OleInPlaceObjectWindowless_AddRef,
+    OleInPlaceObjectWindowless_Release,
+    OleInPlaceObjectWindowless_GetWindow,
+    OleInPlaceObjectWindowless_ContextSensitiveHelp,
+    OleInPlaceObjectWindowless_InPlaceDeactivate,
+    OleInPlaceObjectWindowless_UIDeactivate,
+    OleInPlaceObjectWindowless_SetObjectRects,
+    OleInPlaceObjectWindowless_ReactivateAndUndo,
+    OleInPlaceObjectWindowless_OnWindowMessage,
+    OleInPlaceObjectWindowless_GetDropTarget
+};
+
+static HRESULT WINAPI InPlaceActiveObject_QueryInterface(IOleInPlaceActiveObject *iface,
+        REFIID iid, LPVOID *out)
+{
+    return dhtml_edit_qi(impl_from_IOleInPlaceActiveObject(iface), iid, out);
+}
+
+static ULONG WINAPI InPlaceActiveObject_AddRef(IOleInPlaceActiveObject *iface)
+{
+    return dhtml_edit_addref(impl_from_IOleInPlaceActiveObject(iface));
+}
+
+static ULONG WINAPI InPlaceActiveObject_Release(IOleInPlaceActiveObject *iface)
+{
+    return dhtml_edit_release(impl_from_IOleInPlaceActiveObject(iface));
+}
+
+static HRESULT WINAPI InPlaceActiveObject_GetWindow(IOleInPlaceActiveObject *iface,
+        HWND *phwnd)
+{
+    DHTMLEditImpl *This = impl_from_IOleInPlaceActiveObject(iface);
+    return IOleInPlaceObjectWindowless_GetWindow(&This->IOleInPlaceObjectWindowless_iface, phwnd);
+}
+
+static HRESULT WINAPI InPlaceActiveObject_ContextSensitiveHelp(IOleInPlaceActiveObject *iface,
+        BOOL fEnterMode)
+{
+    DHTMLEditImpl *This = impl_from_IOleInPlaceActiveObject(iface);
+    return IOleInPlaceObjectWindowless_ContextSensitiveHelp(&This->IOleInPlaceObjectWindowless_iface, fEnterMode);
+}
+
+static HRESULT WINAPI InPlaceActiveObject_TranslateAccelerator(IOleInPlaceActiveObject *iface,
+        LPMSG lpmsg)
+{
+    DHTMLEditImpl *This = impl_from_IOleInPlaceActiveObject(iface);
+    FIXME("(%p)->(%p)\n", This, lpmsg);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI InPlaceActiveObject_OnFrameWindowActivate(IOleInPlaceActiveObject *iface,
+        BOOL fActivate)
+{
+    DHTMLEditImpl *This = impl_from_IOleInPlaceActiveObject(iface);
+    FIXME("(%p)->(%x)\n", This, fActivate);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI InPlaceActiveObject_OnDocWindowActivate(IOleInPlaceActiveObject *iface,
+        BOOL fActivate)
+{
+    DHTMLEditImpl *This = impl_from_IOleInPlaceActiveObject(iface);
+    FIXME("(%p)->(%x)\n", This, fActivate);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI InPlaceActiveObject_ResizeBorder(IOleInPlaceActiveObject *iface,
+        LPCRECT lprcBorder, IOleInPlaceUIWindow *pUIWindow, BOOL fFrameWindow)
+{
+    DHTMLEditImpl *This = impl_from_IOleInPlaceActiveObject(iface);
+    FIXME("(%p)->(%p %p %x)\n", This, lprcBorder, pUIWindow, fFrameWindow);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI InPlaceActiveObject_EnableModeless(IOleInPlaceActiveObject *iface,
+        BOOL fEnable)
+{
+    DHTMLEditImpl *This = impl_from_IOleInPlaceActiveObject(iface);
+    FIXME("(%p)->(%x)\n", This, fEnable);
+    return E_NOTIMPL;
+}
+
+static const IOleInPlaceActiveObjectVtbl OleInPlaceActiveObjectVtbl = {
+    InPlaceActiveObject_QueryInterface,
+    InPlaceActiveObject_AddRef,
+    InPlaceActiveObject_Release,
+    InPlaceActiveObject_GetWindow,
+    InPlaceActiveObject_ContextSensitiveHelp,
+    InPlaceActiveObject_TranslateAccelerator,
+    InPlaceActiveObject_OnFrameWindowActivate,
+    InPlaceActiveObject_OnDocWindowActivate,
+    InPlaceActiveObject_ResizeBorder,
+    InPlaceActiveObject_EnableModeless
+};
+
+static HRESULT WINAPI ConnectionPointContainer_QueryInterface(IConnectionPointContainer *iface,
+        REFIID iid, LPVOID *out)
+{
+    return dhtml_edit_qi(impl_from_IConnectionPointContainer(iface), iid, out);
+}
+
+static ULONG WINAPI ConnectionPointContainer_AddRef(IConnectionPointContainer *iface)
+{
+    return dhtml_edit_addref(impl_from_IConnectionPointContainer(iface));
+}
+
+static ULONG WINAPI ConnectionPointContainer_Release(IConnectionPointContainer *iface)
+{
+    return dhtml_edit_release(impl_from_IConnectionPointContainer(iface));
+}
+
+static HRESULT WINAPI ConnectionPointContainer_EnumConnectionPoints(IConnectionPointContainer *iface,
+        IEnumConnectionPoints **ppEnum)
+{
+    DHTMLEditImpl *This = impl_from_IConnectionPointContainer(iface);
+    FIXME("(%p)->(%p)\n", This, ppEnum);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI ConnectionPointContainer_FindConnectionPoint(IConnectionPointContainer *iface,
+        REFIID riid, IConnectionPoint **ppCP)
+{
+    DHTMLEditImpl *This = impl_from_IConnectionPointContainer(iface);
+    FIXME("(%p)->(%s %p)\n", This, debugstr_guid(riid), ppCP);
+    return CONNECT_E_NOCONNECTION;
+}
+
+static const IConnectionPointContainerVtbl ConnectionPointContainerVtbl =
+{
+    ConnectionPointContainer_QueryInterface,
+    ConnectionPointContainer_AddRef,
+    ConnectionPointContainer_Release,
+    ConnectionPointContainer_EnumConnectionPoints,
+    ConnectionPointContainer_FindConnectionPoint
+};
+
+static HRESULT WINAPI DataObject_QueryInterface(IDataObject *iface, REFIID iid, LPVOID *out)
+{
+    return dhtml_edit_qi(impl_from_IDataObject(iface), iid, out);
+}
+
+static ULONG WINAPI DataObject_AddRef(IDataObject *iface)
+{
+    return dhtml_edit_addref(impl_from_IDataObject(iface));
+}
+
+static ULONG WINAPI DataObject_Release(IDataObject *iface)
+{
+    return dhtml_edit_release(impl_from_IDataObject(iface));
+}
+
+static HRESULT WINAPI DataObject_GetData(IDataObject *iface, LPFORMATETC pformatetcIn,
+        STGMEDIUM *pmedium)
+{
+    DHTMLEditImpl *This = impl_from_IDataObject(iface);
+    FIXME("(%p)->()\n", This);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI DataObject_GetDataHere(IDataObject *iface, LPFORMATETC pformatetc,
+        STGMEDIUM *pmedium)
+{
+    DHTMLEditImpl *This = impl_from_IDataObject(iface);
+    FIXME("(%p)->()\n", This);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI DataObject_QueryGetData(IDataObject *iface, LPFORMATETC pformatetc)
+{
+    DHTMLEditImpl *This = impl_from_IDataObject(iface);
+    FIXME("(%p)->()\n", This);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI DataObject_GetCanonicalFormatEtc(IDataObject *iface,
+        LPFORMATETC pformatectIn, LPFORMATETC pformatetcOut)
+{
+    DHTMLEditImpl *This = impl_from_IDataObject(iface);
+    FIXME("(%p)->()\n", This);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI DataObject_SetData(IDataObject *iface, LPFORMATETC pformatetc,
+        STGMEDIUM *pmedium, BOOL fRelease)
+{
+    DHTMLEditImpl *This = impl_from_IDataObject(iface);
+    FIXME("(%p)->()\n", This);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI DataObject_EnumFormatEtc(IDataObject *iface, DWORD dwDirection,
+        IEnumFORMATETC **ppenumFormatEtc)
+{
+    DHTMLEditImpl *This = impl_from_IDataObject(iface);
+    FIXME("(%p)->()\n", This);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI DataObject_DAdvise(IDataObject *iface, FORMATETC *pformatetc,
+        DWORD advf, IAdviseSink *pAdvSink, DWORD *pdwConnection)
+{
+    DHTMLEditImpl *This = impl_from_IDataObject(iface);
+    FIXME("(%p)->()\n", This);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI DataObject_DUnadvise(IDataObject *iface, DWORD dwConnection)
+{
+    DHTMLEditImpl *This = impl_from_IDataObject(iface);
+    FIXME("(%p)->()\n", This);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI DataObject_EnumDAdvise(IDataObject *iface, IEnumSTATDATA **ppenumAdvise)
+{
+    DHTMLEditImpl *This = impl_from_IDataObject(iface);
+    FIXME("(%p)->()\n", This);
+    return E_NOTIMPL;
+}
+
+static const IDataObjectVtbl DataObjectVtbl = {
+    DataObject_QueryInterface,
+    DataObject_AddRef,
+    DataObject_Release,
+    DataObject_GetData,
+    DataObject_GetDataHere,
+    DataObject_QueryGetData,
+    DataObject_GetCanonicalFormatEtc,
+    DataObject_SetData,
+    DataObject_EnumFormatEtc,
+    DataObject_DAdvise,
+    DataObject_DUnadvise,
+    DataObject_EnumDAdvise
+};
+
+static HRESULT WINAPI ServiceProvider_QueryInterface(IServiceProvider *iface, REFIID iid,
+        LPVOID *out)
+{
+    return dhtml_edit_qi(impl_from_IServiceProvider(iface), iid, out);
+}
+
+static ULONG WINAPI ServiceProvider_AddRef(IServiceProvider *iface)
+{
+    return dhtml_edit_addref(impl_from_IServiceProvider(iface));
+}
+
+static ULONG WINAPI ServiceProvider_Release(IServiceProvider *iface)
+{
+    return dhtml_edit_release(impl_from_IServiceProvider(iface));
+}
+
+static HRESULT WINAPI ServiceProvider_QueryService(IServiceProvider *iface, REFGUID guidService,
+        REFIID riid, void **ppv)
+{
+    DHTMLEditImpl *This = impl_from_IServiceProvider(iface);
+    FIXME("(%p)->(%s %s %p)\n", This, debugstr_guid(guidService), debugstr_guid(riid), ppv);
+    return E_NOINTERFACE;
+}
+
+static const IServiceProviderVtbl ServiceProviderVtbl = {
+    ServiceProvider_QueryInterface,
+    ServiceProvider_AddRef,
+    ServiceProvider_Release,
+    ServiceProvider_QueryService
+};
+
+
 HRESULT dhtml_edit_create(REFIID iid, void **out)
 {
     DHTMLEditImpl *This;
@@ -873,7 +1644,17 @@ HRESULT dhtml_edit_create(REFIID iid, void **out)
 
     This->IDHTMLEdit_iface.lpVtbl = &DHTMLEditVtbl;
     This->IOleObject_iface.lpVtbl = &OleObjectVtbl;
+    This->IProvideClassInfo2_iface.lpVtbl = &ProvideClassInfo2Vtbl;
+    This->IPersistStorage_iface.lpVtbl = &PersistStorageVtbl;
     This->IPersistStreamInit_iface.lpVtbl = &PersistStreamInitVtbl;
+    This->IOleControl_iface.lpVtbl = &OleControlVtbl;
+    This->IViewObjectEx_iface.lpVtbl = &ViewObjectExVtbl;
+    This->IOleInPlaceObjectWindowless_iface.lpVtbl = &OleInPlaceObjectWindowlessVtbl;
+    This->IOleInPlaceActiveObject_iface.lpVtbl = &OleInPlaceActiveObjectVtbl;
+    This->IConnectionPointContainer_iface.lpVtbl = &ConnectionPointContainerVtbl;
+    This->IDataObject_iface.lpVtbl = &DataObjectVtbl;
+    This->IServiceProvider_iface.lpVtbl = &ServiceProviderVtbl;
+
     This->client_site = NULL;
     This->ref = 1;
 

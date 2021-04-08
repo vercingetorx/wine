@@ -93,7 +93,7 @@ static int run_delete(HKEY root, WCHAR *path, WCHAR *key_name, WCHAR *value_name
     }
     else if (value_name || value_empty)
     {
-        if (RegDeleteValueW(key, value_empty ? NULL : value_name) != ERROR_SUCCESS)
+        if (RegDeleteValueW(key, value_name))
         {
             RegCloseKey(key);
             output_message(STRING_VALUE_NONEXIST);
@@ -113,48 +113,52 @@ int reg_delete(int argc, WCHAR *argvW[])
     BOOL value_all = FALSE, value_empty = FALSE, force = FALSE;
     int i;
 
-    if (!parse_registry_key(argvW[2], &root, &path, &key_name))
+    if (!parse_registry_key(argvW[2], &root, &path))
         return 1;
 
     for (i = 3; i < argc; i++)
     {
-        if (argvW[i][0] == '/' || argvW[i][0] == '-')
+        WCHAR *str;
+
+        if (argvW[i][0] != '/' && argvW[i][0] != '-')
+            goto invalid;
+
+        str = &argvW[i][1];
+
+        if (!lstrcmpiW(str, L"va"))
         {
-            WCHAR *str = &argvW[i][1];
+            if (value_all) goto invalid;
+            value_all = TRUE;
+            continue;
+        }
+        else if (!lstrcmpiW(str, L"ve"))
+        {
+            if (value_empty) goto invalid;
+            value_empty = TRUE;
+            continue;
+        }
+        else if (!str[0] || str[1])
+            goto invalid;
 
-            if (!lstrcmpiW(str, L"va"))
-            {
-                if (value_all) goto invalid;
-                value_all = TRUE;
-                continue;
-            }
-            else if (!lstrcmpiW(str, L"ve"))
-            {
-                if (value_empty) goto invalid;
-                value_empty = TRUE;
-                continue;
-            }
-            else if (!str[0] || str[1])
+        switch (towlower(*str))
+        {
+        case 'v':
+            if (value_name || !(value_name = argvW[++i]))
                 goto invalid;
-
-            switch (towlower(*str))
-            {
-            case 'v':
-                if (value_name || !(value_name = argvW[++i]))
-                    goto invalid;
-                break;
-            case 'f':
-                if (force) goto invalid;
-                force = TRUE;
-                break;
-            default:
-                goto invalid;
-            }
+            break;
+        case 'f':
+            if (force) goto invalid;
+            force = TRUE;
+            break;
+        default:
+            goto invalid;
         }
     }
 
     if ((value_name && value_empty) || (value_name && value_all) || (value_empty && value_all))
         goto invalid;
+
+    key_name = get_long_key(root, path);
 
     return run_delete(root, path, key_name, value_name, value_empty, value_all, force);
 

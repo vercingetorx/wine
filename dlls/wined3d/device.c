@@ -1590,7 +1590,7 @@ static void resolve_depth_buffer(struct wined3d_device *device)
     if (!(src_view = state->fb.depth_stencil))
         return;
 
-    wined3d_device_resolve_sub_resource(device, dst_resource, 0,
+    wined3d_device_context_resolve_sub_resource(&device->cs->c, dst_resource, 0,
             src_view->resource, src_view->sub_resource_idx, dst_resource->format->id);
 }
 
@@ -2407,6 +2407,18 @@ void CDECL wined3d_device_context_draw(struct wined3d_device_context *context, u
 
     wined3d_device_context_emit_draw(context, state->primitive_type, state->patch_vertex_count,
             0, start_vertex, vertex_count, start_instance, instance_count, false);
+}
+
+void CDECL wined3d_device_context_draw_indexed(struct wined3d_device_context *context, int base_vertex_index,
+        unsigned int start_index, unsigned int index_count, unsigned int start_instance, unsigned int instance_count)
+{
+    struct wined3d_state *state = context->state;
+
+    TRACE("context %p, base_vertex_index %d, start_index %u, index_count %u, start_instance %u, instance_count %u.\n",
+            context, base_vertex_index, start_index, index_count, start_instance, instance_count);
+
+    wined3d_device_context_emit_draw(context, state->primitive_type, state->patch_vertex_count,
+            base_vertex_index, start_index, index_count, start_instance, instance_count, true);
 }
 
 void CDECL wined3d_device_set_vertex_shader(struct wined3d_device *device, struct wined3d_shader *shader)
@@ -4472,12 +4484,9 @@ void CDECL wined3d_device_draw_primitive_instanced(struct wined3d_device *device
 void CDECL wined3d_device_draw_primitive_instanced_indirect(struct wined3d_device *device,
         struct wined3d_buffer *buffer, unsigned int offset)
 {
-    struct wined3d_state *state = device->cs->c.state;
-
     TRACE("device %p, buffer %p, offset %u.\n", device, buffer, offset);
 
-    wined3d_cs_emit_draw_indirect(device->cs, state->primitive_type,
-            state->patch_vertex_count, buffer, offset, false);
+    wined3d_device_context_draw_indirect(&device->cs->c, buffer, offset, false);
 }
 
 void CDECL wined3d_device_draw_indexed_primitive(struct wined3d_device *device, UINT start_idx, UINT index_count)
@@ -4486,8 +4495,7 @@ void CDECL wined3d_device_draw_indexed_primitive(struct wined3d_device *device, 
 
     TRACE("device %p, start_idx %u, index_count %u.\n", device, start_idx, index_count);
 
-    wined3d_device_context_emit_draw(&device->cs->c, state->primitive_type, state->patch_vertex_count,
-            state->base_vertex_index, start_idx, index_count, 0, 0, true);
+    wined3d_device_context_draw_indexed(&device->cs->c, state->base_vertex_index, start_idx, index_count, 0, 0);
 }
 
 void CDECL wined3d_device_draw_indexed_primitive_instanced(struct wined3d_device *device,
@@ -4498,19 +4506,16 @@ void CDECL wined3d_device_draw_indexed_primitive_instanced(struct wined3d_device
     TRACE("device %p, start_idx %u, index_count %u, start_instance %u, instance_count %u.\n",
             device, start_idx, index_count, start_instance, instance_count);
 
-    wined3d_device_context_emit_draw(&device->cs->c, state->primitive_type, state->patch_vertex_count,
-            state->base_vertex_index, start_idx, index_count, start_instance, instance_count, true);
+    wined3d_device_context_draw_indexed(&device->cs->c, state->base_vertex_index,
+            start_idx, index_count, start_instance, instance_count);
 }
 
 void CDECL wined3d_device_draw_indexed_primitive_instanced_indirect(struct wined3d_device *device,
         struct wined3d_buffer *buffer, unsigned int offset)
 {
-    struct wined3d_state *state = device->cs->c.state;
-
     TRACE("device %p, buffer %p, offset %u.\n", device, buffer, offset);
 
-    wined3d_cs_emit_draw_indirect(device->cs, state->primitive_type,
-            state->patch_vertex_count, buffer, offset, true);
+    wined3d_device_context_draw_indirect(&device->cs->c, buffer, offset, true);
 }
 
 HRESULT CDECL wined3d_device_update_texture(struct wined3d_device *device,
@@ -4608,7 +4613,7 @@ HRESULT CDECL wined3d_device_update_texture(struct wined3d_device *device,
             wined3d_texture_get_level_box(dst_texture, i, &box);
             for (j = 0; j < layer_count; ++j)
             {
-                wined3d_cs_emit_blt_sub_resource(device->cs,
+                wined3d_device_context_emit_blt_sub_resource(&device->cs->c,
                         &dst_texture->resource, j * dst_level_count + i, &box,
                         &src_texture->resource, j * src_level_count + i + src_skip_levels, &box,
                         0, NULL, WINED3D_TEXF_POINT);
@@ -4654,7 +4659,7 @@ HRESULT CDECL wined3d_device_update_texture(struct wined3d_device *device,
                                 wined3d_texture_get_level_depth(src_texture, src_level));
                     }
 
-                    wined3d_cs_emit_blt_sub_resource(device->cs,
+                    wined3d_device_context_emit_blt_sub_resource(&device->cs->c,
                             &dst_texture->resource, i * dst_level_count + j, &box,
                             &src_texture->resource, i * src_level_count + src_level, &box,
                             0, NULL, WINED3D_TEXF_POINT);
@@ -4807,13 +4812,13 @@ float CDECL wined3d_device_get_npatch_mode(const struct wined3d_device *device)
     return 0.0f;
 }
 
-void CDECL wined3d_device_copy_uav_counter(struct wined3d_device *device,
+void CDECL wined3d_device_context_copy_uav_counter(struct wined3d_device_context *context,
         struct wined3d_buffer *dst_buffer, unsigned int offset, struct wined3d_unordered_access_view *uav)
 {
-    TRACE("device %p, dst_buffer %p, offset %u, uav %p.\n",
-            device, dst_buffer, offset, uav);
+    TRACE("context %p, dst_buffer %p, offset %u, uav %p.\n",
+            context, dst_buffer, offset, uav);
 
-    wined3d_cs_emit_copy_uav_counter(device->cs, dst_buffer, offset, uav);
+    wined3d_device_context_emit_copy_uav_counter(context, dst_buffer, offset, uav);
 }
 
 static bool resources_format_compatible(const struct wined3d_resource *src_resource,
@@ -4834,7 +4839,7 @@ static bool resources_format_compatible(const struct wined3d_resource *src_resou
     return false;
 }
 
-void CDECL wined3d_device_copy_resource(struct wined3d_device *device,
+void CDECL wined3d_device_context_copy_resource(struct wined3d_device_context *context,
         struct wined3d_resource *dst_resource, struct wined3d_resource *src_resource)
 {
     unsigned int src_row_block_count, dst_row_block_count;
@@ -4843,7 +4848,7 @@ void CDECL wined3d_device_copy_resource(struct wined3d_device *device,
     struct wined3d_box src_box, dst_box;
     unsigned int i, j;
 
-    TRACE("device %p, dst_resource %p, src_resource %p.\n", device, dst_resource, src_resource);
+    TRACE("context %p, dst_resource %p, src_resource %p.\n", context, dst_resource, src_resource);
 
     if (src_resource == dst_resource)
     {
@@ -4888,7 +4893,7 @@ void CDECL wined3d_device_copy_resource(struct wined3d_device *device,
     if (dst_resource->type == WINED3D_RTYPE_BUFFER)
     {
         wined3d_box_set(&src_box, 0, 0, src_resource->size, 1, 0, 1);
-        wined3d_cs_emit_blt_sub_resource(device->cs, dst_resource, 0, &src_box,
+        wined3d_device_context_emit_blt_sub_resource(context, dst_resource, 0, &src_box,
                 src_resource, 0, &src_box, WINED3D_BLT_RAW, NULL, WINED3D_TEXF_POINT);
         return;
     }
@@ -4913,22 +4918,22 @@ void CDECL wined3d_device_copy_resource(struct wined3d_device *device,
         {
             unsigned int idx = j * dst_texture->level_count + i;
 
-            wined3d_cs_emit_blt_sub_resource(device->cs, dst_resource, idx, &dst_box,
+            wined3d_device_context_emit_blt_sub_resource(context, dst_resource, idx, &dst_box,
                     src_resource, idx, &src_box, WINED3D_BLT_RAW, NULL, WINED3D_TEXF_POINT);
         }
     }
 }
 
-HRESULT CDECL wined3d_device_copy_sub_resource_region(struct wined3d_device *device,
+HRESULT CDECL wined3d_device_context_copy_sub_resource_region(struct wined3d_device_context *context,
         struct wined3d_resource *dst_resource, unsigned int dst_sub_resource_idx, unsigned int dst_x,
         unsigned int dst_y, unsigned int dst_z, struct wined3d_resource *src_resource,
         unsigned int src_sub_resource_idx, const struct wined3d_box *src_box, unsigned int flags)
 {
     struct wined3d_box dst_box, b;
 
-    TRACE("device %p, dst_resource %p, dst_sub_resource_idx %u, dst_x %u, dst_y %u, dst_z %u, "
+    TRACE("context %p, dst_resource %p, dst_sub_resource_idx %u, dst_x %u, dst_y %u, dst_z %u, "
             "src_resource %p, src_sub_resource_idx %u, src_box %s, flags %#x.\n",
-            device, dst_resource, dst_sub_resource_idx, dst_x, dst_y, dst_z,
+            context, dst_resource, dst_sub_resource_idx, dst_x, dst_y, dst_z,
             src_resource, src_sub_resource_idx, debug_box(src_box), flags);
 
     if (flags)
@@ -5074,7 +5079,7 @@ HRESULT CDECL wined3d_device_copy_sub_resource_region(struct wined3d_device *dev
         }
     }
 
-    wined3d_cs_emit_blt_sub_resource(device->cs, dst_resource, dst_sub_resource_idx, &dst_box,
+    wined3d_device_context_emit_blt_sub_resource(context, dst_resource, dst_sub_resource_idx, &dst_box,
             src_resource, src_sub_resource_idx, src_box, WINED3D_BLT_RAW, NULL, WINED3D_TEXF_POINT);
 
     return WINED3D_OK;
@@ -5147,7 +5152,7 @@ void CDECL wined3d_device_update_sub_resource(struct wined3d_device *device, str
     wined3d_cs_emit_update_sub_resource(device->cs, resource, sub_resource_idx, box, data, row_pitch, depth_pitch);
 }
 
-void CDECL wined3d_device_resolve_sub_resource(struct wined3d_device *device,
+void CDECL wined3d_device_context_resolve_sub_resource(struct wined3d_device_context *context,
         struct wined3d_resource *dst_resource, unsigned int dst_sub_resource_idx,
         struct wined3d_resource *src_resource, unsigned int src_sub_resource_idx,
         enum wined3d_format_id format_id)
@@ -5157,9 +5162,9 @@ void CDECL wined3d_device_resolve_sub_resource(struct wined3d_device *device,
     struct wined3d_blt_fx fx = {0};
     RECT dst_rect, src_rect;
 
-    TRACE("device %p, dst_resource %p, dst_sub_resource_idx %u, "
+    TRACE("context %p, dst_resource %p, dst_sub_resource_idx %u, "
             "src_resource %p, src_sub_resource_idx %u, format %s.\n",
-            device, dst_resource, dst_sub_resource_idx,
+            context, dst_resource, dst_sub_resource_idx,
             src_resource, src_sub_resource_idx, debug_d3dformat(format_id));
 
     if (wined3d_format_is_typeless(dst_resource->format)
@@ -5192,7 +5197,7 @@ void CDECL wined3d_device_resolve_sub_resource(struct wined3d_device *device,
     src_level = src_sub_resource_idx % src_texture->level_count;
     SetRect(&src_rect, 0, 0, wined3d_texture_get_level_width(src_texture, src_level),
             wined3d_texture_get_level_height(src_texture, src_level));
-    wined3d_texture_blt(dst_texture, dst_sub_resource_idx, &dst_rect,
+    wined3d_device_context_blt(context, dst_texture, dst_sub_resource_idx, &dst_rect,
             src_texture, src_sub_resource_idx, &src_rect, 0, &fx, WINED3D_TEXF_POINT);
 }
 

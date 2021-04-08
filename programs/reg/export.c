@@ -301,7 +301,7 @@ static int export_registry_data(HANDLE hFile, HKEY key, WCHAR *path)
 
 static void export_file_header(HANDLE hFile)
 {
-    static const WCHAR *header = L"\uFEFFWindows Registry Editor Version 5.00\r\n";
+    static const WCHAR header[] = L"\xFEFFWindows Registry Editor Version 5.00\r\n";
 
     write_file(hFile, header);
 }
@@ -347,14 +347,14 @@ static HANDLE get_file_handle(WCHAR *filename, BOOL overwrite_file)
 int reg_export(int argc, WCHAR *argvW[])
 {
     HKEY root, hkey;
-    WCHAR *path, *long_key;
+    WCHAR *path, *key_name;
     BOOL overwrite_file = FALSE;
     HANDLE hFile;
     int i, ret;
 
     if (argc < 4) goto invalid;
 
-    if (!parse_registry_key(argvW[2], &root, &path, &long_key))
+    if (!parse_registry_key(argvW[2], &root, &path))
         return 1;
 
     for (i = 4; i < argc; i++)
@@ -378,9 +378,11 @@ int reg_export(int argc, WCHAR *argvW[])
         return 1;
     }
 
+    key_name = get_long_key(root, path);
+
     hFile = get_file_handle(argvW[3], overwrite_file);
     export_file_header(hFile);
-    ret = export_registry_data(hFile, hkey, long_key);
+    ret = export_registry_data(hFile, hkey, key_name);
     export_newline(hFile);
     CloseHandle(hFile);
 

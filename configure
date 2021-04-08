@@ -1655,6 +1655,7 @@ enable_wbemprox
 enable_wbemuuid
 enable_wdscore
 enable_webservices
+enable_websocket
 enable_wer
 enable_wevtapi
 enable_wevtsvc
@@ -20739,6 +20740,7 @@ wine_fn_config_makefile dlls/mfmediaengine/tests enable_tests
 wine_fn_config_makefile dlls/mfplat enable_mfplat
 wine_fn_config_makefile dlls/mfplat/tests enable_tests
 wine_fn_config_makefile dlls/mfplay enable_mfplay
+wine_fn_config_makefile dlls/mfplay/tests enable_tests
 wine_fn_config_makefile dlls/mfreadwrite enable_mfreadwrite
 wine_fn_config_makefile dlls/mfreadwrite/tests enable_tests
 wine_fn_config_makefile dlls/mfuuid enable_mfuuid
@@ -20825,6 +20827,7 @@ wine_fn_config_makefile dlls/msvcp120_app enable_msvcp120_app
 wine_fn_config_makefile dlls/msvcp140 enable_msvcp140
 wine_fn_config_makefile dlls/msvcp140/tests enable_tests
 wine_fn_config_makefile dlls/msvcp140_1 enable_msvcp140_1
+wine_fn_config_makefile dlls/msvcp140_1/tests enable_tests
 wine_fn_config_makefile dlls/msvcp60 enable_msvcp60
 wine_fn_config_makefile dlls/msvcp60/tests enable_tests
 wine_fn_config_makefile dlls/msvcp70 enable_msvcp70
@@ -21115,6 +21118,7 @@ wine_fn_config_makefile dlls/wbemuuid enable_wbemuuid
 wine_fn_config_makefile dlls/wdscore enable_wdscore
 wine_fn_config_makefile dlls/webservices enable_webservices
 wine_fn_config_makefile dlls/webservices/tests enable_tests
+wine_fn_config_makefile dlls/websocket enable_websocket
 wine_fn_config_makefile dlls/wer enable_wer
 wine_fn_config_makefile dlls/wer/tests enable_tests
 wine_fn_config_makefile dlls/wevtapi enable_wevtapi
