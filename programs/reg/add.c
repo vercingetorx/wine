@@ -235,6 +235,8 @@ int reg_add(int argc, WCHAR *argvW[])
             value_empty = TRUE;
             continue;
         }
+        else if (!lstrcmpiW(str, L"reg:32") || !lstrcmpiW(str, L"reg:64"))
+            continue;
         else if (!str[0] || str[1])
             goto invalid;
 
@@ -273,6 +275,7 @@ int reg_add(int argc, WCHAR *argvW[])
     return run_add(root, path, value_name, value_empty, type, separator, data, force);
 
 invalid:
-    output_message(STRING_INVALID_CMDLINE);
+    output_message(STRING_INVALID_SYNTAX);
+    output_message(STRING_FUNC_HELP, wcsupr(argvW[1]));
     return 1;
 }

@@ -25,7 +25,89 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(dhtmled);
 
-typedef struct
+typedef enum tid_t {
+    NULL_tid,
+    IDHTMLEdit_tid,
+    LAST_tid
+} tid_t;
+
+static ITypeLib *typelib;
+static ITypeInfo *typeinfos[LAST_tid];
+
+static REFIID tid_ids[] = {
+    &IID_NULL,
+    &IID_IDHTMLEdit
+};
+
+static HRESULT load_typelib(void)
+{
+    ITypeLib *tl;
+    HRESULT hr;
+
+    hr = LoadRegTypeLib(&LIBID_DHTMLEDLib, 1, 0, LOCALE_SYSTEM_DEFAULT, &tl);
+    if (FAILED(hr)) {
+        ERR("LoadRegTypeLib failed: %08x\n", hr);
+        return hr;
+    }
+
+    if (InterlockedCompareExchangePointer((void**)&typelib, tl, NULL))
+        ITypeLib_Release(tl);
+    return hr;
+}
+
+void release_typelib(void)
+{
+    unsigned i;
+
+    if (!typelib)
+        return;
+
+    for (i = 0; i < ARRAY_SIZE(typeinfos); i++)
+        if (typeinfos[i])
+            ITypeInfo_Release(typeinfos[i]);
+
+    ITypeLib_Release(typelib);
+}
+
+static HRESULT get_typeinfo(tid_t tid, ITypeInfo **typeinfo)
+{
+    HRESULT hr;
+
+    if (!typelib)
+        hr = load_typelib();
+    if (!typelib)
+        return hr;
+
+    if (!typeinfos[tid])
+    {
+        ITypeInfo *ti;
+
+        hr = ITypeLib_GetTypeInfoOfGuid(typelib, tid_ids[tid], &ti);
+        if (FAILED(hr))
+        {
+            ERR("GetTypeInfoOfGuid(%s) failed: %08x\n", debugstr_guid(tid_ids[tid]), hr);
+            return hr;
+        }
+
+        if (InterlockedCompareExchangePointer((void**)(typeinfos+tid), ti, NULL))
+            ITypeInfo_Release(ti);
+    }
+
+    *typeinfo = typeinfos[tid];
+    return S_OK;
+}
+
+typedef struct DHTMLEditImpl DHTMLEditImpl;
+typedef struct ConnectionPoint ConnectionPoint;
+
+struct ConnectionPoint
+{
+    IConnectionPoint IConnectionPoint_iface;
+    DHTMLEditImpl *dhed;
+    const IID *riid;
+};
+
+struct DHTMLEditImpl
 {
     IDHTMLEdit IDHTMLEdit_iface;
     IOleObject IOleObject_iface;
@@ -41,9 +123,10 @@ typedef struct
     IServiceProvider IServiceProvider_iface;
 
     IOleClientSite *client_site;
+    ConnectionPoint conpt;
     SIZEL extent;
     LONG ref;
-} DHTMLEditImpl;
+};
 
 static inline DHTMLEditImpl *impl_from_IDHTMLEdit(IDHTMLEdit *iface)
 {
@@ -239,33 +322,55 @@ static ULONG WINAPI DHTMLEdit_Release(IDHTMLEdit *iface)
 static HRESULT WINAPI DHTMLEdit_GetTypeInfoCount(IDHTMLEdit *iface, UINT *count)
 {
     DHTMLEditImpl *This = impl_from_IDHTMLEdit(iface);
-    FIXME("(%p)->(%p) stub\n", This, count);
-    *count = 0;
-    return E_NOTIMPL;
+    TRACE("(%p)->(%p)\n", This, count);
+    *count = 1;
+    return S_OK;
 }
 
 static HRESULT WINAPI DHTMLEdit_GetTypeInfo(IDHTMLEdit *iface, UINT type_index, LCID lcid, ITypeInfo **type_info)
 {
     DHTMLEditImpl *This = impl_from_IDHTMLEdit(iface);
-    FIXME("(%p)->(%u, %08x, %p) stub\n", This, type_index, lcid, type_info);
-    return E_NOTIMPL;
+    HRESULT hr;
+
+    TRACE("(%p)->(%u, %08x, %p)\n", This, type_index, lcid, type_info);
+
+    hr = get_typeinfo(IDHTMLEdit_tid, type_info);
+    if (SUCCEEDED(hr))
+        ITypeInfo_AddRef(*type_info);
+    return hr;
 }
 
 static HRESULT WINAPI DHTMLEdit_GetIDsOfNames(IDHTMLEdit *iface, REFIID iid, OLECHAR **names, UINT name_count,
                                               LCID lcid, DISPID *disp_ids)
 {
     DHTMLEditImpl *This = impl_from_IDHTMLEdit(iface);
-    FIXME("(%p)->(%s, %p, %u, %08x, %p) stub\n", This, debugstr_guid(iid), names, name_count, lcid, disp_ids);
-    return E_NOTIMPL;
+    ITypeInfo *ti;
+    HRESULT hr;
+
+    TRACE("(%p)->(%s, %p, %u, %08x, %p)\n", This, debugstr_guid(iid), names, name_count, lcid, disp_ids);
+
+    hr = get_typeinfo(IDHTMLEdit_tid, &ti);
+    if (FAILED(hr))
+        return hr;
+
+    return ITypeInfo_GetIDsOfNames(ti, names, name_count, disp_ids);
 }
 
 static HRESULT WINAPI DHTMLEdit_Invoke(IDHTMLEdit *iface, DISPID member, REFIID iid, LCID lcid, WORD flags,
                                        DISPPARAMS *params, VARIANT *ret, EXCEPINFO *exception_info, UINT *error_index)
 {
     DHTMLEditImpl *This = impl_from_IDHTMLEdit(iface);
-    FIXME("(%p)->(%d, %s, %08x, 0x%x, %p, %p, %p, %p) stub\n",
+    ITypeInfo *ti;
+    HRESULT hr;
+
+    TRACE("(%p)->(%d, %s, %08x, 0x%x, %p, %p, %p, %p)\n",
           This, member, debugstr_guid(iid), lcid, flags, params, ret, exception_info, error_index);
-    return E_NOTIMPL;
+
+    hr = get_typeinfo(IDHTMLEdit_tid, &ti);
+    if (FAILED(hr))
+        return hr;
+
+    return ITypeInfo_Invoke(ti, iface, member, flags, params, ret, exception_info, error_index);
 }
 
 static HRESULT WINAPI DHTMLEdit_ExecCommand(IDHTMLEdit *iface, DHTMLEDITCMDID cmd_id, OLECMDEXECOPT options,
@@ -1231,9 +1336,10 @@ static HRESULT WINAPI ViewObjectEx_GetViewStatus(IViewObjectEx *iface, DWORD *st
 {
     DHTMLEditImpl *This = impl_from_IViewObjectEx(iface);
 
-    FIXME("(%p)->(%p)\n", This, status);
+    TRACE("(%p)->(%p)\n", This, status);
 
-    return E_NOTIMPL;
+    *status = VIEWSTATUS_OPAQUE | VIEWSTATUS_SOLIDBKGND;
+    return S_OK;
 }
 
 static HRESULT WINAPI ViewObjectEx_QueryHitPoint(IViewObjectEx *iface, DWORD aspect, const RECT *bounds,
@@ -1482,10 +1588,23 @@ static HRESULT WINAPI ConnectionPointContainer_EnumConnectionPoints(IConnectionP
 }
 
 static HRESULT WINAPI ConnectionPointContainer_FindConnectionPoint(IConnectionPointContainer *iface,
-        REFIID riid, IConnectionPoint **ppCP)
+        REFIID riid, IConnectionPoint **point)
 {
     DHTMLEditImpl *This = impl_from_IConnectionPointContainer(iface);
-    FIXME("(%p)->(%s %p)\n", This, debugstr_guid(riid), ppCP);
+
+    TRACE("(%p)->(%s %p)\n", This, debugstr_guid(riid), point);
+
+    if (!point)
+        return E_POINTER;
+
+    if (IsEqualGUID(riid, This->conpt.riid))
+    {
+        *point = &This->conpt.IConnectionPoint_iface;
+        IConnectionPoint_AddRef(*point);
+        return S_OK;
+    }
+
+    FIXME("unsupported connection point %s\n", debugstr_guid(riid));
     return CONNECT_E_NOCONNECTION;
 }
 
@@ -1496,6 +1615,88 @@ static const IConnectionPointContainerVtbl ConnectionPointContainerVtbl =
     ConnectionPointContainer_Release,
     ConnectionPointContainer_EnumConnectionPoints,
     ConnectionPointContainer_FindConnectionPoint
+};
+
+static inline ConnectionPoint *impl_from_IConnectionPoint(IConnectionPoint *iface)
+{
+    return CONTAINING_RECORD(iface, ConnectionPoint, IConnectionPoint_iface);
+}
+
+static HRESULT WINAPI ConnectionPoint_QueryInterface(IConnectionPoint *iface, REFIID iid, LPVOID *out)
+{
+    ConnectionPoint *This = impl_from_IConnectionPoint(iface);
+
+    if (IsEqualGUID(&IID_IUnknown, iid) || IsEqualGUID(&IID_IConnectionPoint, iid))
+    {
+        *out = &This->IConnectionPoint_iface;
+        DHTMLEdit_AddRef(&This->dhed->IDHTMLEdit_iface);
+        return S_OK;
+    }
+
+    *out = NULL;
+    WARN("Unsupported interface %s\n", debugstr_guid(iid));
+    return E_NOINTERFACE;
+}
+
+static ULONG WINAPI ConnectionPoint_AddRef(IConnectionPoint *iface)
+{
+    ConnectionPoint *This = impl_from_IConnectionPoint(iface);
+    return IConnectionPointContainer_AddRef(&This->dhed->IConnectionPointContainer_iface);
+}
+
+static ULONG WINAPI ConnectionPoint_Release(IConnectionPoint *iface)
+{
+    ConnectionPoint *This = impl_from_IConnectionPoint(iface);
+    return IConnectionPointContainer_AddRef(&This->dhed->IConnectionPointContainer_iface);
+}
+
+static HRESULT WINAPI ConnectionPoint_GetConnectionInterface(IConnectionPoint *iface, IID *iid)
+{
+    ConnectionPoint *This = impl_from_IConnectionPoint(iface);
+    FIXME("%p, %p\n", This, iid);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI ConnectionPoint_GetConnectionPointContainer(IConnectionPoint *iface,
+        IConnectionPointContainer **container)
+{
+    ConnectionPoint *This = impl_from_IConnectionPoint(iface);
+    FIXME("%p, %p\n", This, container);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI ConnectionPoint_Advise(IConnectionPoint *iface, IUnknown *unk_sink,
+        DWORD *cookie)
+{
+    ConnectionPoint *This = impl_from_IConnectionPoint(iface);
+    FIXME("%p, %p, %p\n", This, unk_sink, cookie);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI ConnectionPoint_Unadvise(IConnectionPoint *iface, DWORD cookie)
+{
+    ConnectionPoint *This = impl_from_IConnectionPoint(iface);
+    FIXME("%p, %d\n", This, cookie);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI ConnectionPoint_EnumConnections(IConnectionPoint *iface,
+        IEnumConnections **points)
+{
+    ConnectionPoint *This = impl_from_IConnectionPoint(iface);
+    FIXME("%p, %p\n", This, points);
+    return E_NOTIMPL;
+}
+
+static const IConnectionPointVtbl ConnectionPointVtbl = {
+    ConnectionPoint_QueryInterface,
+    ConnectionPoint_AddRef,
+    ConnectionPoint_Release,
+    ConnectionPoint_GetConnectionInterface,
+    ConnectionPoint_GetConnectionPointContainer,
+    ConnectionPoint_Advise,
+    ConnectionPoint_Unadvise,
+    ConnectionPoint_EnumConnections
 };
 
 static HRESULT WINAPI DataObject_QueryInterface(IDataObject *iface, REFIID iid, LPVOID *out)
@@ -1628,7 +1829,6 @@ static const IServiceProviderVtbl ServiceProviderVtbl = {
     ServiceProvider_QueryService
 };
 
-
 HRESULT dhtml_edit_create(REFIID iid, void **out)
 {
     DHTMLEditImpl *This;
@@ -1657,6 +1857,10 @@ HRESULT dhtml_edit_create(REFIID iid, void **out)
 
     This->client_site = NULL;
     This->ref = 1;
+
+    This->conpt.dhed = This;
+    This->conpt.riid = &DIID__DHTMLEditEvents;
+    This->conpt.IConnectionPoint_iface.lpVtbl = &ConnectionPointVtbl;
 
     hdc = GetDC(0);
     dpi_x = GetDeviceCaps(hdc, LOGPIXELSX);

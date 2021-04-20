@@ -64,6 +64,9 @@ WINE_DEFAULT_DEBUG_CHANNEL(environ);
 
 USHORT *uctable = NULL, *lctable = NULL;
 SIZE_T startup_info_size = 0;
+BOOL is_prefix_bootstrap = FALSE;
+
+static const WCHAR bootstrapW[] = {'W','I','N','E','B','O','O','T','S','T','R','A','P','M','O','D','E'};
 
 int main_argc = 0;
 char **main_argv = NULL;
@@ -1211,6 +1214,18 @@ static WCHAR *find_env_var( WCHAR *env, SIZE_T size, const WCHAR *name, SIZE_T n
     return NULL;
 }
 
+static WCHAR *get_env_var( WCHAR *env, SIZE_T size, const WCHAR *name, SIZE_T namelen )
+{
+    WCHAR *ret = NULL, *var = find_env_var( env, size, name, namelen );
+
+    if (var)
+    {
+        var += namelen + 1;  /* skip name */
+        if ((ret = malloc( (wcslen(var) + 1) * sizeof(WCHAR) ))) wcscpy( ret, var );
+    }
+    return ret;
+}
+
 /* set an environment variable, replacing it if it exists */
 static void set_env_var( WCHAR **env, SIZE_T *pos, SIZE_T *size,
                          const WCHAR *name, SIZE_T namelen, const WCHAR *value )
@@ -1882,6 +1897,23 @@ static inline WCHAR *get_dos_path( WCHAR *nt_path )
     return nt_path;
 }
 
+static inline const WCHAR *get_params_string( const RTL_USER_PROCESS_PARAMETERS *params,
+                                              const UNICODE_STRING *str )
+{
+    if (params->Flags & PROCESS_PARAMS_FLAG_NORMALIZED) return str->Buffer;
+    return (const WCHAR *)((const char *)params + (UINT_PTR)str->Buffer);
+}
+
+static inline DWORD append_string( void **ptr, const RTL_USER_PROCESS_PARAMETERS *params,
+                                   const UNICODE_STRING *str )
+{
+    const WCHAR *buffer = get_params_string( params, str );
+    memcpy( *ptr, buffer, str->Length );
+    *ptr = (WCHAR *)*ptr + str->Length / sizeof(WCHAR);
+    return str->Length;
+}
+
+
 /*************************************************************************
  *		build_initial_params
  *
@@ -1889,29 +1921,32 @@ static inline WCHAR *get_dos_path( WCHAR *nt_path )
  */
 static RTL_USER_PROCESS_PARAMETERS *build_initial_params(void)
 {
+    static const WCHAR valueW[] = {'1',0};
     static const WCHAR pathW[] = {'P','A','T','H'};
     RTL_USER_PROCESS_PARAMETERS *params = NULL;
     SIZE_T size, env_pos, env_size;
-    WCHAR *dst, *image, *cmdline, *p, *path = NULL;
+    WCHAR *dst, *image, *cmdline, *path, *bootstrap;
     WCHAR *env = get_initial_environment( &env_pos, &env_size );
     WCHAR *curdir = get_initial_directory();
     void *module = NULL;
     NTSTATUS status;
 
     /* store the initial PATH value */
-    if ((p = find_env_var( env, env_pos, pathW, 4 )))
-    {
-        path = malloc( (wcslen(p + 5) + 1) * sizeof(WCHAR) );
-        wcscpy( path, p + 5 );
-    }
+    path = get_env_var( env, env_pos, pathW, 4 );
     add_dynamic_environment( &env, &env_pos, &env_size );
     add_registry_environment( &env, &env_pos, &env_size );
+    bootstrap = get_env_var( env, env_pos, bootstrapW, ARRAY_SIZE(bootstrapW) );
+    set_env_var( &env, &env_pos, &env_size, bootstrapW, ARRAY_SIZE(bootstrapW), valueW );
+    is_prefix_bootstrap = TRUE;
     env[env_pos] = 0;
     run_wineboot( env, env_pos );
 
     /* reload environment now that wineboot has run */
     set_env_var( &env, &env_pos, &env_size, pathW, 4, path );  /* reset PATH */
     free( path );
+    set_env_var( &env, &env_pos, &env_size, bootstrapW, ARRAY_SIZE(bootstrapW), bootstrap );
+    is_prefix_bootstrap = !!bootstrap;
+    free( bootstrap );
     add_registry_environment( &env, &env_pos, &env_size );
     env[env_pos++] = 0;
 
@@ -2012,6 +2047,7 @@ void init_startup_info(void)
     memcpy( env, (char *)info + info_size, env_size * sizeof(WCHAR) );
     env_pos = env_size - 1;
     add_dynamic_environment( &env, &env_pos, &env_size );
+    is_prefix_bootstrap = !!find_env_var( env, env_pos, bootstrapW, ARRAY_SIZE(bootstrapW) );
     env[env_pos++] = 0;
 
     size = (sizeof(*params)
@@ -2091,6 +2127,63 @@ void init_startup_info(void)
     rebuild_argv();
     main_wargv = build_wargv( get_dos_path( image ));
     free( image );
+}
+
+
+/***********************************************************************
+ *           create_startup_info
+ */
+void *create_startup_info( const UNICODE_STRING *nt_image, const RTL_USER_PROCESS_PARAMETERS *params,
+                           DWORD *info_size )
+{
+    startup_info_t *info;
+    UNICODE_STRING dos_image = *nt_image;
+    DWORD size;
+    void *ptr;
+
+    dos_image.Buffer = get_dos_path( nt_image->Buffer );
+    dos_image.Length = nt_image->Length - (dos_image.Buffer - nt_image->Buffer) * sizeof(WCHAR);
+
+    size = sizeof(*info);
+    size += params->CurrentDirectory.DosPath.Length;
+    size += params->DllPath.Length;
+    size += dos_image.Length;
+    size += params->CommandLine.Length;
+    size += params->WindowTitle.Length;
+    size += params->Desktop.Length;
+    size += params->ShellInfo.Length;
+    size += params->RuntimeInfo.Length;
+    size = (size + 1) & ~1;
+    *info_size = size;
+
+    if (!(info = calloc( size, 1 ))) return NULL;
+
+    info->debug_flags   = params->DebugFlags;
+    info->console_flags = params->ConsoleFlags;
+    info->console       = wine_server_obj_handle( params->ConsoleHandle );
+    info->hstdin        = wine_server_obj_handle( params->hStdInput );
+    info->hstdout       = wine_server_obj_handle( params->hStdOutput );
+    info->hstderr       = wine_server_obj_handle( params->hStdError );
+    info->x             = params->dwX;
+    info->y             = params->dwY;
+    info->xsize         = params->dwXSize;
+    info->ysize         = params->dwYSize;
+    info->xchars        = params->dwXCountChars;
+    info->ychars        = params->dwYCountChars;
+    info->attribute     = params->dwFillAttribute;
+    info->flags         = params->dwFlags;
+    info->show          = params->wShowWindow;
+
+    ptr = info + 1;
+    info->curdir_len = append_string( &ptr, params, &params->CurrentDirectory.DosPath );
+    info->dllpath_len = append_string( &ptr, params, &params->DllPath );
+    info->imagepath_len = append_string( &ptr, params, &dos_image );
+    info->cmdline_len = append_string( &ptr, params, &params->CommandLine );
+    info->title_len = append_string( &ptr, params, &params->WindowTitle );
+    info->desktop_len = append_string( &ptr, params, &params->Desktop );
+    info->shellinfo_len = append_string( &ptr, params, &params->ShellInfo );
+    info->runtime_len = append_string( &ptr, params, &params->RuntimeInfo );
+    return info;
 }
 
 

@@ -326,6 +326,7 @@ static WCHAR *load_resource(const WCHAR *name)
 struct test_callback
 {
     IMFAsyncCallback IMFAsyncCallback_iface;
+    LONG refcount;
     HANDLE event;
     DWORD param;
     IMFMediaEvent *media_event;
@@ -352,12 +353,14 @@ static HRESULT WINAPI testcallback_QueryInterface(IMFAsyncCallback *iface, REFII
 
 static ULONG WINAPI testcallback_AddRef(IMFAsyncCallback *iface)
 {
-    return 2;
+    struct test_callback *callback = impl_from_IMFAsyncCallback(iface);
+    return InterlockedIncrement(&callback->refcount);
 }
 
 static ULONG WINAPI testcallback_Release(IMFAsyncCallback *iface)
 {
-    return 1;
+    struct test_callback *callback = impl_from_IMFAsyncCallback(iface);
+    return InterlockedDecrement(&callback->refcount);
 }
 
 static HRESULT WINAPI testcallback_GetParameters(IMFAsyncCallback *iface, DWORD *flags, DWORD *queue)
@@ -993,13 +996,27 @@ if(0)
     ok(hr == S_OK, "Failed to get media type property, hr %#x.\n", hr);
     ok(compressed, "Unexpected value %d.\n", compressed);
 
+    hr = IMFMediaType_SetUINT32(mediatype, &MF_MT_COMPRESSED, 0);
+    ok(hr == S_OK, "Failed to set attribute, hr %#x.\n", hr);
+
+    compressed = FALSE;
+    hr = IMFMediaType_IsCompressedFormat(mediatype, &compressed);
+    ok(hr == S_OK, "Failed to get media type property, hr %#x.\n", hr);
+    ok(compressed, "Unexpected value %d.\n", compressed);
+
     hr = IMFMediaType_SetUINT32(mediatype, &MF_MT_ALL_SAMPLES_INDEPENDENT, 1);
+    ok(hr == S_OK, "Failed to set attribute, hr %#x.\n", hr);
+
+    hr = IMFMediaType_SetUINT32(mediatype, &MF_MT_COMPRESSED, 1);
     ok(hr == S_OK, "Failed to set attribute, hr %#x.\n", hr);
 
     compressed = TRUE;
     hr = IMFMediaType_IsCompressedFormat(mediatype, &compressed);
     ok(hr == S_OK, "Failed to get media type property, hr %#x.\n", hr);
     ok(!compressed, "Unexpected value %d.\n", compressed);
+
+    hr = IMFMediaType_DeleteItem(mediatype, &MF_MT_COMPRESSED);
+    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
 
     hr = IMFMediaType_SetGUID(mediatype, &MF_MT_MAJOR_TYPE, &MFMediaType_Video);
     ok(hr == S_OK, "Failed to set GUID value, hr %#x.\n", hr);
@@ -2448,6 +2465,7 @@ static void init_test_callback(struct test_callback *callback)
 {
     callback->IMFAsyncCallback_iface.lpVtbl = &testcallbackvtbl;
     callback->event = NULL;
+    callback->refcount = 1;
 }
 
 static void test_MFCreateAsyncResult(void)
@@ -3099,6 +3117,19 @@ static void test_event_queue(void)
     ok(hr == S_OK, "Failed to shut down, hr %#x.\n", hr);
 
     IMFMediaEventQueue_Release(queue);
+
+    /* Release while subscribed. */
+    init_test_callback(&callback);
+
+    hr = MFCreateEventQueue(&queue);
+    ok(hr == S_OK, "Failed to create event queue, hr %#x.\n", hr);
+
+    hr = IMFMediaEventQueue_BeginGetEvent(queue, &callback.IMFAsyncCallback_iface, NULL);
+    ok(hr == S_OK, "Failed to Begin*, hr %#x.\n", hr);
+    EXPECT_REF(&callback.IMFAsyncCallback_iface, 2);
+
+    IMFMediaEventQueue_Release(queue);
+    EXPECT_REF(&callback.IMFAsyncCallback_iface, 1);
 
     hr = MFShutdown();
     ok(hr == S_OK, "Failed to shut down, hr %#x.\n", hr);
@@ -3964,6 +3995,12 @@ static void test_MFCalculateImageSize(void)
         { &MFVideoFormat_I420, 1, 2, 6, 3 },
         { &MFVideoFormat_I420, 4, 3, 18 },
         { &MFVideoFormat_I420, 320, 240, 115200 },
+
+        { &MFVideoFormat_IYUV, 1, 1, 3, 1 },
+        { &MFVideoFormat_IYUV, 2, 1, 3 },
+        { &MFVideoFormat_IYUV, 1, 2, 6, 3 },
+        { &MFVideoFormat_IYUV, 4, 3, 18 },
+        { &MFVideoFormat_IYUV, 320, 240, 115200 },
 
         { &MFVideoFormat_YUY2, 2, 1, 4 },
         { &MFVideoFormat_YUY2, 4, 3, 24 },
@@ -5293,6 +5330,10 @@ static void test_MFGetStrideForBitmapInfoHeader(void)
         { &MFVideoFormat_I420, 2, 2 },
         { &MFVideoFormat_I420, 3, 3 },
         { &MFVideoFormat_I420, 320, 320 },
+        { &MFVideoFormat_IYUV, 1, 1 },
+        { &MFVideoFormat_IYUV, 2, 2 },
+        { &MFVideoFormat_IYUV, 3, 3 },
+        { &MFVideoFormat_IYUV, 320, 320 },
     };
     unsigned int i;
     LONG stride;

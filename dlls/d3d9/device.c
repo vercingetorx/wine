@@ -587,9 +587,9 @@ static void device_reset_viewport_state(struct d3d9_device *device)
     struct wined3d_viewport vp;
     RECT rect;
 
-    wined3d_device_get_viewports(device->wined3d_device, NULL, &vp);
+    wined3d_device_context_get_viewports(device->immediate_context, NULL, &vp);
     wined3d_stateblock_set_viewport(device->state, &vp);
-    wined3d_device_get_scissor_rects(device->wined3d_device, NULL, &rect);
+    wined3d_device_context_get_scissor_rects(device->immediate_context, NULL, &rect);
     wined3d_stateblock_set_scissor_rect(device->state, &rect);
 }
 
@@ -1939,7 +1939,7 @@ static HRESULT WINAPI d3d9_device_ColorFill(IDirect3DDevice9Ex *iface,
 
     wined3d_device_apply_stateblock(device->wined3d_device, device->state);
     rtv = d3d9_surface_acquire_rendertarget_view(surface_impl);
-    hr = wined3d_device_clear_rendertarget_view(device->wined3d_device,
+    hr = wined3d_device_context_clear_rendertarget_view(device->immediate_context,
             rtv, rect, WINED3DCLEAR_TARGET, &c, 0.0f, 0);
     d3d9_surface_release_rendertarget_view(surface_impl, rtv);
     if (SUCCEEDED(hr) && surface_impl->texture)
