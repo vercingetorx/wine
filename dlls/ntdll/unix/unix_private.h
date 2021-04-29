@@ -28,16 +28,12 @@
 #include "wine/list.h"
 
 #ifdef __i386__
-static const enum cpu_type client_cpu = CPU_x86;
 static const WORD current_machine = IMAGE_FILE_MACHINE_I386;
 #elif defined(__x86_64__)
-static const enum cpu_type client_cpu = CPU_x86_64;
 static const WORD current_machine = IMAGE_FILE_MACHINE_AMD64;
 #elif defined(__arm__)
-static const enum cpu_type client_cpu = CPU_ARM;
 static const WORD current_machine = IMAGE_FILE_MACHINE_ARMNT;
 #elif defined(__aarch64__)
-static const enum cpu_type client_cpu = CPU_ARM64;
 static const WORD current_machine = IMAGE_FILE_MACHINE_ARM64;
 #endif
 
@@ -74,16 +70,10 @@ static inline struct ntdll_thread_data *ntdll_get_thread_data(void)
 }
 
 static const SIZE_T page_size = 0x1000;
+static const SIZE_T teb_size = 0x3000;  /* TEB64 + TEB32 */
 static const SIZE_T signal_stack_mask = 0xffff;
-#ifdef _WIN64
-static const SIZE_T teb_size = 0x2000;
-static const SIZE_T teb_offset = 0;
-static const SIZE_T signal_stack_size = 0x10000 - 0x2000;
-#else
-static const SIZE_T teb_size = 0x3000;  /* TEB64 + TEB */
-static const SIZE_T teb_offset = 0x2000;
 static const SIZE_T signal_stack_size = 0x10000 - 0x3000;
-#endif
+static const LONG teb_offset = 0x2000;
 
 /* callbacks to PE ntdll from the Unix side */
 extern void     (WINAPI *pDbgUiRemoteBreakin)( void *arg ) DECLSPEC_HIDDEN;
@@ -127,7 +117,8 @@ extern char **main_argv DECLSPEC_HIDDEN;
 extern char **main_envp DECLSPEC_HIDDEN;
 extern WCHAR **main_wargv DECLSPEC_HIDDEN;
 extern const WCHAR system_dir[] DECLSPEC_HIDDEN;
-extern unsigned int server_cpus DECLSPEC_HIDDEN;
+extern unsigned int supported_machines_count DECLSPEC_HIDDEN;
+extern USHORT supported_machines[8] DECLSPEC_HIDDEN;
 extern BOOL is_wow64 DECLSPEC_HIDDEN;
 extern BOOL process_exiting DECLSPEC_HIDDEN;
 extern HANDLE keyed_event DECLSPEC_HIDDEN;
@@ -301,7 +292,7 @@ static inline void ascii_to_unicode( WCHAR *dst, const char *src, size_t len )
 
 static inline void *get_signal_stack(void)
 {
-    return (char *)NtCurrentTeb() + teb_size - teb_offset;
+    return (void *)(((ULONG_PTR)NtCurrentTeb() & ~signal_stack_mask) + teb_size);
 }
 
 static inline void mutex_lock( pthread_mutex_t *mutex )

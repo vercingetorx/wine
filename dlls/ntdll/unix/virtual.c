@@ -2575,11 +2575,23 @@ struct alloc_virtual_heap
 static int CDECL alloc_virtual_heap( void *base, SIZE_T size, void *arg )
 {
     struct alloc_virtual_heap *alloc = arg;
+    void *end = (char *)base + size;
 
     if (is_beyond_limit( base, size, address_space_limit )) address_space_limit = (char *)base + size;
-    if (size < alloc->size) return 0;
     if (is_win64 && base < (void *)0x80000000) return 0;
-    alloc->base = anon_mmap_fixed( (char *)base + size - alloc->size, alloc->size, PROT_READ|PROT_WRITE, 0 );
+    if (preload_reserve_end >= end)
+    {
+        if (preload_reserve_start <= base) return 0;  /* no space in that area */
+        if (preload_reserve_start < end) end = preload_reserve_start;
+    }
+    else if (preload_reserve_end > base)
+    {
+        if (preload_reserve_start <= base) base = preload_reserve_end;
+        else if ((char *)end - (char *)preload_reserve_end >= alloc->size) base = preload_reserve_end;
+        else end = preload_reserve_start;
+    }
+    if ((char *)end - (char *)base < alloc->size) return 0;
+    alloc->base = anon_mmap_fixed( (char *)end - alloc->size, alloc->size, PROT_READ|PROT_WRITE, 0 );
     return (alloc->base != MAP_FAILED);
 }
 
@@ -2806,27 +2818,48 @@ NTSTATUS virtual_create_builtin_view( void *module, const UNICODE_STRING *nt_nam
 
 
 /* set some initial values in the new PEB */
-static void init_peb( PEB *peb )
+static PEB *init_peb( void *ptr )
 {
-    peb->OSMajorVersion = 6;
-    peb->OSMinorVersion = 1;
-    peb->OSBuildNumber  = 0x1db1;
-    peb->OSPlatformId   = VER_PLATFORM_WIN32_NT;
-    peb->SessionId      = 1;
+    PEB32 *peb32 = ptr;
+    PEB64 *peb64 = (PEB64 *)((char *)ptr + page_size);
+
+    peb32->OSMajorVersion = peb64->OSMajorVersion = 6;
+    peb32->OSMinorVersion = peb64->OSMinorVersion = 1;
+    peb32->OSBuildNumber  = peb64->OSBuildNumber  = 0x1db1;
+    peb32->OSPlatformId   = peb64->OSPlatformId   = VER_PLATFORM_WIN32_NT;
+    peb32->SessionId      = peb64->SessionId      = 1;
+#ifdef _WIN64
+    return (PEB *)peb64;
+#else
+    return (PEB *)peb32;
+#endif
 }
 
 
 /* set some initial values in a new TEB */
-static void init_teb( TEB *teb, PEB *peb )
+static TEB *init_teb( void *ptr, PEB *peb )
 {
-    struct ntdll_thread_data *thread_data = (struct ntdll_thread_data *)&teb->GdiTebBatch;
+    struct ntdll_thread_data *thread_data;
+    TEB *teb;
+    TEB64 *teb64 = ptr;
+    TEB32 *teb32 = (TEB32 *)((char *)ptr + teb_offset);
 
-#ifndef _WIN64
-    TEB64 *teb64 = (TEB64 *)((char *)teb - teb_offset);
-
+#ifdef _WIN64
+    teb = (TEB *)teb64;
+    teb32->Peb = PtrToUlong( (char *)peb - page_size );
+    teb32->Tib.Self = PtrToUlong( teb32 );
+    teb32->Tib.ExceptionList = ~0u;
+    teb32->ActivationContextStackPointer = PtrToUlong( &teb32->ActivationContextStack );
+    teb32->ActivationContextStack.FrameListCache.Flink =
+        teb32->ActivationContextStack.FrameListCache.Blink =
+            PtrToUlong( &teb32->ActivationContextStack.FrameListCache );
+    teb32->StaticUnicodeString.Buffer = PtrToUlong( teb32->StaticUnicodeBuffer );
+    teb32->StaticUnicodeString.MaximumLength = sizeof( teb32->StaticUnicodeBuffer );
+#else
+    teb = (TEB *)teb32;
     teb64->Peb = PtrToUlong( (char *)peb + page_size );
     teb64->Tib.Self = PtrToUlong( teb64 );
-    teb64->Tib.ExceptionList = PtrToUlong( teb );
+    teb64->Tib.ExceptionList = PtrToUlong( teb32 );
     teb64->ActivationContextStackPointer = PtrToUlong( &teb64->ActivationContextStack );
     teb64->ActivationContextStack.FrameListCache.Flink =
         teb64->ActivationContextStack.FrameListCache.Blink =
@@ -2842,11 +2875,13 @@ static void init_teb( TEB *teb, PEB *peb )
     InitializeListHead( &teb->ActivationContextStack.FrameListCache );
     teb->StaticUnicodeString.Buffer = teb->StaticUnicodeBuffer;
     teb->StaticUnicodeString.MaximumLength = sizeof(teb->StaticUnicodeBuffer);
+    thread_data = (struct ntdll_thread_data *)&teb->GdiTebBatch;
     thread_data->request_fd = -1;
     thread_data->reply_fd   = -1;
     thread_data->wait_fd[0] = -1;
     thread_data->wait_fd[1] = -1;
     list_add_head( &teb_list, &thread_data->entry );
+    return teb;
 }
 
 
@@ -2855,12 +2890,12 @@ static void init_teb( TEB *teb, PEB *peb )
  */
 TEB *virtual_alloc_first_teb(void)
 {
+    struct ntdll_thread_data *thread_data;
     TEB *teb;
     PEB *peb;
     void *ptr;
     NTSTATUS status;
     SIZE_T data_size = page_size;
-    SIZE_T peb_size = page_size * (is_win64 ? 1 : 2);
     SIZE_T block_size = signal_stack_mask + 1;
     SIZE_T total = 32 * block_size;
 
@@ -2873,17 +2908,17 @@ TEB *virtual_alloc_first_teb(void)
         exit(1);
     }
 
-    NtAllocateVirtualMemory( NtCurrentProcess(), &teb_block, 0, &total,
+    NtAllocateVirtualMemory( NtCurrentProcess(), &teb_block, is_win64 ? 0x7fffffff : 0, &total,
                              MEM_RESERVE | MEM_TOP_DOWN, PAGE_READWRITE );
     teb_block_pos = 30;
-    ptr = ((char *)teb_block + 30 * block_size);
-    teb = (TEB *)((char *)ptr + teb_offset);
-    peb = (PEB *)((char *)teb_block + 32 * block_size - peb_size);
-    NtAllocateVirtualMemory( NtCurrentProcess(), (void **)&ptr, 0, &block_size, MEM_COMMIT, PAGE_READWRITE );
-    NtAllocateVirtualMemory( NtCurrentProcess(), (void **)&peb, 0, &peb_size, MEM_COMMIT, PAGE_READWRITE );
-    init_peb( peb );
-    init_teb( teb, peb );
+    ptr = (char *)teb_block + 30 * block_size;
+    data_size = 2 * block_size;
+    NtAllocateVirtualMemory( NtCurrentProcess(), (void **)&ptr, 0, &data_size, MEM_COMMIT, PAGE_READWRITE );
+    peb = init_peb( (char *)teb_block + 31 * block_size );
+    teb = init_teb( ptr, peb );
     *(ULONG_PTR *)&peb->CloudFileFlags = get_image_address();
+    thread_data = (struct ntdll_thread_data *)&teb->GdiTebBatch;
+    thread_data->debug_info = (struct debug_info *)((char *)teb_block + 31 * block_size + 2 * page_size);
     return teb;
 }
 
@@ -2912,8 +2947,8 @@ NTSTATUS virtual_alloc_teb( TEB **ret_teb )
         {
             SIZE_T total = 32 * block_size;
 
-            if ((status = NtAllocateVirtualMemory( NtCurrentProcess(), &ptr, 0, &total,
-                                                   MEM_RESERVE, PAGE_READWRITE )))
+            if ((status = NtAllocateVirtualMemory( NtCurrentProcess(), &ptr, is_win64 ? 0x7fffffff : 0,
+                                                   &total, MEM_RESERVE, PAGE_READWRITE )))
             {
                 server_leave_uninterrupted_section( &virtual_mutex, &sigset );
                 return status;
@@ -2925,8 +2960,7 @@ NTSTATUS virtual_alloc_teb( TEB **ret_teb )
         NtAllocateVirtualMemory( NtCurrentProcess(), (void **)&ptr, 0, &block_size,
                                  MEM_COMMIT, PAGE_READWRITE );
     }
-    *ret_teb = teb = (TEB *)((char *)ptr + teb_offset);
-    init_teb( teb, NtCurrentTeb()->Peb );
+    *ret_teb = teb = init_teb( ptr, NtCurrentTeb()->Peb );
     server_leave_uninterrupted_section( &virtual_mutex, &sigset );
 
     if ((status = signal_alloc_thread( teb )))
@@ -2946,7 +2980,7 @@ NTSTATUS virtual_alloc_teb( TEB **ret_teb )
 void virtual_free_teb( TEB *teb )
 {
     struct ntdll_thread_data *thread_data = (struct ntdll_thread_data *)&teb->GdiTebBatch;
-    void *ptr;
+    void *ptr = teb;
     SIZE_T size;
     sigset_t sigset;
 
@@ -2964,7 +2998,7 @@ void virtual_free_teb( TEB *teb )
 
     server_enter_uninterrupted_section( &virtual_mutex, &sigset );
     list_remove( &thread_data->entry );
-    ptr = (char *)teb - teb_offset;
+    if (!is_win64) ptr = (char *)ptr - teb_offset;
     *(void **)ptr = next_free_teb;
     next_free_teb = ptr;
     server_leave_uninterrupted_section( &virtual_mutex, &sigset );
@@ -3029,7 +3063,7 @@ NTSTATUS virtual_alloc_thread_stack( INITIAL_TEB *stack, SIZE_T reserve_size, SI
     server_enter_uninterrupted_section( &virtual_mutex, &sigset );
 
     if ((status = map_view( &view, NULL, size + extra_size, FALSE,
-                            VPROT_READ | VPROT_WRITE | VPROT_COMMITTED, 0 )) != STATUS_SUCCESS)
+                            VPROT_READ | VPROT_WRITE | VPROT_COMMITTED, 33 )) != STATUS_SUCCESS)
         goto done;
 
 #ifdef VALGRIND_STACK_REGISTER

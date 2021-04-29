@@ -47,6 +47,7 @@ enum video_stream_flags
 {
     EVR_STREAM_PREROLLING = 0x1,
     EVR_STREAM_PREROLLED = 0x2,
+    EVR_STREAM_SAMPLE_NEEDED = 0x4,
 };
 
 struct video_renderer;
@@ -79,6 +80,7 @@ struct video_renderer
     IMediaEventSink IMediaEventSink_iface;
     IMFAttributes IMFAttributes_iface;
     IMFQualityAdvise IMFQualityAdvise_iface;
+    IMFRateSupport IMFRateSupport_iface;
     LONG refcount;
 
     IMFMediaEventQueue *event_queue;
@@ -147,6 +149,11 @@ static struct video_renderer *impl_from_IMFAttributes(IMFAttributes *iface)
 static struct video_renderer *impl_from_IMFQualityAdvise(IMFQualityAdvise *iface)
 {
     return CONTAINING_RECORD(iface, struct video_renderer, IMFQualityAdvise_iface);
+}
+
+static struct video_renderer *impl_from_IMFRateSupport(IMFRateSupport *iface)
+{
+    return CONTAINING_RECORD(iface, struct video_renderer, IMFRateSupport_iface);
 }
 
 static struct video_stream *impl_from_IMFStreamSink(IMFStreamSink *iface)
@@ -591,19 +598,14 @@ static ULONG WINAPI video_stream_get_service_Release(IMFGetService *iface)
     return IMFStreamSink_Release(&stream->IMFStreamSink_iface);
 }
 
-static HRESULT WINAPI video_stream_get_service_GetService(IMFGetService *iface, REFGUID service, REFIID riid, void **obj)
+static HRESULT WINAPI video_stream_get_service(struct video_stream *stream, REFGUID service, REFIID riid, void **obj)
 {
-    struct video_stream *stream = impl_from_stream_IMFGetService(iface);
     HRESULT hr = S_OK;
-
-    TRACE("%p, %s, %s, %p.\n", iface, debugstr_guid(service), debugstr_guid(riid), obj);
 
     if (IsEqualGUID(service, &MR_VIDEO_ACCELERATION_SERVICE))
     {
         if (IsEqualIID(riid, &IID_IMFVideoSampleAllocator))
         {
-            EnterCriticalSection(&stream->cs);
-
             if (!stream->allocator)
             {
                 hr = MFCreateVideoSampleAllocator(&IID_IMFVideoSampleAllocator, (void **)&stream->allocator);
@@ -613,9 +615,11 @@ static HRESULT WINAPI video_stream_get_service_GetService(IMFGetService *iface, 
             if (SUCCEEDED(hr))
                 hr = IMFVideoSampleAllocator_QueryInterface(stream->allocator, riid, obj);
 
-            LeaveCriticalSection(&stream->cs);
-
             return hr;
+        }
+        else if (IsEqualIID(riid, &IID_IDirect3DDeviceManager9) && stream->parent->device_manager)
+        {
+            return IUnknown_QueryInterface(stream->parent->device_manager, riid, obj);
         }
 
         return E_NOINTERFACE;
@@ -624,6 +628,23 @@ static HRESULT WINAPI video_stream_get_service_GetService(IMFGetService *iface, 
     FIXME("Unsupported service %s.\n", debugstr_guid(service));
 
     return E_NOTIMPL;
+}
+
+static HRESULT WINAPI video_stream_get_service_GetService(IMFGetService *iface, REFGUID service, REFIID riid, void **obj)
+{
+    struct video_stream *stream = impl_from_stream_IMFGetService(iface);
+    HRESULT hr;
+
+    TRACE("%p, %s, %s, %p.\n", iface, debugstr_guid(service), debugstr_guid(riid), obj);
+
+    EnterCriticalSection(&stream->cs);
+    if (!stream->parent)
+        hr = MF_E_STREAMSINK_REMOVED;
+    else
+        hr = video_stream_get_service(stream, service, riid, obj);
+    LeaveCriticalSection(&stream->cs);
+
+    return hr;
 }
 
 static const IMFGetServiceVtbl video_stream_get_service_vtbl =
@@ -1071,6 +1092,10 @@ static HRESULT WINAPI video_renderer_sink_QueryInterface(IMFMediaSink *iface, RE
     else if (IsEqualIID(riid, &IID_IMFQualityAdvise))
     {
         *obj = &renderer->IMFQualityAdvise_iface;
+    }
+    else if (IsEqualIID(riid, &IID_IMFRateSupport))
+    {
+        *obj = &renderer->IMFRateSupport_iface;
     }
     else
     {
@@ -1811,13 +1836,19 @@ static ULONG WINAPI video_renderer_clock_sink_Release(IMFClockStateSink *iface)
 static HRESULT WINAPI video_renderer_clock_sink_OnClockStart(IMFClockStateSink *iface, MFTIME systime, LONGLONG offset)
 {
     struct video_renderer *renderer = impl_from_IMFClockStateSink(iface);
+    unsigned int state, request_sample;
     size_t i;
 
     TRACE("%p, %s, %s.\n", iface, debugstr_time(systime), debugstr_time(offset));
 
     EnterCriticalSection(&renderer->cs);
 
-    if (renderer->state == EVR_STATE_STOPPED)
+    state = renderer->state;
+
+    /* Update sink state before sending sample requests, to avoid potentially receiving new sample in stopped state */
+    renderer->state = EVR_STATE_RUNNING;
+
+    if (state == EVR_STATE_STOPPED)
     {
         IMFTransform_ProcessMessage(renderer->mixer, MFT_MESSAGE_NOTIFY_BEGIN_STREAMING, 0);
         IMFVideoPresenter_ProcessMessage(renderer->presenter, MFVP_MESSAGE_BEGINSTREAMING, 0);
@@ -1826,18 +1857,18 @@ static HRESULT WINAPI video_renderer_clock_sink_OnClockStart(IMFClockStateSink *
         {
             struct video_stream *stream = renderer->streams[i];
 
-            IMFMediaEventQueue_QueueEventParamVar(stream->event_queue, MEStreamSinkStarted, &GUID_NULL, S_OK, NULL);
-
             EnterCriticalSection(&stream->cs);
-            if (!(stream->flags & EVR_STREAM_PREROLLED))
+            request_sample = !(stream->flags & EVR_STREAM_PREROLLED) || (stream->flags & EVR_STREAM_SAMPLE_NEEDED);
+            stream->flags |= EVR_STREAM_PREROLLED;
+            stream->flags &= ~EVR_STREAM_SAMPLE_NEEDED;
+            LeaveCriticalSection(&stream->cs);
+
+            IMFMediaEventQueue_QueueEventParamVar(stream->event_queue, MEStreamSinkStarted, &GUID_NULL, S_OK, NULL);
+            if (request_sample)
                 IMFMediaEventQueue_QueueEventParamVar(stream->event_queue, MEStreamSinkRequestSample,
                         &GUID_NULL, S_OK, NULL);
-            stream->flags |= EVR_STREAM_PREROLLED;
-            LeaveCriticalSection(&stream->cs);
         }
     }
-
-    renderer->state = EVR_STATE_RUNNING;
 
     IMFVideoPresenter_OnClockStart(renderer->presenter, systime, offset);
 
@@ -1872,7 +1903,7 @@ static HRESULT WINAPI video_renderer_clock_sink_OnClockStop(IMFClockStateSink *i
             IMFMediaEventQueue_QueueEventParamVar(stream->event_queue, MEStreamSinkStopped, &GUID_NULL, S_OK, NULL);
 
             EnterCriticalSection(&stream->cs);
-            stream->flags &= ~EVR_STREAM_PREROLLED;
+            stream->flags &= ~(EVR_STREAM_PREROLLED | EVR_STREAM_SAMPLE_NEEDED);
             LeaveCriticalSection(&stream->cs);
         }
         renderer->state = EVR_STATE_STOPPED;
@@ -1992,6 +2023,8 @@ static HRESULT WINAPI video_renderer_get_service_GetService(IMFGetService *iface
 
     TRACE("%p, %s, %s, %p.\n", iface, debugstr_guid(service), debugstr_guid(riid), obj);
 
+    EnterCriticalSection(&renderer->cs);
+
     if (IsEqualGUID(service, &MR_VIDEO_MIXER_SERVICE))
     {
         hr = IMFTransform_QueryInterface(renderer->mixer, &IID_IMFGetService, (void **)&gs);
@@ -2000,10 +2033,21 @@ static HRESULT WINAPI video_renderer_get_service_GetService(IMFGetService *iface
     {
         hr = IMFVideoPresenter_QueryInterface(renderer->presenter, &IID_IMFGetService, (void **)&gs);
     }
+    else if (IsEqualGUID(service, &MR_VIDEO_ACCELERATION_SERVICE) && IsEqualIID(riid, &IID_IDirect3DDeviceManager9))
+    {
+        if (renderer->device_manager)
+            hr = IUnknown_QueryInterface(renderer->device_manager, riid, obj);
+    }
+    else if (IsEqualGUID(service, &MF_RATE_CONTROL_SERVICE) && IsEqualIID(riid, &IID_IMFRateSupport))
+    {
+        hr = IMFVideoRenderer_QueryInterface(&renderer->IMFVideoRenderer_iface, riid, obj);
+    }
     else
     {
         FIXME("Unsupported service %s.\n", debugstr_guid(service));
     }
+
+    LeaveCriticalSection(&renderer->cs);
 
     if (gs)
     {
@@ -2161,10 +2205,16 @@ static HRESULT WINAPI video_renderer_event_sink_Notify(IMediaEventSink *iface, L
         idx = param1;
         if (idx >= renderer->stream_count)
             hr = MF_E_INVALIDSTREAMNUMBER;
-        else
+        else if (renderer->state == EVR_STATE_RUNNING)
         {
             hr = IMFMediaEventQueue_QueueEventParamVar(renderer->streams[idx]->event_queue,
                 MEStreamSinkRequestSample, &GUID_NULL, S_OK, NULL);
+        }
+        else
+        {
+            /* Mixer asks for more input right after preroll too, before renderer finished running state transition.
+               Mark such streams here, and issue requests later in OnClockStart(). */
+            renderer->streams[idx]->flags |= EVR_STREAM_SAMPLE_NEEDED;
         }
     }
     else if (event == EC_DISPLAY_CHANGED)
@@ -2606,6 +2656,67 @@ static const IMFQualityAdviseVtbl video_renderer_quality_advise_vtbl =
     video_renderer_quality_advise_DropTime,
 };
 
+static HRESULT WINAPI video_renderer_rate_support_QueryInterface(IMFRateSupport *iface, REFIID riid, void **out)
+{
+    struct video_renderer *renderer = impl_from_IMFRateSupport(iface);
+    return IMFMediaSink_QueryInterface(&renderer->IMFMediaSink_iface, riid, out);
+}
+
+static ULONG WINAPI video_renderer_rate_support_AddRef(IMFRateSupport *iface)
+{
+    struct video_renderer *renderer = impl_from_IMFRateSupport(iface);
+    return IMFMediaSink_AddRef(&renderer->IMFMediaSink_iface);
+}
+
+static ULONG WINAPI video_renderer_rate_support_Release(IMFRateSupport *iface)
+{
+    struct video_renderer *renderer = impl_from_IMFRateSupport(iface);
+    return IMFMediaSink_Release(&renderer->IMFMediaSink_iface);
+}
+
+static HRESULT WINAPI video_renderer_rate_support_GetSlowestRate(IMFRateSupport *iface, MFRATE_DIRECTION direction,
+        BOOL thin, float *rate)
+{
+    struct video_renderer *renderer = impl_from_IMFRateSupport(iface);
+
+    TRACE("%p, %d, %d, %p.\n", iface, direction, thin, rate);
+
+    if (renderer->flags & EVR_SHUT_DOWN)
+        return MF_E_SHUTDOWN;
+
+    *rate = 0.0f;
+
+    return S_OK;
+}
+
+static HRESULT WINAPI video_renderer_rate_support_GetFastestRate(IMFRateSupport *iface, MFRATE_DIRECTION direction,
+        BOOL thin, float *rate)
+{
+    struct video_renderer *renderer = impl_from_IMFRateSupport(iface);
+
+    TRACE("%p, %d, %d, %p.\n", iface, direction, thin, rate);
+
+    return renderer->flags & EVR_SHUT_DOWN ? MF_E_SHUTDOWN : MF_E_INVALIDREQUEST;
+}
+
+static HRESULT WINAPI video_renderer_rate_support_IsRateSupported(IMFRateSupport *iface, BOOL thin, float rate,
+        float *nearest_supported_rate)
+{
+    FIXME("%p, %d, %f, %p.\n", iface, thin, rate, nearest_supported_rate);
+
+    return E_NOTIMPL;
+}
+
+static const IMFRateSupportVtbl video_renderer_rate_support_vtbl =
+{
+    video_renderer_rate_support_QueryInterface,
+    video_renderer_rate_support_AddRef,
+    video_renderer_rate_support_Release,
+    video_renderer_rate_support_GetSlowestRate,
+    video_renderer_rate_support_GetFastestRate,
+    video_renderer_rate_support_IsRateSupported,
+};
+
 static HRESULT evr_create_object(IMFAttributes *attributes, void *user_context, IUnknown **obj)
 {
     struct video_renderer *object;
@@ -2628,6 +2739,7 @@ static HRESULT evr_create_object(IMFAttributes *attributes, void *user_context, 
     object->IMediaEventSink_iface.lpVtbl = &media_event_sink_vtbl;
     object->IMFAttributes_iface.lpVtbl = &video_renderer_attributes_vtbl;
     object->IMFQualityAdvise_iface.lpVtbl = &video_renderer_quality_advise_vtbl;
+    object->IMFRateSupport_iface.lpVtbl = &video_renderer_rate_support_vtbl;
     object->refcount = 1;
     InitializeCriticalSection(&object->cs);
 

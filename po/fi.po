@@ -3852,15 +3852,15 @@ msgstr "Ehdollinen kääntäminen on pois käytöstä"
 msgid "Expected '@'"
 msgstr "Odotettiin merkkiä '@'"
 
-#: dlls/jscript/jscript.rc:79
+#: dlls/jscript/jscript.rc:80
 msgid "Microsoft JScript compilation error"
 msgstr "Microsoft JScript -käännösvirhe"
 
-#: dlls/jscript/jscript.rc:80
+#: dlls/jscript/jscript.rc:81
 msgid "Microsoft JScript runtime error"
 msgstr "Microsoft JScript -suoritusvirhe"
 
-#: dlls/jscript/jscript.rc:81 dlls/vbscript/vbscript.rc:64
+#: dlls/jscript/jscript.rc:82 dlls/vbscript/vbscript.rc:64
 msgid "Unknown runtime error"
 msgstr "Tuntematon ajonaikainen virhe"
 
@@ -3964,6 +3964,12 @@ msgid "Cannot modify non-writable property '|'"
 msgstr "Kirjoitussuojattua ominaisuutta '|' ei voi muokata"
 
 #: dlls/jscript/jscript.rc:77
+#, fuzzy
+#| msgid "'[object]' is not a date object"
+msgid "'this' is not a Map object"
+msgstr "'[objekti]' ei ole päivämääräobjekti"
+
+#: dlls/jscript/jscript.rc:78
 msgid "Property cannot have both accessors and a value"
 msgstr "Ominaisuudella ei voi olla sekä hakufunktiota että arvoa"
 
@@ -14647,7 +14653,9 @@ msgstr ""
 "\n"
 
 #: programs/reg/reg.rc:172
-msgid "reg: Invalid system key [%1]\n"
+#, fuzzy
+#| msgid "reg: Invalid system key [%1]\n"
+msgid "reg: Invalid system key\n"
 msgstr "reg: Järjestelmäavain [%1] ei kelpaa\n"
 
 #: programs/reg/reg.rc:173

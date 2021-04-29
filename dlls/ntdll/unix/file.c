@@ -3290,6 +3290,7 @@ static NTSTATUS nt_to_unix_file_name_no_root( const UNICODE_STRING *nameW, char 
 
     if (prefix_len == name_len)  /* no subdir, plain DOS device */
     {
+        unix_name[pos + ret] = 0;
         *unix_name_ret = unix_name;
         return get_dos_device( unix_name_ret, pos );
     }
@@ -3603,7 +3604,7 @@ NTSTATUS get_full_path( const WCHAR *name, const WCHAR *curdir, WCHAR **path )
     }
     else if (IS_SEPARATOR(name[0]))  /* absolute path */
     {
-        root[4] = curdir[0];
+        root[4] = curdir[4];
         prefix = root;
     }
     else if (name[0] && name[1] == ':')  /* drive letter */

@@ -51,6 +51,18 @@ WINE_DECLARE_DEBUG_CHANNEL(imports);
 #define DEFAULT_SECURITY_COOKIE_32  0xbb40e64e
 #define DEFAULT_SECURITY_COOKIE_16  (DEFAULT_SECURITY_COOKIE_32 >> 16)
 
+#ifdef __i386__
+static const WCHAR pe_dir[] = L"\\i386-windows";
+#elif defined __x86_64__
+static const WCHAR pe_dir[] = L"\\x86_64-windows";
+#elif defined __arm__
+static const WCHAR pe_dir[] = L"\\arm-windows";
+#elif defined __aarch64__
+static const WCHAR pe_dir[] = L"\\aarch64-windows";
+#else
+static const WCHAR pe_dir[] = L"";
+#endif
+
 /* we don't want to include winuser.h */
 #define RT_MANIFEST                         ((ULONG_PTR)24)
 #define ISOLATIONAWARE_MANIFEST_RESOURCE_ID ((ULONG_PTR)2)
@@ -2451,7 +2463,8 @@ static NTSTATUS build_dlldata_path( LPCWSTR libname, ACTCTX_SECTION_KEYED_DATA *
         memcpy( p, base + dlldata->paths[i].offset, dlldata->paths[i].len );
         p += dlldata->paths[i].len / sizeof(WCHAR);
     }
-    wcscpy( p, libname );
+    if (p == buffer || p[-1] == '\\') wcscpy( p, libname );
+    else *p = 0;
 
     if (dlldata->flags & DLL_REDIRECT_PATH_EXPAND)
     {
@@ -2592,7 +2605,7 @@ static NTSTATUS get_env_var( const WCHAR *name, SIZE_T extra, UNICODE_STRING *re
 
     for (;;)
     {
-        ret->Buffer = RtlAllocateHeap( GetProcessHeap(), 0, size );
+        ret->Buffer = RtlAllocateHeap( GetProcessHeap(), 0, size * sizeof(WCHAR) );
         status = RtlQueryEnvironmentVariable( NULL, name, wcslen(name),
                                               ret->Buffer, size - extra - 1, &len );
         if (!status)
@@ -2603,7 +2616,11 @@ static NTSTATUS get_env_var( const WCHAR *name, SIZE_T extra, UNICODE_STRING *re
             return status;
         }
         RtlFreeHeap( GetProcessHeap(), 0, ret->Buffer );
-        if (status != STATUS_BUFFER_TOO_SMALL) return status;
+        if (status != STATUS_BUFFER_TOO_SMALL)
+        {
+            ret->Buffer = NULL;
+            return status;
+        }
         size = len + 1 + extra;
     }
 }
@@ -2639,18 +2656,19 @@ static NTSTATUS find_builtin_without_file( const WCHAR *name, UNICODE_STRING *ne
         if (status != STATUS_DLL_NOT_FOUND) goto done;
         RtlFreeUnicodeString( new_name );
     }
+
     for (i = 0; ; i++)
     {
         swprintf( dllpath, ARRAY_SIZE(dllpath), L"WINEDLLDIR%u", i );
-        if (get_env_var( dllpath, 20 + wcslen(name), new_name )) break;
+        if (get_env_var( dllpath, wcslen(pe_dir) + wcslen(name) + 1, new_name )) break;
         len = new_name->Length;
+        RtlAppendUnicodeToString( new_name, pe_dir );
         RtlAppendUnicodeToString( new_name, L"\\" );
         RtlAppendUnicodeToString( new_name, name );
         status = open_dll_file( new_name, pwm, mapping, image_info, id );
-        if (status == STATUS_IMAGE_MACHINE_TYPE_MISMATCH) found_image = TRUE;
-        else if (status != STATUS_DLL_NOT_FOUND) goto done;
+        if (status != STATUS_DLL_NOT_FOUND) goto done;
         new_name->Length = len;
-        RtlAppendUnicodeToString( new_name, L"\\fakedlls\\" );
+        RtlAppendUnicodeToString( new_name, L"\\" );
         RtlAppendUnicodeToString( new_name, name );
         status = open_dll_file( new_name, pwm, mapping, image_info, id );
         if (status == STATUS_IMAGE_MACHINE_TYPE_MISMATCH) found_image = TRUE;

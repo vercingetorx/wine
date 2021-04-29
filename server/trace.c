@@ -147,21 +147,6 @@ static void dump_ioctl_code( const char *prefix, const ioctl_code_t *code )
     }
 }
 
-static void dump_client_cpu( const char *prefix, const client_cpu_t *code )
-{
-    switch (*code)
-    {
-#define CASE(c) case CPU_##c: fprintf( stderr, "%s%s", prefix, #c ); break
-        CASE(x86);
-        CASE(x86_64);
-        CASE(POWERPC);
-        CASE(ARM);
-        CASE(ARM64);
-        default: fprintf( stderr, "%s%u", prefix, *code ); break;
-#undef CASE
-    }
-}
-
 static void dump_apc_call( const char *prefix, const apc_call_t *call )
 {
     fprintf( stderr, "%s{", prefix );
@@ -486,6 +471,21 @@ static void dump_varargs_uints64( const char *prefix, data_size_t size )
     remove_data( size );
 }
 
+static void dump_varargs_ushorts( const char *prefix, data_size_t size )
+{
+    const unsigned short *data = cur_data;
+    data_size_t len = size / sizeof(*data);
+
+    fprintf( stderr, "%s{", prefix );
+    while (len > 0)
+    {
+        fprintf( stderr, "%04x", *data++ );
+        if (--len) fputc( ',', stderr );
+    }
+    fputc( '}', stderr );
+    remove_data( size );
+}
+
 static void dump_varargs_apc_result( const char *prefix, data_size_t size )
 {
     const apc_result_t *result = cur_data;
@@ -602,11 +602,10 @@ static void dump_varargs_context( const char *prefix, data_size_t size )
     memset( &ctx, 0, sizeof(ctx) );
     memcpy( &ctx, context, size );
 
-    fprintf( stderr,"%s{", prefix );
-    dump_client_cpu( "cpu=", &ctx.cpu );
-    switch (ctx.cpu)
+    switch (ctx.machine)
     {
-    case CPU_x86:
+    case IMAGE_FILE_MACHINE_I386:
+        fprintf( stderr, "%s{machine=i386", prefix );
         if (ctx.flags & SERVER_CTX_CONTROL)
             fprintf( stderr, ",eip=%08x,esp=%08x,ebp=%08x,eflags=%08x,cs=%04x,ss=%04x",
                      ctx.ctl.i386_regs.eip, ctx.ctl.i386_regs.esp, ctx.ctl.i386_regs.ebp,
@@ -644,7 +643,8 @@ static void dump_varargs_context( const char *prefix, data_size_t size )
             dump_uints( ",ymm_high=", (const unsigned int *)ctx.ymm.ymm_high_regs.ymm_high,
                         sizeof(ctx.ymm.ymm_high_regs) / sizeof(int) );
         break;
-    case CPU_x86_64:
+    case IMAGE_FILE_MACHINE_AMD64:
+        fprintf( stderr, "%s{machine=x86_64", prefix );
         if (ctx.flags & SERVER_CTX_CONTROL)
         {
             dump_uint64( ",rip=", &ctx.ctl.x86_64_regs.rip );
@@ -696,27 +696,8 @@ static void dump_varargs_context( const char *prefix, data_size_t size )
             dump_uints( ",ymm_high=", (const unsigned int *)ctx.ymm.ymm_high_regs.ymm_high,
                         sizeof(ctx.ymm.ymm_high_regs) / sizeof(int) );
         break;
-    case CPU_POWERPC:
-        if (ctx.flags & SERVER_CTX_CONTROL)
-            fprintf( stderr, ",iar=%08x,msr=%08x,ctr=%08x,lr=%08x,dar=%08x,dsisr=%08x,trap=%08x",
-                     ctx.ctl.powerpc_regs.iar, ctx.ctl.powerpc_regs.msr, ctx.ctl.powerpc_regs.ctr,
-                     ctx.ctl.powerpc_regs.lr, ctx.ctl.powerpc_regs.dar, ctx.ctl.powerpc_regs.dsisr,
-                     ctx.ctl.powerpc_regs.trap );
-        if (ctx.flags & SERVER_CTX_INTEGER)
-        {
-            for (i = 0; i < 32; i++) fprintf( stderr, ",gpr%u=%08x", i, ctx.integer.powerpc_regs.gpr[i] );
-            fprintf( stderr, ",cr=%08x,xer=%08x",
-                     ctx.integer.powerpc_regs.cr, ctx.integer.powerpc_regs.xer );
-        }
-        if (ctx.flags & SERVER_CTX_DEBUG_REGISTERS)
-            for (i = 0; i < 8; i++) fprintf( stderr, ",dr%u=%08x", i, ctx.debug.powerpc_regs.dr[i] );
-        if (ctx.flags & SERVER_CTX_FLOATING_POINT)
-        {
-            for (i = 0; i < 32; i++) fprintf( stderr, ",fpr%u=%g", i, ctx.fp.powerpc_regs.fpr[i] );
-            fprintf( stderr, ",fpscr=%g", ctx.fp.powerpc_regs.fpscr );
-        }
-        break;
-    case CPU_ARM:
+    case IMAGE_FILE_MACHINE_ARMNT:
+        fprintf( stderr, "%s{machine=arm", prefix );
         if (ctx.flags & SERVER_CTX_CONTROL)
             fprintf( stderr, ",sp=%08x,lr=%08x,pc=%08x,cpsr=%08x",
                      ctx.ctl.arm_regs.sp, ctx.ctl.arm_regs.lr,
@@ -741,7 +722,8 @@ static void dump_varargs_context( const char *prefix, data_size_t size )
             fprintf( stderr, ",fpscr=%08x", ctx.fp.arm_regs.fpscr );
         }
         break;
-    case CPU_ARM64:
+    case IMAGE_FILE_MACHINE_ARM64:
+        fprintf( stderr, "%s{machine=arm64", prefix );
         if (ctx.flags & SERVER_CTX_CONTROL)
         {
             dump_uint64( ",sp=", &ctx.ctl.arm64_regs.sp );
@@ -779,6 +761,9 @@ static void dump_varargs_context( const char *prefix, data_size_t size )
             }
             fprintf( stderr, ",fpcr=%08x,fpsr=%08x", ctx.fp.arm64_regs.fpcr, ctx.fp.arm64_regs.fpsr );
         }
+        break;
+    default:
+        fprintf( stderr, "%s{machine=%04x", prefix, ctx.machine );
         break;
     }
     fputc( '}', stderr );
@@ -1371,7 +1356,7 @@ static void dump_new_process_request( const struct new_process_request *req )
     fprintf( stderr, ", flags=%08x", req->flags );
     fprintf( stderr, ", socket_fd=%d", req->socket_fd );
     fprintf( stderr, ", access=%08x", req->access );
-    dump_client_cpu( ", cpu=", &req->cpu );
+    fprintf( stderr, ", machine=%04x", req->machine );
     fprintf( stderr, ", info_size=%u", req->info_size );
     fprintf( stderr, ", handles_size=%u", req->handles_size );
     dump_varargs_object_attributes( ", objattr=", cur_size );
@@ -1444,7 +1429,6 @@ static void dump_init_first_thread_request( const struct init_first_thread_reque
     dump_uint64( ", ldt_copy=", &req->ldt_copy );
     fprintf( stderr, ", reply_fd=%d", req->reply_fd );
     fprintf( stderr, ", wait_fd=%d", req->wait_fd );
-    dump_client_cpu( ", cpu=", &req->cpu );
 }
 
 static void dump_init_first_thread_reply( const struct init_first_thread_reply *req )
@@ -1453,7 +1437,7 @@ static void dump_init_first_thread_reply( const struct init_first_thread_reply *
     fprintf( stderr, ", tid=%04x", req->tid );
     dump_timeout( ", server_start=", &req->server_start );
     fprintf( stderr, ", info_size=%u", req->info_size );
-    fprintf( stderr, ", all_cpus=%08x", req->all_cpus );
+    dump_varargs_ushorts( ", machines=", cur_size );
 }
 
 static void dump_init_thread_request( const struct init_thread_request *req )
@@ -1509,7 +1493,7 @@ static void dump_get_process_info_reply( const struct get_process_info_reply *re
     dump_timeout( ", end_time=", &req->end_time );
     fprintf( stderr, ", exit_code=%d", req->exit_code );
     fprintf( stderr, ", priority=%d", req->priority );
-    dump_client_cpu( ", cpu=", &req->cpu );
+    fprintf( stderr, ", machine=%04x", req->machine );
     dump_varargs_pe_image_info( ", image=", cur_size );
 }
 

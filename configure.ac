@@ -235,8 +235,16 @@ if test "x$enable_win64" = "xyes"
 then
     test -z "$with_wine64" || AC_MSG_ERROR([--enable-win64 and --with-wine64 are mutually exclusive.
 --enable-win64 should be used in the 64-bit build tree, --with-wine64 in the 32-bit Wow64 build tree.])
-    test "x$libdir" != "x\${exec_prefix}/lib" || libdir="\${exec_prefix}/lib64"
 fi
+
+dnl Normalize CPU architecture
+case $host_cpu in
+  *i[[3456789]]86*) AC_SUBST(ARCH,"i386") ;;
+  *x86_64*)         AC_SUBST(ARCH,"x86_64") ;;
+  *aarch64*)        AC_SUBST(ARCH,"aarch64") ;;
+  *arm*)            AC_SUBST(ARCH,"arm") ;;
+  *)                AC_SUBST(ARCH,"") ;;
+esac
 
 AC_CACHE_CHECK([for the directory containing the Wine tools], wine_cv_toolsdir,
   [wine_cv_toolsdir="$with_wine_tools"
@@ -892,10 +900,6 @@ case $host_os in
     WINE_TRY_CFLAGS([-fPIC -Wl,--export-dynamic],
                     [WINELOADER_LDFLAGS="-Wl,--export-dynamic"])
     WINEPRELOADER_LDFLAGS="-static -nostartfiles -nodefaultlibs -Wl,-Ttext=0x7d400000"
-
-    AC_SUBST(LIBWINE_SHAREDLIB,"libwine.so")
-    AC_SUBST(LIBWINE_LDFLAGS,["-shared -Wl,-soname,libwine.so"])
-    TOP_INSTALL_LIB="$TOP_INSTALL_LIB libs/wine/libwine.so"
 
     WINE_CHECK_SONAME(EGL,eglGetProcAddress)
     WINE_CHECK_SONAME(GLESv2,glFlush)
@@ -1915,6 +1919,10 @@ then
     enable_x3daudio1_5=${enable_x3daudio1_5:-no}
     enable_x3daudio1_6=${enable_x3daudio1_6:-no}
     enable_x3daudio1_7=${enable_x3daudio1_7:-no}
+    enable_xactengine2_0=${enable_xactengine2_0:-no}
+    enable_xactengine2_4=${enable_xactengine2_4:-no}
+    enable_xactengine2_7=${enable_xactengine2_7:-no}
+    enable_xactengine2_9=${enable_xactengine2_9:-no}
     enable_xactengine3_0=${enable_xactengine3_0:-no}
     enable_xactengine3_1=${enable_xactengine3_1:-no}
     enable_xactengine3_2=${enable_xactengine3_2:-no}
@@ -2666,7 +2674,6 @@ AC_CHECK_FUNCS(\
 	expm1f \
 	fma \
 	fmaf \
-	j0 \
 	j1 \
 	jn \
 	lgamma \
@@ -2699,7 +2706,6 @@ AC_CHECK_FUNCS(\
 	tgammaf \
 	trunc \
 	truncf \
-	y0 \
 	y1 \
 	yn
 )
@@ -3891,6 +3897,10 @@ WINE_CONFIG_MAKEFILE(dlls/x3daudio1_4)
 WINE_CONFIG_MAKEFILE(dlls/x3daudio1_5)
 WINE_CONFIG_MAKEFILE(dlls/x3daudio1_6)
 WINE_CONFIG_MAKEFILE(dlls/x3daudio1_7)
+WINE_CONFIG_MAKEFILE(dlls/xactengine2_0)
+WINE_CONFIG_MAKEFILE(dlls/xactengine2_4)
+WINE_CONFIG_MAKEFILE(dlls/xactengine2_7)
+WINE_CONFIG_MAKEFILE(dlls/xactengine2_9)
 WINE_CONFIG_MAKEFILE(dlls/xactengine3_0)
 WINE_CONFIG_MAKEFILE(dlls/xactengine3_1)
 WINE_CONFIG_MAKEFILE(dlls/xactengine3_2)

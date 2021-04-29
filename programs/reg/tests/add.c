@@ -311,12 +311,12 @@ static void test_key_formats(void)
 
     /* Test validity of trailing backslash after system key */
     run_reg_exe("reg add HKCU\\ /v Value1 /t REG_SZ /d foo /f", &r);
-    todo_wine ok(r == REG_EXIT_FAILURE, "got exit code %d, expected 1\n", r);
-    todo_wine verify_reg_nonexist(HKEY_CURRENT_USER, "Value1");
+    ok(r == REG_EXIT_FAILURE, "got exit code %d, expected 1\n", r);
+    verify_reg_nonexist(HKEY_CURRENT_USER, "Value1");
 
     run_reg_exe("reg add HKEY_CURRENT_USER\\ /v Value2 /t REG_SZ /d bar /f", &r);
-    todo_wine ok(r == REG_EXIT_FAILURE, "got exit code %d, expected 1\n", r);
-    todo_wine verify_reg_nonexist(HKEY_CURRENT_USER, "Value2");
+    ok(r == REG_EXIT_FAILURE, "got exit code %d, expected 1\n", r);
+    verify_reg_nonexist(HKEY_CURRENT_USER, "Value2");
 }
 
 static void test_add(void)
@@ -383,6 +383,15 @@ static void test_add(void)
     verify_reg(hkey, "Test1", REG_SZ, "Value1", 7, 0);
     verify_reg(hkey, "Test2", REG_DWORD, &dword, sizeof(dword), 0);
     todo_wine verify_reg(hkey, NULL, REG_SZ, "", 1, 0);
+
+    run_reg_exe("reg add HKCU\\" KEY_BASE " /t REG_NONE /d Test /f", &r);
+    ok(r == REG_EXIT_SUCCESS, "got exit code %d, expected 0\n", r);
+
+    verify_key(HKEY_CURRENT_USER, KEY_BASE);
+    verify_key(hkey, "Subkey");
+    verify_reg(hkey, "Test1", REG_SZ, "Value1", 7, 0);
+    verify_reg(hkey, "Test2", REG_DWORD, &dword, sizeof(dword), 0);
+    verify_reg(hkey, NULL, REG_NONE, "T\0e\0s\0t\0\0", 10, 0);
 
     close_key(hkey);
     delete_tree(HKEY_CURRENT_USER, KEY_BASE);
