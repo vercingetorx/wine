@@ -5067,6 +5067,23 @@ static void test_scissor(void)
     color = get_texture_color(test_context.backbuffer, 320, 420);
     ok(compare_color(color, 0xff0000ff, 1), "Got unexpected color 0x%08x.\n", color);
 
+    set_viewport(device, -1.0f, 0.0f, 641, 480, 0.0f, 1.0f);
+    SetRect(&scissor_rect, -1, 0, 640, 480);
+    ID3D10Device_RSSetScissorRects(device, 1, &scissor_rect);
+    ID3D10Device_ClearRenderTargetView(device, test_context.backbuffer_rtv, red);
+    check_texture_color(test_context.backbuffer, 0xff0000ff, 1);
+    draw_color_quad(&test_context, &green);
+    color = get_texture_color(test_context.backbuffer, 320, 60);
+    ok(compare_color(color, 0xff00ff00, 1), "Got unexpected color 0x%08x.\n", color);
+    color = get_texture_color(test_context.backbuffer, 80, 240);
+    ok(compare_color(color, 0xff00ff00, 1), "Got unexpected color 0x%08x.\n", color);
+    color = get_texture_color(test_context.backbuffer, 320, 240);
+    ok(compare_color(color, 0xff00ff00, 1), "Got unexpected color 0x%08x.\n", color);
+    color = get_texture_color(test_context.backbuffer, 560, 240);
+    ok(compare_color(color, 0xff00ff00, 1), "Got unexpected color 0x%08x.\n", color);
+    color = get_texture_color(test_context.backbuffer, 320, 420);
+    ok(compare_color(color, 0xff00ff00, 1), "Got unexpected color 0x%08x.\n", color);
+
     ID3D10RasterizerState_Release(rs);
     release_test_context(&test_context);
 }
@@ -16095,6 +16112,8 @@ static void test_format_compatibility(void)
         DXGI_FORMAT dst_format;
         size_t texel_size;
         BOOL success;
+        BOOL src_ds;
+        BOOL dst_ds;
     }
     test_data[] =
     {
@@ -16123,6 +16142,10 @@ static void test_format_compatibility(void)
         {DXGI_FORMAT_R32G32_FLOAT,        DXGI_FORMAT_R32G32_UINT,         8, TRUE},
         {DXGI_FORMAT_R32G32_UINT,         DXGI_FORMAT_R32G32_SINT,         8, TRUE},
         {DXGI_FORMAT_R32G32_SINT,         DXGI_FORMAT_R32G32_TYPELESS,     8, TRUE},
+        {DXGI_FORMAT_D16_UNORM,           DXGI_FORMAT_R16_UNORM,           2, TRUE,  TRUE},
+        {DXGI_FORMAT_R16_UNORM,           DXGI_FORMAT_D16_UNORM,           2, FALSE, FALSE, TRUE},
+        {DXGI_FORMAT_R16_TYPELESS,        DXGI_FORMAT_R16_TYPELESS,        2, TRUE,  TRUE},
+        {DXGI_FORMAT_R16_TYPELESS,        DXGI_FORMAT_R16_TYPELESS,        2, FALSE, FALSE, TRUE},
     };
     static const DWORD initial_data[16] = {0};
     static const DWORD bitmap_data[] =
@@ -16144,7 +16167,6 @@ static void test_format_compatibility(void)
     texture_desc.ArraySize = 1;
     texture_desc.SampleDesc.Count = 1;
     texture_desc.SampleDesc.Quality = 0;
-    texture_desc.BindFlags = D3D10_BIND_SHADER_RESOURCE;
     texture_desc.CPUAccessFlags = 0;
     texture_desc.MiscFlags = 0;
 
@@ -16155,7 +16177,8 @@ static void test_format_compatibility(void)
 
         texture_desc.Width = sizeof(bitmap_data) / (texture_desc.Height * test_data[i].texel_size);
         texture_desc.Format = test_data[i].src_format;
-        texture_desc.Usage = D3D10_USAGE_IMMUTABLE;
+        texture_desc.Usage = test_data[i].src_ds ? D3D10_USAGE_DEFAULT : D3D10_USAGE_IMMUTABLE;
+        texture_desc.BindFlags = test_data[i].src_ds ? D3D10_BIND_DEPTH_STENCIL : D3D10_BIND_SHADER_RESOURCE;
 
         resource_data.pSysMem = bitmap_data;
         resource_data.SysMemPitch = texture_desc.Width * test_data[i].texel_size;
@@ -16166,6 +16189,7 @@ static void test_format_compatibility(void)
 
         texture_desc.Format = test_data[i].dst_format;
         texture_desc.Usage = D3D10_USAGE_DEFAULT;
+        texture_desc.BindFlags = test_data[i].dst_ds ? D3D10_BIND_DEPTH_STENCIL : D3D10_BIND_SHADER_RESOURCE;
 
         resource_data.pSysMem = initial_data;
 
@@ -16184,15 +16208,18 @@ static void test_format_compatibility(void)
 
         texel_dwords = test_data[i].texel_size / sizeof(DWORD);
         get_texture_readback(dst_texture, 0, &rb);
-        for (j = 0; j < ARRAY_SIZE(bitmap_data); ++j)
+        /* While partial depth/stencil <-> colour copies are unsupported in
+         * d3d11, they're just broken in d3d10. */
+        for (j = 0; j < ARRAY_SIZE(bitmap_data) && !test_data[i].src_ds; ++j)
         {
             x = j % 4;
             y = j / 4;
             colour = get_readback_color(&rb, x, y);
             expected = test_data[i].success && x >= texel_dwords && y
                     ? bitmap_data[j - (4 + texel_dwords)] : initial_data[j];
-            ok(colour == expected, "Test %u: Got unexpected colour 0x%08x at (%u, %u), expected 0x%08x.\n",
-                    i, colour, x, y, expected);
+            todo_wine_if(test_data[i].dst_ds && colour)
+                ok(colour == expected, "Test %u: Got unexpected colour 0x%08x at (%u, %u), expected 0x%08x.\n",
+                        i, colour, x, y, expected);
         }
         release_resource_readback(&rb);
 
@@ -16205,8 +16232,9 @@ static void test_format_compatibility(void)
             y = j / 4;
             colour = get_readback_color(&rb, x, y);
             expected = test_data[i].success ? bitmap_data[j] : initial_data[j];
-            ok(colour == expected, "Test %u: Got unexpected colour 0x%08x at (%u, %u), expected 0x%08x.\n",
-                    i, colour, x, y, expected);
+            todo_wine_if(test_data[i].dst_ds)
+                ok(colour == expected, "Test %u: Got unexpected colour 0x%08x at (%u, %u), expected 0x%08x.\n",
+                        i, colour, x, y, expected);
         }
         release_resource_readback(&rb);
 

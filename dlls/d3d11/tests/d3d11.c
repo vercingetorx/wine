@@ -6775,6 +6775,7 @@ static void test_device_context_state(void)
         0x00000008, 0x00000000, 0x00000008, 0x58454853, 0x00000020, 0x00050050, 0x00000008, 0x0100086a,
         0x0400009b, 0x00000001, 0x00000001, 0x00000001, 0x0100003e,
     };
+    static const struct vec4 constant = {1.257f, 1.885f, 2.513f, 3.770f};
 
     ID3DDeviceContextState *context_state, *previous_context_state, *tmp_context_state, *context_state2;
     UINT ib_offset, vb_offset, vb_stride, so_offset, offset, stride, sample_mask, stencil_ref, count;
@@ -6814,7 +6815,6 @@ static void test_device_context_state(void)
     ID3D11Texture2D *texture;
     enum DXGI_FORMAT format;
     float blend_factor[4];
-    struct vec4 constant;
     DWORD data_size;
     BOOL pred_value;
     ULONG refcount;
@@ -11549,6 +11549,23 @@ static void test_scissor(void)
     ok(compare_color(color, 0xff0000ff, 1), "Got unexpected color 0x%08x.\n", color);
     color = get_texture_color(test_context.backbuffer, 320, 420);
     ok(compare_color(color, 0xff0000ff, 1), "Got unexpected color 0x%08x.\n", color);
+
+    set_viewport(immediate_context, -1.0f, 0.0f, 641, 480, 0.0f, 1.0f);
+    SetRect(&scissor_rect, -1, 0, 640, 480);
+    ID3D11DeviceContext_RSSetScissorRects(immediate_context, 1, &scissor_rect);
+    ID3D11DeviceContext_ClearRenderTargetView(immediate_context, test_context.backbuffer_rtv, red);
+    check_texture_color(test_context.backbuffer, 0xff0000ff, 1);
+    draw_color_quad(&test_context, &green);
+    color = get_texture_color(test_context.backbuffer, 320, 60);
+    ok(compare_color(color, 0xff00ff00, 1), "Got unexpected color 0x%08x.\n", color);
+    color = get_texture_color(test_context.backbuffer, 80, 240);
+    ok(compare_color(color, 0xff00ff00, 1), "Got unexpected color 0x%08x.\n", color);
+    color = get_texture_color(test_context.backbuffer, 320, 240);
+    ok(compare_color(color, 0xff00ff00, 1), "Got unexpected color 0x%08x.\n", color);
+    color = get_texture_color(test_context.backbuffer, 560, 240);
+    ok(compare_color(color, 0xff00ff00, 1), "Got unexpected color 0x%08x.\n", color);
+    color = get_texture_color(test_context.backbuffer, 320, 420);
+    ok(compare_color(color, 0xff00ff00, 1), "Got unexpected color 0x%08x.\n", color);
 
     ID3D11RasterizerState_Release(rs);
     release_test_context(&test_context);
@@ -28167,6 +28184,8 @@ static void test_format_compatibility(void)
         DXGI_FORMAT dst_format;
         size_t texel_size;
         BOOL success;
+        BOOL src_ds;
+        BOOL dst_ds;
     }
     test_data[] =
     {
@@ -28196,6 +28215,10 @@ static void test_format_compatibility(void)
         {DXGI_FORMAT_R32G32_FLOAT,        DXGI_FORMAT_R32G32_UINT,         8, TRUE},
         {DXGI_FORMAT_R32G32_UINT,         DXGI_FORMAT_R32G32_SINT,         8, TRUE},
         {DXGI_FORMAT_R32G32_SINT,         DXGI_FORMAT_R32G32_TYPELESS,     8, TRUE},
+        {DXGI_FORMAT_D16_UNORM,           DXGI_FORMAT_R16_UNORM,           2, TRUE,  TRUE},
+        {DXGI_FORMAT_R16_UNORM,           DXGI_FORMAT_D16_UNORM,           2, TRUE,  FALSE, TRUE},
+        {DXGI_FORMAT_R16_TYPELESS,        DXGI_FORMAT_R16_TYPELESS,        2, TRUE,  TRUE},
+        {DXGI_FORMAT_R16_TYPELESS,        DXGI_FORMAT_R16_TYPELESS,        2, TRUE,  FALSE, TRUE},
     };
     static const DWORD initial_data[16] = {0};
     static const DWORD bitmap_data[] =
@@ -28218,7 +28241,6 @@ static void test_format_compatibility(void)
     texture_desc.ArraySize = 1;
     texture_desc.SampleDesc.Count = 1;
     texture_desc.SampleDesc.Quality = 0;
-    texture_desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
     texture_desc.CPUAccessFlags = 0;
     texture_desc.MiscFlags = 0;
 
@@ -28230,7 +28252,8 @@ static void test_format_compatibility(void)
 
         texture_desc.Width = sizeof(bitmap_data) / (texture_desc.Height * test_data[i].texel_size);
         texture_desc.Format = test_data[i].src_format;
-        texture_desc.Usage = D3D11_USAGE_IMMUTABLE;
+        texture_desc.Usage = test_data[i].src_ds ? D3D11_USAGE_DEFAULT : D3D11_USAGE_IMMUTABLE;
+        texture_desc.BindFlags = test_data[i].src_ds ? D3D11_BIND_DEPTH_STENCIL : D3D11_BIND_SHADER_RESOURCE;
 
         resource_data.pSysMem = bitmap_data;
         resource_data.SysMemPitch = texture_desc.Width * test_data[i].texel_size;
@@ -28241,6 +28264,7 @@ static void test_format_compatibility(void)
 
         texture_desc.Format = test_data[i].dst_format;
         texture_desc.Usage = D3D11_USAGE_DEFAULT;
+        texture_desc.BindFlags = test_data[i].dst_ds ? D3D11_BIND_DEPTH_STENCIL : D3D11_BIND_SHADER_RESOURCE;
 
         resource_data.pSysMem = initial_data;
 
@@ -28265,10 +28289,11 @@ static void test_format_compatibility(void)
             x = j % 4;
             y = j / 4;
             colour = get_readback_color(&rb, x, y, 0);
-            expected = test_data[i].success && x >= texel_dwords && y
-                    ? bitmap_data[j - (4 + texel_dwords)] : initial_data[j];
-            ok(colour == expected, "Test %u: Got unexpected colour 0x%08x at (%u, %u), expected 0x%08x.\n",
-                    i, colour, x, y, expected);
+            expected = test_data[i].success && !test_data[i].src_ds && !test_data[i].dst_ds
+                    && x >= texel_dwords && y ? bitmap_data[j - (4 + texel_dwords)] : initial_data[j];
+            todo_wine_if((test_data[i].src_ds || test_data[i].dst_ds) && colour)
+                ok(colour == expected, "Test %u: Got unexpected colour 0x%08x at (%u, %u), expected 0x%08x.\n",
+                        i, colour, x, y, expected);
         }
         release_resource_readback(&rb);
 
@@ -32209,8 +32234,12 @@ static void test_deferred_context_state(void)
 {
     ID3D11Buffer *green_buffer, *blue_buffer, *ret_buffer;
     ID3D11DeviceContext *immediate, *deferred;
+    ID3D11ShaderResourceView *srv, *ret_srv;
     struct d3d11_test_context test_context;
+    ID3D11RenderTargetView *rtv, *ret_rtv;
+    D3D11_TEXTURE2D_DESC texture_desc;
     ID3D11CommandList *list1, *list2;
+    ID3D11Texture2D *texture;
     ID3D11Device *device;
     HRESULT hr;
 
@@ -32270,6 +32299,32 @@ static void test_deferred_context_state(void)
     ID3D11DeviceContext_PSGetConstantBuffers(immediate, 0, 1, &ret_buffer);
     ok(!ret_buffer, "Got unexpected buffer %p.\n", ret_buffer);
 
+    /* Test unbinding an SRV when using the same resource as RTV. */
+
+    ID3D11Texture2D_GetDesc(test_context.backbuffer, &texture_desc);
+    texture_desc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
+    hr = ID3D11Device_CreateTexture2D(device, &texture_desc, NULL, &texture);
+    ok(hr == S_OK, "Failed to create texture, hr %#x.\n", hr);
+    hr = ID3D11Device_CreateRenderTargetView(device, (ID3D11Resource *)texture, NULL, &rtv);
+    ok(hr == S_OK, "Failed to create view, hr %#x.\n", hr);
+    hr = ID3D11Device_CreateShaderResourceView(device, (ID3D11Resource *)texture, NULL, &srv);
+    ok(hr == S_OK, "Failed to create view, hr %#x.\n", hr);
+
+    ID3D11DeviceContext_PSSetShaderResources(deferred, 0, 1, &srv);
+    ID3D11DeviceContext_PSGetShaderResources(deferred, 0, 1, &ret_srv);
+    ok(ret_srv == srv, "Got unexpected SRV %p.\n", ret_srv);
+    ID3D11ShaderResourceView_Release(ret_srv);
+
+    ID3D11DeviceContext_OMSetRenderTargets(deferred, 1, &rtv, NULL);
+    ID3D11DeviceContext_OMGetRenderTargets(deferred, 1, &ret_rtv, NULL);
+    ok(ret_rtv == rtv, "Got unexpected RTV %p.\n", ret_rtv);
+    ID3D11RenderTargetView_Release(ret_rtv);
+    ID3D11DeviceContext_PSGetShaderResources(deferred, 0, 1, &ret_srv);
+    ok(!ret_srv, "Got unexpected SRV %p.\n", ret_srv);
+
+    ID3D11ShaderResourceView_Release(srv);
+    ID3D11RenderTargetView_Release(rtv);
+    ID3D11Texture2D_Release(texture);
     ID3D11CommandList_Release(list2);
     ID3D11CommandList_Release(list1);
     ID3D11DeviceContext_Release(deferred);

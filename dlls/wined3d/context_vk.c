@@ -2204,6 +2204,11 @@ static bool wined3d_context_vk_update_graphics_pipeline_key(struct wined3d_conte
             key->scissor.extent.width = key->viewport.width;
             key->scissor.extent.height = key->viewport.height;
         }
+        /* Scissor offsets need to be non-negative (VUID-VkPipelineViewportStateCreateInfo-x-02821) */
+        if (key->scissor.offset.x < 0)
+            key->scissor.offset.x = 0;
+        if (key->scissor.offset.y < 0)
+            key->scissor.offset.y = 0;
         key->viewport.y += key->viewport.height;
         key->viewport.height = -key->viewport.height;
 
@@ -2614,6 +2619,10 @@ static bool wined3d_shader_resource_bindings_add_null_srv_binding(struct wined3d
         case WINED3D_SHADER_RESOURCE_TEXTURE_CUBE:
             return wined3d_shader_descriptor_writes_vk_add_write(writes, vk_descriptor_set,
                     binding_idx, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, NULL, &v->vk_info_cube, NULL);
+
+        case WINED3D_SHADER_RESOURCE_TEXTURE_1DARRAY:
+            return wined3d_shader_descriptor_writes_vk_add_write(writes, vk_descriptor_set,
+                    binding_idx, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, NULL, &v->vk_info_1d_array, NULL);
 
         case WINED3D_SHADER_RESOURCE_TEXTURE_2DARRAY:
             return wined3d_shader_descriptor_writes_vk_add_write(writes, vk_descriptor_set,

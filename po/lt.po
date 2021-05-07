@@ -5,7 +5,7 @@ msgstr ""
 "Project-Id-Version: Wine\n"
 "Report-Msgid-Bugs-To: https://bugs.winehq.org\n"
 "POT-Creation-Date: N/A\n"
-"PO-Revision-Date: 2021-04-28 11:59+0300\n"
+"PO-Revision-Date: 2021-04-30 09:04+0300\n"
 "Last-Translator: Aurimas Fišeras <aurimas@members.fsf.org>\n"
 "Language-Team: Lithuanian <komp_lt@konf.lt>\n"
 "Language: lt\n"
@@ -14719,6 +14719,10 @@ msgstr ""
 "  /reg:64\n"
 "     Prieiga prie registro naudojant 64-bitų rodinį.\n"
 "\n"
+
+#: programs/reg/reg.rc:180
+msgid "reg: Unable to access or create the specified registry key\n"
+msgstr "reg: Nepavyko prieiti prie ar sukurti nurodyto registro rakto\n"
 
 #: programs/regedit/regedit.rc:34
 msgid "&Registry"

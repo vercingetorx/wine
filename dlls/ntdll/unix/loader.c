@@ -439,20 +439,17 @@ static NTSTATUS loader_exec( const char *loader, char **argv, WORD machine )
 NTSTATUS exec_wineloader( char **argv, int socketfd, const pe_image_info_t *pe_info )
 {
     WORD machine = pe_info->machine;
-    int is_child_64bit = (machine == IMAGE_FILE_MACHINE_AMD64 || machine == IMAGE_FILE_MACHINE_ARM64);
     ULONGLONG res_start = pe_info->base;
     ULONGLONG res_end = pe_info->base + pe_info->map_size;
     const char *loader = argv0;
     const char *loader_env = getenv( "WINELOADER" );
     char preloader_reserve[64], socket_env[64];
+    BOOL is_child_64bit;
 
     if (pe_info->image_flags & IMAGE_FLAGS_WineFakeDll) res_start = res_end = 0;
+    if (pe_info->image_flags & IMAGE_FLAGS_ComPlusNativeReady) machine = native_machine;
 
-    if (!is_child_64bit && (is_win64 || is_wow64) && (pe_info->image_flags & IMAGE_FLAGS_ComPlusNativeReady))
-    {
-        is_child_64bit = TRUE;
-        machine = IMAGE_FILE_MACHINE_AMD64;
-    }
+    is_child_64bit = is_machine_64bit( machine );
 
     if (!is_win64 ^ !is_child_64bit)
     {
@@ -1469,7 +1466,7 @@ const WCHAR *get_machine_wow64_dir( WORD machine )
     static const WCHAR sysx8664[] = {'\\','?','?','\\','C',':','\\','w','i','n','d','o','w','s','\\','s','y','s','x','8','6','6','4','\\',0};
     static const WCHAR sysarm64[] = {'\\','?','?','\\','C',':','\\','w','i','n','d','o','w','s','\\','s','y','s','a','r','m','6','4','\\',0};
 
-    if (machine == supported_machines[0]) machine = IMAGE_FILE_MACHINE_TARGET_HOST;
+    if (machine == native_machine) machine = IMAGE_FILE_MACHINE_TARGET_HOST;
 
     switch (machine)
     {
@@ -1628,22 +1625,20 @@ failed:
 NTSTATUS load_start_exe( WCHAR **image, void **module )
 {
     static const WCHAR startW[] = {'s','t','a','r','t','.','e','x','e',0};
-    WCHAR buffer[sizeof("\\??\\C:\\windows\\system32\\start.exe")];
     UNICODE_STRING nt_name;
     NTSTATUS status;
     SIZE_T size;
 
-    wcscpy( buffer, get_machine_wow64_dir( current_machine ));
-    wcscat( buffer, startW );
-    init_unicode_string( &nt_name, buffer );
+    *image = malloc( sizeof("\\??\\C:\\windows\\system32\\start.exe") * sizeof(WCHAR) );
+    wcscpy( *image, get_machine_wow64_dir( current_machine ));
+    wcscat( *image, startW );
+    init_unicode_string( &nt_name, *image );
     status = find_builtin_dll( &nt_name, module, &size, &main_image_info, current_machine, FALSE );
     if (status)
     {
         MESSAGE( "wine: failed to load start.exe: %x\n", status );
         NtTerminateProcess( GetCurrentProcess(), status );
     }
-    *image = malloc( sizeof(startW) );
-    memcpy( *image, startW, sizeof(startW) );
     return status;
 }
 
@@ -1875,7 +1870,8 @@ static void start_main_thread(void)
     if (p___wine_main_argc) *p___wine_main_argc = main_argc;
     if (p___wine_main_argv) *p___wine_main_argv = main_argv;
     if (p___wine_main_wargv) *p___wine_main_wargv = main_wargv;
-    virtual_alloc_thread_stack( &stack, 0, 0, NULL );
+    set_load_order_app_name( main_wargv[0] );
+    virtual_alloc_thread_stack( &stack, is_win64 ? 0x7fffffff : 0, 0, 0, NULL );
     teb->Tib.StackBase = stack.StackBase;
     teb->Tib.StackLimit = stack.StackLimit;
     teb->DeallocationStack = stack.DeallocationStack;

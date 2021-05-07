@@ -1061,6 +1061,7 @@ static inline struct list *get_apc_queue( struct thread *thread, enum apc_type t
     switch(type)
     {
     case APC_NONE:
+        return NULL;
     case APC_USER:
     case APC_TIMER:
         return &thread->user_apc;
@@ -1111,12 +1112,12 @@ static int queue_apc( struct process *process, struct thread *thread, struct thr
             }
         }
         if (!thread) return 0;  /* nothing found */
-        queue = get_apc_queue( thread, apc->call.type );
+        if (!(queue = get_apc_queue( thread, apc->call.type ))) return 1;
     }
     else
     {
         if (thread->state == TERMINATED) return 0;
-        queue = get_apc_queue( thread, apc->call.type );
+        if (!(queue = get_apc_queue( thread, apc->call.type ))) return 1;
         /* send signal for system APCs if needed */
         if (queue == &thread->system_apc && list_empty( queue ) && !is_in_apc_wait( thread ))
         {
@@ -1638,26 +1639,13 @@ DECL_HANDLER(select)
 
     select_on( &select_op, op_size, req->cookie, req->flags, req->timeout );
 
-    while (get_error() == STATUS_USER_APC)
+    if (get_error() == STATUS_USER_APC)
     {
-        if (!(apc = thread_dequeue_apc( current, 0 )))
-            break;
-        /* Optimization: ignore APC_NONE calls, they are only used to
-         * wake up a thread, but since we got here the thread woke up already.
-         */
-        if (apc->call.type != APC_NONE &&
-            (reply->apc_handle = alloc_handle( current->process, apc, SYNCHRONIZE, 0 )))
-        {
-            reply->call = apc->call;
-            release_object( apc );
-            break;
-        }
-        apc->executed = 1;
-        wake_up( &apc->obj, 0 );
+        apc = thread_dequeue_apc( current, 0 );
+        reply->call = apc->call;
         release_object( apc );
     }
-
-    if (get_error() == STATUS_KERNEL_APC)
+    else if (get_error() == STATUS_KERNEL_APC)
     {
         apc = thread_dequeue_apc( current, 1 );
         if ((reply->apc_handle = alloc_handle( current->process, apc, SYNCHRONIZE, 0 )))
@@ -1924,4 +1912,53 @@ DECL_HANDLER(get_selector_entry)
         get_selector_entry( thread, req->entry, &reply->base, &reply->limit, &reply->flags );
         release_object( thread );
     }
+}
+
+/* Iterate thread list for process. Use global thread list to also
+ * return terminated but not yet destroyed threads. */
+DECL_HANDLER(get_next_thread)
+{
+    struct thread *thread;
+    struct process *process;
+    struct list *ptr;
+
+    if (req->flags > 1)
+    {
+        set_error( STATUS_INVALID_PARAMETER );
+        return;
+    }
+
+    if (!(process = get_process_from_handle( req->process, PROCESS_QUERY_INFORMATION )))
+        return;
+
+    if (!req->last)
+    {
+        ptr = req->flags ? list_tail( &thread_list ) : list_head( &thread_list );
+    }
+    else if ((thread = get_thread_from_handle( req->last, 0 )))
+    {
+        ptr = req->flags ? list_prev( &thread_list, &thread->entry )
+                         : list_next( &thread_list, &thread->entry );
+        release_object( thread );
+    }
+    else
+    {
+        release_object( process );
+        return;
+    }
+
+    while (ptr)
+    {
+        thread = LIST_ENTRY( ptr, struct thread, entry );
+        if (thread->process == process)
+        {
+            reply->handle = alloc_handle( current->process, thread, req->access, req->attributes );
+            release_object( process );
+            return;
+        }
+        ptr = req->flags ? list_prev( &thread_list, &thread->entry )
+                         : list_next( &thread_list, &thread->entry );
+    }
+    set_error( STATUS_NO_MORE_ENTRIES );
+    release_object( process );
 }

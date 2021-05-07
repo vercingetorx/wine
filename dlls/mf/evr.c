@@ -48,6 +48,7 @@ enum video_stream_flags
     EVR_STREAM_PREROLLING = 0x1,
     EVR_STREAM_PREROLLED = 0x2,
     EVR_STREAM_SAMPLE_NEEDED = 0x4,
+    EVR_STREAM_STARTED = 0x8,
 };
 
 struct video_renderer;
@@ -406,6 +407,12 @@ static HRESULT WINAPI video_stream_sink_ProcessSample(IMFStreamSink *iface, IMFS
     }
     else if (stream->parent->state == EVR_STATE_RUNNING || stream->flags & EVR_STREAM_PREROLLING)
     {
+        if (!(stream->flags & EVR_STREAM_STARTED))
+        {
+            IMFTransform_ProcessMessage(stream->parent->mixer, MFT_MESSAGE_NOTIFY_START_OF_STREAM, stream->id);
+            stream->flags |= EVR_STREAM_STARTED;
+        }
+
         if (SUCCEEDED(IMFTransform_ProcessInput(stream->parent->mixer, stream->id, sample, 0)))
             IMFVideoPresenter_ProcessMessage(stream->parent->presenter, MFVP_MESSAGE_PROCESSINPUTNOTIFY, 0);
 
@@ -422,19 +429,52 @@ static HRESULT WINAPI video_stream_sink_ProcessSample(IMFStreamSink *iface, IMFS
     return hr;
 }
 
-static HRESULT WINAPI video_stream_sink_PlaceMarker(IMFStreamSink *iface, MFSTREAMSINK_MARKER_TYPE marker_type,
-        const PROPVARIANT *marker_value, const PROPVARIANT *context_value)
+static void video_stream_end_of_stream(struct video_stream *stream)
 {
-    FIXME("%p, %d, %p, %p.\n", iface, marker_type, marker_value, context_value);
+    if (!(stream->flags & EVR_STREAM_STARTED))
+        return;
 
-    return E_NOTIMPL;
+    IMFTransform_ProcessMessage(stream->parent->mixer, MFT_MESSAGE_NOTIFY_END_OF_STREAM, stream->id);
+    stream->flags &= ~EVR_STREAM_STARTED;
+}
+
+static HRESULT WINAPI video_stream_sink_PlaceMarker(IMFStreamSink *iface, MFSTREAMSINK_MARKER_TYPE marker_type,
+        const PROPVARIANT *marker_value, const PROPVARIANT *context)
+{
+    struct video_stream *stream = impl_from_IMFStreamSink(iface);
+    HRESULT hr = S_OK;
+
+    TRACE("%p, %d, %p, %p.\n", iface, marker_type, marker_value, context);
+
+    EnterCriticalSection(&stream->cs);
+    if (!stream->parent)
+        hr = MF_E_STREAMSINK_REMOVED;
+    else
+    {
+        if (marker_type == MFSTREAMSINK_MARKER_ENDOFSEGMENT)
+            video_stream_end_of_stream(stream);
+        IMFMediaEventQueue_QueueEventParamVar(stream->event_queue, MEStreamSinkMarker, &GUID_NULL, S_OK, context);
+    }
+    LeaveCriticalSection(&stream->cs);
+
+    return hr;
 }
 
 static HRESULT WINAPI video_stream_sink_Flush(IMFStreamSink *iface)
 {
-    FIXME("%p.\n", iface);
+    struct video_stream *stream = impl_from_IMFStreamSink(iface);
+    HRESULT hr;
 
-    return E_NOTIMPL;
+    TRACE("%p.\n", iface);
+
+    EnterCriticalSection(&stream->cs);
+    if (!stream->parent)
+        hr = MF_E_STREAMSINK_REMOVED;
+    else if (SUCCEEDED(hr = IMFTransform_ProcessMessage(stream->parent->mixer, MFT_MESSAGE_COMMAND_FLUSH, 0)))
+        hr = IMFVideoPresenter_ProcessMessage(stream->parent->presenter, MFVP_MESSAGE_FLUSH, 0);
+    LeaveCriticalSection(&stream->cs);
+
+    return hr;
 }
 
 static const IMFStreamSinkVtbl video_stream_sink_vtbl =
