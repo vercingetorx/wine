@@ -31,7 +31,7 @@ jobs:
       
       - name: Launch patch-staging.sh
         working-directory: /home/runner/work/build-tools/runners/chardonnay
-        run: ./patch-staging.sh
+        run: ./patch-staging.sh -r ${{ steps.vars.outputs.release_version }}
       
       - name: Launch build-tools.sh
         working-directory: /home/runner/work/build-tools/runners/chardonnay
@@ -47,7 +47,7 @@ jobs:
       
       - name: Launch package.sh
         working-directory: /home/runner/work/build-tools/runners/chardonnay
-        run: ./package.sh -s unstable
+        run: ./package.sh
 
       - name: Get release version
         working-directory: /home/runner/work/wine/wine
@@ -61,8 +61,8 @@ jobs:
           repo_token: "${{ secrets.GITHUB_TOKEN }}"
           draft: false
           prerelease: false
-          automatic_release_tag: "${{ steps.vars.outputs.release_version }}-unstable"
-          title: "Chardonnay ${{ steps.vars.outputs.release_version }} unstable"
-          files: "/home/runner/work/wine/wine/chardonnay-${{ steps.vars.outputs.release_version }}-unstable-x86_64.tar.gz"
+          automatic_release_tag: "${{ steps.vars.outputs.release_version }}"
+          title: "Chardonnay ${{ steps.vars.outputs.release_version }}"
+          files: "/home/runner/work/wine/wine/chardonnay-${{ steps.vars.outputs.release_version }}-x86_64.tar.gz"
           
 
