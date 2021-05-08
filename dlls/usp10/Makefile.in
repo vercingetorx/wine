@@ -1,2 +1,0 @@
-MODULE    = usp10.dll
-IMPORTLIB = usp10

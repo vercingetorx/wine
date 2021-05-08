@@ -1,3 +1,0 @@
-MODULE    = msdrm.dll
-
-EXTRADLLFLAGS = -Wb,--prefer-native

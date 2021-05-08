@@ -1,3 +1,0 @@
-MODULE = activeds.tlb
-
-IDL_SRCS = activeds_tlb.idl

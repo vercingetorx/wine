@@ -1,8 +1,0 @@
-MODULE = vcomp100.dll
-
-EXTRADLLFLAGS = -mno-cygwin
-
-PARENTSRC = ../vcomp
-
-C_SRCS = \
-	main.c
