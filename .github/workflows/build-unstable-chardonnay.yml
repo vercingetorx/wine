@@ -1,15 +1,25 @@
-name: build-unstable-chardonnay
+name: build-stable-chardonnay
 on:
   push:
-    branches: [ master ]
+    branches: [ stable ]
   pull_request:
-    branches: [ master ]
+    branches: [ stable ]
   workflow_dispatch:
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
+      - name: Checkout master branch
+        working-directory: /home/runner/work/wine/wine
+        run: |
+          git checkout master
+
+      - name: Get release version
+        working-directory: /home/runner/work/wine/wine
+        id: vars
+        run: |
+          wine_version=$(cat VERSION)
+          echo "::set-output name=release_version::${wine_version:13}"
 
       - name: Fetching Build Tools
         working-directory: /home/runner/work/
@@ -29,7 +39,7 @@ jobs:
       
       - name: Launch patch-staging.sh
         working-directory: /home/runner/work/build-tools/runners/chardonnay
-        run: ./patch-staging.sh
+        run: ./patch-staging.sh -r ${{ steps.vars.outputs.release_version }}
       
       - name: Launch build-tools.sh
         working-directory: /home/runner/work/build-tools/runners/chardonnay
@@ -45,22 +55,14 @@ jobs:
       
       - name: Launch package.sh
         working-directory: /home/runner/work/build-tools/runners/chardonnay
-        run: ./package.sh -s unstable
-
-      - name: Get release version
-        working-directory: /home/runner/work/wine/wine
-        id: vars
-        run: |
-          wine_version=$(cat VERSION)
-          echo "::set-output name=release_version::${wine_version:13}"
+        run: ./package.sh
         
       - uses: "marvinpinto/action-automatic-releases@latest"
         with:
           repo_token: "${{ secrets.GITHUB_TOKEN }}"
           draft: false
           prerelease: false
-          automatic_release_tag: "${{ steps.vars.outputs.release_version }}-unstable"
-          title: "Chardonnay ${{ steps.vars.outputs.release_version }} unstable"
-          files: "/home/runner/work/wine/wine/chardonnay-${{ steps.vars.outputs.release_version }}-unstable-x86_64.tar.gz"
+          automatic_release_tag: "${{ steps.vars.outputs.release_version }}"
+          title: "Chardonnay ${{ steps.vars.outputs.release_version }}"
+          files: "/home/runner/work/wine/wine/chardonnay-${{ steps.vars.outputs.release_version }}-x86_64.tar.gz"
           
-
