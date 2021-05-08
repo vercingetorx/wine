@@ -1,9 +1,9 @@
 name: build-unstable-chardonnay
 on:
   push:
-    branches: [ master ]
+    branches: [ stable ]
   pull_request:
-    branches: [ master ]
+    branches: [ stable ]
   workflow_dispatch:
 jobs:
   build:
