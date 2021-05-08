@@ -11,6 +11,10 @@ jobs:
     steps:
       - uses: actions/checkout@v2
 
+      - name: Checkout master branch
+        working-directory: /home/runner/work/wine/wine
+        run: git checkout master
+
       - name: Fetching Build Tools
         working-directory: /home/runner/work/
         run: git clone https://github.com/bottlesdevs/build-tools.git
