@@ -1,4 +1,4 @@
-name: build-stable-chardonnay
+name: build-unstable-chardonnay
 on:
   push:
     branches: [ stable ]
