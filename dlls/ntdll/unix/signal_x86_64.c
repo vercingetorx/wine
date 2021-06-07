@@ -251,6 +251,10 @@ C_ASSERT((offsetof(struct stack_layout, xstate) == sizeof(struct stack_layout)))
 C_ASSERT( sizeof(XSTATE) == 0x140 );
 C_ASSERT( sizeof(struct stack_layout) == 0x590 ); /* Should match the size in call_user_exception_dispatcher(). */
 
+/* flags to control the behavior of the syscall dispatcher */
+#define SYSCALL_HAVE_XSAVE    1
+#define SYSCALL_HAVE_XSAVEC   2
+
 /* stack layout when calling an user apc function.
  * FIXME: match Windows ABI. */
 struct apc_stack_layout
@@ -327,15 +331,6 @@ static inline struct amd64_thread_data *amd64_thread_data(void)
     return (struct amd64_thread_data *)ntdll_get_thread_data()->cpu_data;
 }
 
-void *get_syscall_frame(void)
-{
-    return amd64_thread_data()->syscall_frame;
-}
-
-void set_syscall_frame(void *frame)
-{
-    amd64_thread_data()->syscall_frame = frame;
-}
 
 static struct syscall_xsave *get_syscall_xsave( struct syscall_frame *frame )
 {
@@ -1568,7 +1563,7 @@ static void restore_context( const struct xcontext *xcontext, ucontext_t *sigcon
  *
  * Set the new CPU context.
  */
-extern void set_full_cpu_context(void);
+extern void set_full_cpu_context(void) DECLSPEC_HIDDEN;
 __ASM_GLOBAL_FUNC( set_full_cpu_context,
                    "movq %gs:0x30,%rdx\n\t"
                    "movq 0x328(%rdx),%rsp\n\t"      /* amd64_thread_data()->syscall_frame */
@@ -1598,7 +1593,7 @@ __ASM_GLOBAL_FUNC( set_full_cpu_context,
  */
 void signal_restore_full_cpu_context(void)
 {
-    struct syscall_xsave *xsave = get_syscall_xsave( get_syscall_frame() );
+    struct syscall_xsave *xsave = get_syscall_xsave( amd64_thread_data()->syscall_frame );
 
     if (cpu_info.ProcessorFeatureBits & CPU_FEATURE_XSAVE)
     {
@@ -1609,221 +1604,6 @@ void signal_restore_full_cpu_context(void)
         __asm__ volatile( "fxrstor64 %0" : : "m"(xsave->xsave) );
     }
     set_full_cpu_context();
-}
-
-
-/***********************************************************************
- *           get_server_context_flags
- *
- * Convert CPU-specific flags to generic server flags
- */
-static unsigned int get_server_context_flags( DWORD flags )
-{
-    unsigned int ret = 0;
-
-    flags &= ~CONTEXT_AMD64;  /* get rid of CPU id */
-    if (flags & CONTEXT_CONTROL) ret |= SERVER_CTX_CONTROL;
-    if (flags & CONTEXT_INTEGER) ret |= SERVER_CTX_INTEGER;
-    if (flags & CONTEXT_SEGMENTS) ret |= SERVER_CTX_SEGMENTS;
-    if (flags & CONTEXT_FLOATING_POINT) ret |= SERVER_CTX_FLOATING_POINT;
-    if (flags & CONTEXT_DEBUG_REGISTERS) ret |= SERVER_CTX_DEBUG_REGISTERS;
-    if (flags & CONTEXT_XSTATE) ret |= SERVER_CTX_YMM_REGISTERS;
-    return ret;
-}
-
-
-/***********************************************************************
- *           context_to_server
- *
- * Convert a register context to the server format.
- */
-NTSTATUS context_to_server( context_t *to, const CONTEXT *from )
-{
-    DWORD flags = from->ContextFlags & ~CONTEXT_AMD64;  /* get rid of CPU id */
-
-    memset( to, 0, sizeof(*to) );
-    to->machine = IMAGE_FILE_MACHINE_AMD64;
-
-    if (flags & CONTEXT_CONTROL)
-    {
-        to->flags |= SERVER_CTX_CONTROL;
-        to->ctl.x86_64_regs.rbp   = from->Rbp;
-        to->ctl.x86_64_regs.rip   = from->Rip;
-        to->ctl.x86_64_regs.rsp   = from->Rsp;
-        to->ctl.x86_64_regs.cs    = from->SegCs;
-        to->ctl.x86_64_regs.ss    = from->SegSs;
-        to->ctl.x86_64_regs.flags = from->EFlags;
-    }
-    if (flags & CONTEXT_INTEGER)
-    {
-        to->flags |= SERVER_CTX_INTEGER;
-        to->integer.x86_64_regs.rax = from->Rax;
-        to->integer.x86_64_regs.rcx = from->Rcx;
-        to->integer.x86_64_regs.rdx = from->Rdx;
-        to->integer.x86_64_regs.rbx = from->Rbx;
-        to->integer.x86_64_regs.rsi = from->Rsi;
-        to->integer.x86_64_regs.rdi = from->Rdi;
-        to->integer.x86_64_regs.r8  = from->R8;
-        to->integer.x86_64_regs.r9  = from->R9;
-        to->integer.x86_64_regs.r10 = from->R10;
-        to->integer.x86_64_regs.r11 = from->R11;
-        to->integer.x86_64_regs.r12 = from->R12;
-        to->integer.x86_64_regs.r13 = from->R13;
-        to->integer.x86_64_regs.r14 = from->R14;
-        to->integer.x86_64_regs.r15 = from->R15;
-    }
-    if (flags & CONTEXT_SEGMENTS)
-    {
-        to->flags |= SERVER_CTX_SEGMENTS;
-        to->seg.x86_64_regs.ds = from->SegDs;
-        to->seg.x86_64_regs.es = from->SegEs;
-        to->seg.x86_64_regs.fs = from->SegFs;
-        to->seg.x86_64_regs.gs = from->SegGs;
-    }
-    if (flags & CONTEXT_FLOATING_POINT)
-    {
-        to->flags |= SERVER_CTX_FLOATING_POINT;
-        memcpy( to->fp.x86_64_regs.fpregs, &from->u.FltSave, sizeof(to->fp.x86_64_regs.fpregs) );
-    }
-    if (flags & CONTEXT_DEBUG_REGISTERS)
-    {
-        to->flags |= SERVER_CTX_DEBUG_REGISTERS;
-        to->debug.x86_64_regs.dr0 = from->Dr0;
-        to->debug.x86_64_regs.dr1 = from->Dr1;
-        to->debug.x86_64_regs.dr2 = from->Dr2;
-        to->debug.x86_64_regs.dr3 = from->Dr3;
-        to->debug.x86_64_regs.dr6 = from->Dr6;
-        to->debug.x86_64_regs.dr7 = from->Dr7;
-    }
-    xstate_to_server( to, xstate_from_context( from ) );
-    return STATUS_SUCCESS;
-}
-
-
-/***********************************************************************
- *           context_from_server
- *
- * Convert a register context from the server format.
- */
-NTSTATUS context_from_server( CONTEXT *to, const context_t *from )
-{
-    if (from->machine == IMAGE_FILE_MACHINE_I386)
-    {
-        /* convert the WoW64 context */
-        to->ContextFlags = CONTEXT_AMD64;
-        if (from->flags & SERVER_CTX_CONTROL)
-        {
-            to->ContextFlags |= CONTEXT_CONTROL;
-            to->Rbp    = from->ctl.i386_regs.ebp;
-            to->Rip    = from->ctl.i386_regs.eip;
-            to->Rsp    = from->ctl.i386_regs.esp;
-            to->SegCs  = from->ctl.i386_regs.cs;
-            to->SegSs  = from->ctl.i386_regs.ss;
-            to->EFlags = from->ctl.i386_regs.eflags;
-        }
-
-        if (from->flags & SERVER_CTX_INTEGER)
-        {
-            to->ContextFlags |= CONTEXT_INTEGER;
-            to->Rax = from->integer.i386_regs.eax;
-            to->Rcx = from->integer.i386_regs.ecx;
-            to->Rdx = from->integer.i386_regs.edx;
-            to->Rbx = from->integer.i386_regs.ebx;
-            to->Rsi = from->integer.i386_regs.esi;
-            to->Rdi = from->integer.i386_regs.edi;
-            to->R8  = 0;
-            to->R9  = 0;
-            to->R10 = 0;
-            to->R11 = 0;
-            to->R12 = 0;
-            to->R13 = 0;
-            to->R14 = 0;
-            to->R15 = 0;
-        }
-        if (from->flags & SERVER_CTX_SEGMENTS)
-        {
-            to->ContextFlags |= CONTEXT_SEGMENTS;
-            to->SegDs = from->seg.i386_regs.ds;
-            to->SegEs = from->seg.i386_regs.es;
-            to->SegFs = from->seg.i386_regs.fs;
-            to->SegGs = from->seg.i386_regs.gs;
-        }
-        if (from->flags & SERVER_CTX_FLOATING_POINT)
-        {
-            to->ContextFlags |= CONTEXT_FLOATING_POINT;
-            memset(&to->u.FltSave, 0, sizeof(to->u.FltSave));
-        }
-        if (from->flags & SERVER_CTX_DEBUG_REGISTERS)
-        {
-            to->ContextFlags |= CONTEXT_DEBUG_REGISTERS;
-            to->Dr0 = from->debug.i386_regs.dr0;
-            to->Dr1 = from->debug.i386_regs.dr1;
-            to->Dr2 = from->debug.i386_regs.dr2;
-            to->Dr3 = from->debug.i386_regs.dr3;
-            to->Dr6 = from->debug.i386_regs.dr6;
-            to->Dr7 = from->debug.i386_regs.dr7;
-        }
-        return STATUS_SUCCESS;
-    }
-
-    if (from->machine != IMAGE_FILE_MACHINE_AMD64) return STATUS_INVALID_PARAMETER;
-
-    to->ContextFlags = CONTEXT_AMD64 | (to->ContextFlags & 0x40);
-    if (from->flags & SERVER_CTX_CONTROL)
-    {
-        to->ContextFlags |= CONTEXT_CONTROL;
-        to->Rbp    = from->ctl.x86_64_regs.rbp;
-        to->Rip    = from->ctl.x86_64_regs.rip;
-        to->Rsp    = from->ctl.x86_64_regs.rsp;
-        to->SegCs  = from->ctl.x86_64_regs.cs;
-        to->SegSs  = from->ctl.x86_64_regs.ss;
-        to->EFlags = from->ctl.x86_64_regs.flags;
-    }
-
-    if (from->flags & SERVER_CTX_INTEGER)
-    {
-        to->ContextFlags |= CONTEXT_INTEGER;
-        to->Rax = from->integer.x86_64_regs.rax;
-        to->Rcx = from->integer.x86_64_regs.rcx;
-        to->Rdx = from->integer.x86_64_regs.rdx;
-        to->Rbx = from->integer.x86_64_regs.rbx;
-        to->Rsi = from->integer.x86_64_regs.rsi;
-        to->Rdi = from->integer.x86_64_regs.rdi;
-        to->R8  = from->integer.x86_64_regs.r8;
-        to->R9  = from->integer.x86_64_regs.r9;
-        to->R10 = from->integer.x86_64_regs.r10;
-        to->R11 = from->integer.x86_64_regs.r11;
-        to->R12 = from->integer.x86_64_regs.r12;
-        to->R13 = from->integer.x86_64_regs.r13;
-        to->R14 = from->integer.x86_64_regs.r14;
-        to->R15 = from->integer.x86_64_regs.r15;
-    }
-    if (from->flags & SERVER_CTX_SEGMENTS)
-    {
-        to->ContextFlags |= CONTEXT_SEGMENTS;
-        to->SegDs = from->seg.x86_64_regs.ds;
-        to->SegEs = from->seg.x86_64_regs.es;
-        to->SegFs = from->seg.x86_64_regs.fs;
-        to->SegGs = from->seg.x86_64_regs.gs;
-    }
-    if (from->flags & SERVER_CTX_FLOATING_POINT)
-    {
-        to->ContextFlags |= CONTEXT_FLOATING_POINT;
-        memcpy( &to->u.FltSave, from->fp.x86_64_regs.fpregs, sizeof(from->fp.x86_64_regs.fpregs) );
-        to->MxCsr = to->u.FltSave.MxCsr;
-    }
-    if (from->flags & SERVER_CTX_DEBUG_REGISTERS)
-    {
-        to->ContextFlags |= CONTEXT_DEBUG_REGISTERS;
-        to->Dr0 = from->debug.x86_64_regs.dr0;
-        to->Dr1 = from->debug.x86_64_regs.dr1;
-        to->Dr2 = from->debug.x86_64_regs.dr2;
-        to->Dr3 = from->debug.x86_64_regs.dr3;
-        to->Dr6 = from->debug.x86_64_regs.dr6;
-        to->Dr7 = from->debug.x86_64_regs.dr7;
-    }
-    xstate_from_server( xstate_from_context( to ), from );
-    return STATUS_SUCCESS;
 }
 
 
@@ -1851,10 +1631,7 @@ NTSTATUS WINAPI NtSetContextThread( HANDLE handle, const CONTEXT *context )
 
     if (!self)
     {
-        context_t server_context;
-
-        context_to_server( &server_context, context );
-        ret = set_thread_context( handle, &server_context, &self );
+        ret = set_thread_context( handle, context, &self, IMAGE_FILE_MACHINE_AMD64 );
         if (ret || !self) return ret;
         if (flags & CONTEXT_DEBUG_REGISTERS)
         {
@@ -1951,11 +1728,7 @@ NTSTATUS WINAPI NtGetContextThread( HANDLE handle, CONTEXT *context )
 
     if (!self)
     {
-        context_t server_context;
-        unsigned int server_flags = get_server_context_flags( context->ContextFlags );
-
-        if ((ret = get_thread_context( handle, &server_context, server_flags, &self ))) return ret;
-        if ((ret = context_from_server( context, &server_context ))) return ret;
+        if ((ret = get_thread_context( handle, context, &self, IMAGE_FILE_MACHINE_AMD64 ))) return ret;
         needed_flags &= ~context->ContextFlags;
     }
 
@@ -2071,10 +1844,30 @@ NTSTATUS WINAPI NtGetContextThread( HANDLE handle, CONTEXT *context )
     return STATUS_SUCCESS;
 }
 
-extern void CDECL raise_func_trampoline( void *dispatcher );
 
-__ASM_GLOBAL_FUNC( raise_func_trampoline,
-                   "jmpq *%r8\n\t")
+/***********************************************************************
+ *              set_thread_wow64_context
+ */
+NTSTATUS set_thread_wow64_context( HANDLE handle, const void *ctx, ULONG size )
+{
+    BOOL self;
+
+    if (size != sizeof(I386_CONTEXT)) return STATUS_INFO_LENGTH_MISMATCH;
+    return set_thread_context( handle, ctx, &self, IMAGE_FILE_MACHINE_I386 );
+}
+
+
+/***********************************************************************
+ *              get_thread_wow64_context
+ */
+NTSTATUS get_thread_wow64_context( HANDLE handle, void *ctx, ULONG size )
+{
+    BOOL self;
+
+    if (size != sizeof(I386_CONTEXT)) return STATUS_INFO_LENGTH_MISMATCH;
+    return get_thread_context( handle, ctx, &self, IMAGE_FILE_MACHINE_I386 );
+}
+
 
 /***********************************************************************
  *           setup_raise_exception
@@ -2140,8 +1933,7 @@ static void setup_raise_exception( ucontext_t *sigcontext, EXCEPTION_RECORD *rec
         }
     }
 
-    RIP_sig(sigcontext) = (ULONG_PTR)raise_func_trampoline;
-    R8_sig(sigcontext)  = (ULONG_PTR)pKiUserExceptionDispatcher;
+    RIP_sig(sigcontext) = (ULONG_PTR)pKiUserExceptionDispatcher;
     RSP_sig(sigcontext) = (ULONG_PTR)stack;
     /* clear single-step, direction, and align check flag */
     EFL_sig(sigcontext) &= ~(0x100|0x400|0x40000);
@@ -2168,7 +1960,12 @@ static void setup_exception( ucontext_t *sigcontext, EXCEPTION_RECORD *rec )
 /***********************************************************************
  *           call_user_apc_dispatcher
  */
-struct apc_stack_layout * WINAPI setup_user_apc_dispatcher_stack( CONTEXT *context, struct apc_stack_layout *stack )
+struct apc_stack_layout * WINAPI setup_user_apc_dispatcher_stack( CONTEXT *context,
+                                                                  struct apc_stack_layout *stack,
+                                                                  NTSTATUS status ) DECLSPEC_HIDDEN;
+struct apc_stack_layout * WINAPI setup_user_apc_dispatcher_stack( CONTEXT *context,
+                                                                  struct apc_stack_layout *stack,
+                                                                  NTSTATUS status )
 {
     CONTEXT c;
 
@@ -2176,7 +1973,7 @@ struct apc_stack_layout * WINAPI setup_user_apc_dispatcher_stack( CONTEXT *conte
     {
         c.ContextFlags = CONTEXT_FULL;
         NtGetContextThread( GetCurrentThread(), &c );
-        c.Rax = STATUS_USER_APC;
+        c.Rax = status;
         context = &c;
     }
     memmove( &stack->context, context, sizeof(stack->context) );
@@ -2187,9 +1984,10 @@ __ASM_GLOBAL_FUNC( call_user_apc_dispatcher,
                    "movq 0x28(%rsp),%rsi\n\t"       /* func */
                    "movq 0x30(%rsp),%rdi\n\t"       /* dispatcher */
                    "movq %gs:0x30,%rbx\n\t"
-                   "movq %rdx,%r12\n\t"             /* ctx */
-                   "movq %r8,%r13\n\t"              /* arg1 */
-                   "movq %r9,%r14\n\t"              /* arg2 */
+                   "movq %rdx,%r12\n\t"             /* arg1 */
+                   "movq %r8,%r13\n\t"              /* arg2 */
+                   "movq %r9,%r14\n\t"              /* arg3 */
+                   "movq 0x38(%rsp),%r8\n\t"        /* status */
                    "jrcxz 1f\n\t"
                    "movq 0x98(%rcx),%rdx\n\t"        /* context->Rsp */
                    "jmp 2f\n\t"
@@ -2204,9 +2002,9 @@ __ASM_GLOBAL_FUNC( call_user_apc_dispatcher,
                    "call " __ASM_NAME("setup_user_apc_dispatcher_stack") "\n\t"
                    "movq %rax,%rsp\n\t"
                    "leaq 0x30(%rsp),%rcx\n\t"       /* context */
-                   "movq %r12,%rdx\n\t"             /* ctx */
-                   "movq %r13,%r8\n\t"              /* arg1 */
-                   "movq %r14,%r9\n"                /* arg2 */
+                   "movq %r12,%rdx\n\t"             /* arg1 */
+                   "movq %r13,%r8\n\t"              /* arg2 */
+                   "movq %r14,%r9\n"                /* arg3 */
                    "movq $0,0x328(%rbx)\n\t"        /* amd64_thread_data()->syscall_frame */
                    "movq %rsi,0x20(%rsp)\n\t"       /* func */
                    "movq %rdi,%r10\n\t"
@@ -2245,6 +2043,9 @@ void WINAPI call_raise_user_exception_dispatcher( NTSTATUS (WINAPI *dispatcher)(
 /***********************************************************************
  *           call_user_exception_dispatcher
  */
+struct stack_layout * WINAPI setup_user_exception_dispatcher_stack( EXCEPTION_RECORD *rec, CONTEXT *context,
+                                               NTSTATUS (WINAPI *dispatcher)(EXCEPTION_RECORD*,CONTEXT*),
+                                               struct stack_layout *stack ) DECLSPEC_HIDDEN;
 struct stack_layout * WINAPI setup_user_exception_dispatcher_stack( EXCEPTION_RECORD *rec, CONTEXT *context,
                                                NTSTATUS (WINAPI *dispatcher)(EXCEPTION_RECORD*,CONTEXT*),
                                                struct stack_layout *stack )
@@ -2450,7 +2251,6 @@ static inline BOOL handle_interrupt( ucontext_t *sigcontext, EXCEPTION_RECORD *r
 static BOOL handle_syscall_fault( ucontext_t *sigcontext, EXCEPTION_RECORD *rec, CONTEXT *context )
 {
     struct syscall_frame *frame = amd64_thread_data()->syscall_frame;
-    __WINE_FRAME *wine_frame = (__WINE_FRAME *)NtCurrentTeb()->Tib.ExceptionList;
     DWORD i;
 
     if (!frame) return FALSE;
@@ -2469,12 +2269,13 @@ static BOOL handle_syscall_fault( ucontext_t *sigcontext, EXCEPTION_RECORD *rec,
     TRACE(" r12=%016lx r13=%016lx r14=%016lx r15=%016lx\n",
           context->R12, context->R13, context->R14, context->R15 );
 
-    if ((char *)wine_frame < (char *)frame)
+    if (ntdll_get_thread_data()->jmp_buf)
     {
         TRACE( "returning to handler\n" );
-        RCX_sig(sigcontext) = (ULONG_PTR)&wine_frame->jmp;
+        RCX_sig(sigcontext) = (ULONG_PTR)ntdll_get_thread_data()->jmp_buf;
         RDX_sig(sigcontext) = 1;
         RIP_sig(sigcontext) = (ULONG_PTR)__wine_longjmp;
+        ntdll_get_thread_data()->jmp_buf = NULL;
     }
     else
     {
@@ -2855,6 +2656,15 @@ void signal_init_thread( TEB *teb )
 void signal_init_process(void)
 {
     struct sigaction sig_act;
+    void *ptr;
+
+    /* sneak in a syscall dispatcher pointer at a fixed address (7ffe1000) */
+    ptr = (char *)user_shared_data + page_size;
+    anon_mmap_fixed( ptr, page_size, PROT_READ | PROT_WRITE, 0 );
+    *(void **)ptr = __wine_syscall_dispatcher;
+
+    if (cpu_info.ProcessorFeatureBits & CPU_FEATURE_XSAVE) __wine_syscall_flags |= SYSCALL_HAVE_XSAVE;
+    if (xstate_compaction_enabled) __wine_syscall_flags |= SYSCALL_HAVE_XSAVEC;
 
     sig_act.sa_mask = server_block_set;
     sig_act.sa_flags = SA_SIGINFO | SA_RESTART | SA_ONSTACK;
@@ -2880,32 +2690,6 @@ void signal_init_process(void)
  error:
     perror("sigaction");
     exit(1);
-}
-
-
-/**********************************************************************
- *		signal_init_syscalls
- */
-void *signal_init_syscalls(void)
-{
-    void *ptr, *syscall_dispatcher;
-
-    extern void __wine_syscall_dispatcher_xsave(void) DECLSPEC_HIDDEN;
-    extern void __wine_syscall_dispatcher_xsavec(void) DECLSPEC_HIDDEN;
-
-    if (xstate_compaction_enabled)
-        syscall_dispatcher = __wine_syscall_dispatcher_xsavec;
-    else if (cpu_info.ProcessorFeatureBits & CPU_FEATURE_XSAVE)
-        syscall_dispatcher = __wine_syscall_dispatcher_xsave;
-    else
-        syscall_dispatcher = __wine_syscall_dispatcher;
-
-    /* sneak in a syscall dispatcher pointer at a fixed address (7ffe1000) */
-    ptr = (char *)user_shared_data + page_size;
-    anon_mmap_fixed( ptr, page_size, PROT_READ | PROT_WRITE, 0 );
-    *(void **)ptr = syscall_dispatcher;
-
-    return syscall_dispatcher;
 }
 
 

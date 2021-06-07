@@ -157,16 +157,6 @@ static inline struct arm64_thread_data *arm64_thread_data(void)
     return (struct arm64_thread_data *)ntdll_get_thread_data()->cpu_data;
 }
 
-void *get_syscall_frame(void)
-{
-    return arm64_thread_data()->syscall_frame;
-}
-
-void set_syscall_frame(void *frame)
-{
-    arm64_thread_data()->syscall_frame = frame;
-}
-
 extern void raise_func_trampoline( EXCEPTION_RECORD *rec, CONTEXT *context, void *dispatcher );
 
 /***********************************************************************
@@ -417,122 +407,6 @@ void signal_restore_full_cpu_context(void)
 
 
 /***********************************************************************
- *           get_server_context_flags
- *
- * Convert CPU-specific flags to generic server flags
- */
-static unsigned int get_server_context_flags( DWORD flags )
-{
-    unsigned int ret = 0;
-
-    flags &= ~CONTEXT_ARM64;  /* get rid of CPU id */
-    if (flags & CONTEXT_CONTROL) ret |= SERVER_CTX_CONTROL;
-    if (flags & CONTEXT_INTEGER) ret |= SERVER_CTX_INTEGER;
-    if (flags & CONTEXT_FLOATING_POINT) ret |= SERVER_CTX_FLOATING_POINT;
-    if (flags & CONTEXT_DEBUG_REGISTERS) ret |= SERVER_CTX_DEBUG_REGISTERS;
-    return ret;
-}
-
-
-/***********************************************************************
- *           context_to_server
- *
- * Convert a register context to the server format.
- */
-NTSTATUS context_to_server( context_t *to, const CONTEXT *from )
-{
-    DWORD i, flags = from->ContextFlags & ~CONTEXT_ARM64;  /* get rid of CPU id */
-
-    memset( to, 0, sizeof(*to) );
-    to->machine = IMAGE_FILE_MACHINE_ARM64;
-
-    if (flags & CONTEXT_CONTROL)
-    {
-        to->flags |= SERVER_CTX_CONTROL;
-        to->integer.arm64_regs.x[29] = from->u.s.Fp;
-        to->integer.arm64_regs.x[30] = from->u.s.Lr;
-        to->ctl.arm64_regs.sp     = from->Sp;
-        to->ctl.arm64_regs.pc     = from->Pc;
-        to->ctl.arm64_regs.pstate = from->Cpsr;
-    }
-    if (flags & CONTEXT_INTEGER)
-    {
-        to->flags |= SERVER_CTX_INTEGER;
-        for (i = 0; i <= 28; i++) to->integer.arm64_regs.x[i] = from->u.X[i];
-    }
-    if (flags & CONTEXT_FLOATING_POINT)
-    {
-        to->flags |= SERVER_CTX_FLOATING_POINT;
-        for (i = 0; i < 32; i++)
-        {
-            to->fp.arm64_regs.q[i].low = from->V[i].s.Low;
-            to->fp.arm64_regs.q[i].high = from->V[i].s.High;
-        }
-        to->fp.arm64_regs.fpcr = from->Fpcr;
-        to->fp.arm64_regs.fpsr = from->Fpsr;
-    }
-    if (flags & CONTEXT_DEBUG_REGISTERS)
-    {
-        to->flags |= SERVER_CTX_DEBUG_REGISTERS;
-        for (i = 0; i < ARM64_MAX_BREAKPOINTS; i++) to->debug.arm64_regs.bcr[i] = from->Bcr[i];
-        for (i = 0; i < ARM64_MAX_BREAKPOINTS; i++) to->debug.arm64_regs.bvr[i] = from->Bvr[i];
-        for (i = 0; i < ARM64_MAX_WATCHPOINTS; i++) to->debug.arm64_regs.wcr[i] = from->Wcr[i];
-        for (i = 0; i < ARM64_MAX_WATCHPOINTS; i++) to->debug.arm64_regs.wvr[i] = from->Wvr[i];
-    }
-    return STATUS_SUCCESS;
-}
-
-
-/***********************************************************************
- *           context_from_server
- *
- * Convert a register context from the server format.
- */
-NTSTATUS context_from_server( CONTEXT *to, const context_t *from )
-{
-    DWORD i;
-
-    if (from->machine != IMAGE_FILE_MACHINE_ARM64) return STATUS_INVALID_PARAMETER;
-
-    to->ContextFlags = CONTEXT_ARM64;
-    if (from->flags & SERVER_CTX_CONTROL)
-    {
-        to->ContextFlags |= CONTEXT_CONTROL;
-        to->u.s.Fp = from->integer.arm64_regs.x[29];
-        to->u.s.Lr = from->integer.arm64_regs.x[30];
-        to->Sp     = from->ctl.arm64_regs.sp;
-        to->Pc     = from->ctl.arm64_regs.pc;
-        to->Cpsr   = from->ctl.arm64_regs.pstate;
-    }
-    if (from->flags & SERVER_CTX_INTEGER)
-    {
-        to->ContextFlags |= CONTEXT_INTEGER;
-        for (i = 0; i <= 28; i++) to->u.X[i] = from->integer.arm64_regs.x[i];
-    }
-    if (from->flags & SERVER_CTX_FLOATING_POINT)
-    {
-        to->ContextFlags |= CONTEXT_FLOATING_POINT;
-        for (i = 0; i < 32; i++)
-        {
-            to->V[i].s.Low = from->fp.arm64_regs.q[i].low;
-            to->V[i].s.High = from->fp.arm64_regs.q[i].high;
-        }
-        to->Fpcr = from->fp.arm64_regs.fpcr;
-        to->Fpsr = from->fp.arm64_regs.fpsr;
-    }
-    if (from->flags & SERVER_CTX_DEBUG_REGISTERS)
-    {
-        to->ContextFlags |= CONTEXT_DEBUG_REGISTERS;
-        for (i = 0; i < ARM64_MAX_BREAKPOINTS; i++) to->Bcr[i] = from->debug.arm64_regs.bcr[i];
-        for (i = 0; i < ARM64_MAX_BREAKPOINTS; i++) to->Bvr[i] = from->debug.arm64_regs.bvr[i];
-        for (i = 0; i < ARM64_MAX_WATCHPOINTS; i++) to->Wcr[i] = from->debug.arm64_regs.wcr[i];
-        for (i = 0; i < ARM64_MAX_WATCHPOINTS; i++) to->Wvr[i] = from->debug.arm64_regs.wvr[i];
-    }
-    return STATUS_SUCCESS;
-}
-
-
-/***********************************************************************
  *              NtSetContextThread  (NTDLL.@)
  *              ZwSetContextThread  (NTDLL.@)
  */
@@ -543,12 +417,8 @@ NTSTATUS WINAPI NtSetContextThread( HANDLE handle, const CONTEXT *context )
 
     if (self && (context->ContextFlags & (CONTEXT_DEBUG_REGISTERS & ~CONTEXT_ARM64))) self = FALSE;
 
-    if (!self)
-    {
-        context_t server_context;
-        context_to_server( &server_context, context );
-        ret = set_thread_context( handle, &server_context, &self );
-    }
+    if (!self) ret = set_thread_context( handle, context, &self, IMAGE_FILE_MACHINE_ARM64 );
+
     if (self && ret == STATUS_SUCCESS)
     {
         arm64_thread_data()->syscall_frame = NULL;
@@ -572,11 +442,7 @@ NTSTATUS WINAPI NtGetContextThread( HANDLE handle, CONTEXT *context )
 
     if (!self)
     {
-        context_t server_context;
-        unsigned int server_flags = get_server_context_flags( context->ContextFlags );
-
-        if ((ret = get_thread_context( handle, &server_context, server_flags, &self ))) return ret;
-        if ((ret = context_from_server( context, &server_context ))) return ret;
+        if ((ret = get_thread_context( handle, context, &self, IMAGE_FILE_MACHINE_ARM64 ))) return ret;
         needed_flags &= ~context->ContextFlags;
     }
 
@@ -602,6 +468,42 @@ NTSTATUS WINAPI NtGetContextThread( HANDLE handle, CONTEXT *context )
         if (needed_flags & CONTEXT_DEBUG_REGISTERS) FIXME( "debug registers not supported\n" );
     }
     return STATUS_SUCCESS;
+}
+
+
+/***********************************************************************
+ *              set_thread_wow64_context
+ */
+NTSTATUS set_thread_wow64_context( HANDLE handle, const void *ctx, ULONG size )
+{
+    BOOL self;
+    USHORT machine;
+
+    switch (size)
+    {
+    case sizeof(I386_CONTEXT): machine = IMAGE_FILE_MACHINE_I386; break;
+    case sizeof(ARM_CONTEXT): machine = IMAGE_FILE_MACHINE_ARMNT; break;
+    default: return STATUS_INFO_LENGTH_MISMATCH;
+    }
+    return set_thread_context( handle, ctx, &self, machine );
+}
+
+
+/***********************************************************************
+ *              get_thread_wow64_context
+ */
+NTSTATUS get_thread_wow64_context( HANDLE handle, void *ctx, ULONG size )
+{
+    BOOL self;
+    USHORT machine;
+
+    switch (size)
+    {
+    case sizeof(I386_CONTEXT): machine = IMAGE_FILE_MACHINE_I386; break;
+    case sizeof(ARM_CONTEXT): machine = IMAGE_FILE_MACHINE_ARMNT; break;
+    default: return STATUS_INFO_LENGTH_MISMATCH;
+    }
+    return get_thread_context( handle, ctx, &self, machine );
 }
 
 
@@ -701,20 +603,21 @@ static void setup_exception( ucontext_t *sigcontext, EXCEPTION_RECORD *rec )
  */
 __ASM_GLOBAL_FUNC( call_user_apc_dispatcher,
                    "mov x19, x0\n\t"             /* context */
-                   "mov x20, x1\n\t"             /* ctx */
-                   "mov x21, x2\n\t"             /* arg1 */
-                   "mov x22, x3\n\t"             /* arg2 */
+                   "mov x20, x1\n\t"             /* arg1 */
+                   "mov x21, x2\n\t"             /* arg2 */
+                   "mov x22, x3\n\t"             /* arg3 */
                    "mov x23, x4\n\t"             /* func */
                    "mov x24, x5\n\t"             /* dispatcher */
+                   "mov x25, x6\n\t"             /* status */
                    "bl " __ASM_NAME("NtCurrentTeb") "\n\t"
-                   "add x25, x0, #0x2f8\n\t"     /* arm64_thread_data()->syscall_frame */
+                   "add x26, x0, #0x2f8\n\t"     /* arm64_thread_data()->syscall_frame */
                    "cbz x19, 1f\n\t"
                    "ldr x0, [x19, #0x100]\n\t"   /* context.Sp */
                    "sub x0, x0, #0x430\n\t"      /* sizeof(CONTEXT) + offsetof(frame,thunk_x29) */
-                   "str xzr, [x25]\n\t"
+                   "str xzr, [x26]\n\t"
                    "mov sp, x0\n\t"
                    "b 2f\n"
-                   "1:\tldr x0, [x25]\n\t"
+                   "1:\tldr x0, [x26]\n\t"
                    "sub sp, x0, #0x390\n\t"
                    "mov w2, #0x400000\n\t"       /* context.ContextFlags = CONTEXT_FULL */
                    "movk w2, #7\n\t"
@@ -722,14 +625,13 @@ __ASM_GLOBAL_FUNC( call_user_apc_dispatcher,
                    "mov x1, sp\n\t"
                    "mov x0, #~1\n\t"
                    "bl " __ASM_NAME("NtGetContextThread") "\n\t"
-                   "mov w2, #0xc0\n\t"           /* context.X0 = STATUS_USER_APC */
-                   "str x2, [sp, #8]\n\t"
-                   "str xzr, [x25]\n\t"
+                   "str x25, [sp, #8]\n\t"       /* context.X0 = status */
+                   "str xzr, [x26]\n\t"
                    "mov x0, sp\n"                /* context */
                    "2:\tldr lr, [x0, #0xf8]\n\t" /* context.Lr */
-                   "mov x1, x20\n\t"             /* ctx */
-                   "mov x2, x21\n\t"             /* arg1 */
-                   "mov x3, x22\n\t"             /* arg2 */
+                   "mov x1, x20\n\t"             /* arg1 */
+                   "mov x2, x21\n\t"             /* arg2 */
+                   "mov x3, x22\n\t"             /* arg3 */
                    "mov x4, x23\n\t"             /* func */
                    "br x24" )
 
@@ -774,7 +676,6 @@ __ASM_GLOBAL_FUNC( call_user_exception_dispatcher,
 static BOOL handle_syscall_fault( ucontext_t *context, EXCEPTION_RECORD *rec )
 {
     struct syscall_frame *frame = arm64_thread_data()->syscall_frame;
-    __WINE_FRAME *wine_frame = (__WINE_FRAME *)NtCurrentTeb()->Tib.ExceptionList;
     DWORD i;
 
     if (!frame) return FALSE;
@@ -810,12 +711,13 @@ static BOOL handle_syscall_fault( ucontext_t *context, EXCEPTION_RECORD *rec )
           (DWORD64)REGn_sig(28, context), (DWORD64)FP_sig(context),
           (DWORD64)LR_sig(context), (DWORD64)SP_sig(context) );
 
-    if ((char *)wine_frame < (char *)frame)
+    if (ntdll_get_thread_data()->jmp_buf)
     {
         TRACE( "returning to handler\n" );
-        REGn_sig(0, context) = (ULONG_PTR)&wine_frame->jmp;
+        REGn_sig(0, context) = (ULONG_PTR)ntdll_get_thread_data()->jmp_buf;
         REGn_sig(1, context) = 1;
         PC_sig(context)      = (ULONG_PTR)__wine_longjmp;
+        ntdll_get_thread_data()->jmp_buf = NULL;
     }
     else
     {
@@ -1128,15 +1030,6 @@ void signal_init_process(void)
  error:
     perror("sigaction");
     exit(1);
-}
-
-
-/**********************************************************************
- *		signal_init_syscalls
- */
-void *signal_init_syscalls(void)
-{
-    return __wine_syscall_dispatcher;
 }
 
 

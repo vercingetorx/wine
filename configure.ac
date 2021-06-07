@@ -2656,48 +2656,11 @@ then
 fi
 
 AC_CHECK_FUNCS(\
-	acosh \
-	acoshf \
-	asinh \
-	asinhf \
-	atanh \
-	atanhf \
-	cbrt \
-	cbrtf \
-	erf \
-	erfc \
-	erfcf \
-	erff \
 	exp2 \
 	exp2f \
-	expm1 \
-	expm1f \
-	fma \
 	fmaf \
-	lgamma \
-	lgammaf \
-	llrint \
-	llrintf \
-	log1p \
-	log1pf \
-	log2 \
-	log2f \
-	lrint \
-	lrintf \
-	nearbyint \
-	nearbyintf \
-	nexttoward \
-	nexttowardf \
-	remainder \
-	remainderf \
-	remquo \
-	remquof \
-	rint \
-	rintf \
 	tgamma \
-	tgammaf \
-	trunc \
-	truncf
+	tgammaf
 )
 LIBS="$ac_save_LIBS"
 
@@ -3691,6 +3654,7 @@ WINE_CONFIG_MAKEFILE(dlls/softpub)
 WINE_CONFIG_MAKEFILE(dlls/sound.drv16,enable_win16)
 WINE_CONFIG_MAKEFILE(dlls/spoolss)
 WINE_CONFIG_MAKEFILE(dlls/spoolss/tests)
+WINE_CONFIG_MAKEFILE(dlls/sppc)
 WINE_CONFIG_MAKEFILE(dlls/srclient)
 WINE_CONFIG_MAKEFILE(dlls/srvcli)
 WINE_CONFIG_MAKEFILE(dlls/sspicli)

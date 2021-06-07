@@ -64,8 +64,6 @@ struct dsound_render
     DWORD buf_size;
     DWORD last_playpos, writepos;
 
-    REFERENCE_TIME play_time;
-
     LONG volume;
     LONG pan;
 };
@@ -122,10 +120,9 @@ static void DSoundRender_UpdatePositions(struct dsound_render *This, DWORD *seqw
         old_writepos += This->buf_size;
 
     IDirectSoundBuffer_GetCurrentPosition(This->dsbuffer, &playpos, &writepos);
-    if (old_playpos > playpos) {
+    if (old_playpos > playpos)
         adv = This->buf_size + playpos - old_playpos;
-        This->play_time += time_from_pos(This, This->buf_size);
-    } else
+    else
         adv = playpos - old_playpos;
     This->last_playpos = playpos;
     if (adv) {
@@ -464,7 +461,8 @@ static HRESULT dsound_render_sink_eos(struct strmbase_sink *iface)
 
     filter->eos = TRUE;
 
-    if (graph && SUCCEEDED(IFilterGraph_QueryInterface(graph,
+    if (filter->filter.state == State_Running && graph
+            && SUCCEEDED(IFilterGraph_QueryInterface(graph,
             &IID_IMediaEventSink, (void **)&event_sink)))
     {
         IMediaEventSink_Notify(event_sink, EC_COMPLETE, S_OK,
@@ -602,15 +600,23 @@ static HRESULT dsound_render_init_stream(struct strmbase_filter *iface)
 static HRESULT dsound_render_start_stream(struct strmbase_filter *iface, REFERENCE_TIME start)
 {
     struct dsound_render *filter = impl_from_strmbase_filter(iface);
+    IFilterGraph *graph = filter->filter.graph;
+    IMediaEventSink *event_sink;
 
     filter->stream_start = start;
 
     SetEvent(filter->state_event);
 
     if (filter->sink.pin.peer)
-    {
-        filter->eos = FALSE;
         IDirectSoundBuffer_Play(filter->dsbuffer, 0, 0, DSBPLAY_LOOPING);
+
+    if (filter->eos && graph
+            && SUCCEEDED(IFilterGraph_QueryInterface(graph,
+            &IID_IMediaEventSink, (void **)&event_sink)))
+    {
+        IMediaEventSink_Notify(event_sink, EC_COMPLETE, S_OK,
+                (LONG_PTR)&filter->filter.IBaseFilter_iface);
+        IMediaEventSink_Release(event_sink);
     }
 
     return S_OK;

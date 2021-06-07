@@ -156,15 +156,11 @@ static void dump_apc_call( const char *prefix, const apc_call_t *call )
         fprintf( stderr, "APC_NONE" );
         break;
     case APC_USER:
-        dump_uint64( "APC_USER,func=", &call->user.user.func );
-        dump_uint64( ",args={", &call->user.user.args[0] );
-        dump_uint64( ",", &call->user.user.args[1] );
-        dump_uint64( ",", &call->user.user.args[2] );
+        dump_uint64( "APC_USER,func=", &call->user.func );
+        dump_uint64( ",args={", &call->user.args[0] );
+        dump_uint64( ",", &call->user.args[1] );
+        dump_uint64( ",", &call->user.args[2] );
         fputc( '}', stderr );
-        break;
-    case APC_TIMER:
-        dump_timeout( "APC_TIMER,time=", &call->user.timer.time );
-        dump_uint64( ",arg=", &call->user.timer.arg );
         break;
     case APC_ASYNC_IO:
         dump_uint64( "APC_ASYNC_IO,user=", &call->async_io.user );
@@ -395,6 +391,29 @@ static void dump_irp_params( const char *prefix, const irp_params_t *data )
     }
 }
 
+static void dump_rawinput( const char *prefix, const union rawinput *rawinput )
+{
+    switch (rawinput->type)
+    {
+    case RIM_TYPEMOUSE:
+        fprintf( stderr, "%s{type=MOUSE,x=%d,y=%d,data=%08x}", prefix, rawinput->mouse.x,
+                 rawinput->mouse.y, rawinput->mouse.data );
+        break;
+    case RIM_TYPEKEYBOARD:
+        fprintf( stderr, "%s{type=KEYBOARD,message=%04x,vkey=%04hx,scan=%04hx}", prefix,
+                 rawinput->kbd.message, rawinput->kbd.vkey, rawinput->kbd.scan );
+        break;
+    case RIM_TYPEHID:
+        fprintf( stderr, "%s{type=HID,device=%04x,param=%04x,page=%04hx,usage=%04hx,count=%u,length=%u}",
+                 prefix, rawinput->hid.device, rawinput->hid.param, rawinput->hid.usage_page,
+                 rawinput->hid.usage, rawinput->hid.count, rawinput->hid.length );
+        break;
+    default:
+        fprintf( stderr, "%s{type=%04x}", prefix, rawinput->type );
+        break;
+    }
+}
+
 static void dump_hw_input( const char *prefix, const hw_input_t *input )
 {
     switch (input->type)
@@ -415,6 +434,12 @@ static void dump_hw_input( const char *prefix, const hw_input_t *input )
     case INPUT_HARDWARE:
         fprintf( stderr, "%s{type=HARDWARE,msg=%04x", prefix, input->hw.msg );
         dump_uint64( ",lparam=", &input->hw.lparam );
+        switch (input->hw.msg)
+        {
+        case WM_INPUT:
+        case WM_INPUT_DEVICE_CHANGE:
+            dump_rawinput( ",rawinput=", &input->hw.rawinput );
+        }
         fputc( '}', stderr );
         break;
     default:
@@ -1344,6 +1369,38 @@ static void dump_varargs_handle_infos( const char *prefix, data_size_t size )
     fputc( '}', stderr );
 }
 
+static void dump_varargs_poll_socket_input( const char *prefix, data_size_t size )
+{
+    const struct poll_socket_input *input;
+
+    fprintf( stderr, "%s{", prefix );
+    while (size >= sizeof(*input))
+    {
+        input = cur_data;
+        fprintf( stderr, "{socket=%04x,flags=%08x}", input->socket, input->flags );
+        size -= sizeof(*input);
+        remove_data( sizeof(*input) );
+        if (size) fputc( ',', stderr );
+    }
+    fputc( '}', stderr );
+}
+
+static void dump_varargs_poll_socket_output( const char *prefix, data_size_t size )
+{
+    const struct poll_socket_output *output;
+
+    fprintf( stderr, "%s{", prefix );
+    while (size >= sizeof(*output))
+    {
+        output = cur_data;
+        fprintf( stderr, "{flags=%08x,status=%s}", output->flags, get_status_name( output->status ) );
+        size -= sizeof(*output);
+        remove_data( sizeof(*output) );
+        if (size) fputc( ',', stderr );
+    }
+    fputc( '}', stderr );
+}
+
 typedef void (*dump_func)( const void *req );
 
 /* Everything below this line is generated automatically by tools/make_requests */
@@ -1360,8 +1417,10 @@ static void dump_new_process_request( const struct new_process_request *req )
     fprintf( stderr, ", machine=%04x", req->machine );
     fprintf( stderr, ", info_size=%u", req->info_size );
     fprintf( stderr, ", handles_size=%u", req->handles_size );
+    fprintf( stderr, ", jobs_size=%u", req->jobs_size );
     dump_varargs_object_attributes( ", objattr=", cur_size );
     dump_varargs_uints( ", handles=", min(cur_size,req->handles_size) );
+    dump_varargs_uints( ", jobs=", min(cur_size,req->jobs_size) );
     dump_varargs_startup_info( ", info=", min(cur_size,req->info_size) );
     dump_varargs_unicode_str( ", env=", cur_size );
 }
@@ -1412,6 +1471,9 @@ static void dump_get_startup_info_reply( const struct get_startup_info_reply *re
 
 static void dump_init_process_done_request( const struct init_process_done_request *req )
 {
+    dump_uint64( " teb=", &req->teb );
+    dump_uint64( ", peb=", &req->peb );
+    dump_uint64( ", ldt_copy=", &req->ldt_copy );
 }
 
 static void dump_init_process_done_reply( const struct init_process_done_reply *req )
@@ -1425,9 +1487,6 @@ static void dump_init_first_thread_request( const struct init_first_thread_reque
     fprintf( stderr, " unix_pid=%d", req->unix_pid );
     fprintf( stderr, ", unix_tid=%d", req->unix_tid );
     fprintf( stderr, ", debug_level=%d", req->debug_level );
-    dump_uint64( ", teb=", &req->teb );
-    dump_uint64( ", peb=", &req->peb );
-    dump_uint64( ", ldt_copy=", &req->ldt_copy );
     fprintf( stderr, ", reply_fd=%d", req->reply_fd );
     fprintf( stderr, ", wait_fd=%d", req->wait_fd );
 }
@@ -2050,18 +2109,51 @@ static void dump_get_socket_info_reply( const struct get_socket_info_reply *req 
     fprintf( stderr, ", protocol=%d", req->protocol );
 }
 
-static void dump_enable_socket_event_request( const struct enable_socket_event_request *req )
-{
-    fprintf( stderr, " handle=%04x", req->handle );
-    fprintf( stderr, ", mask=%08x", req->mask );
-    fprintf( stderr, ", sstate=%08x", req->sstate );
-    fprintf( stderr, ", cstate=%08x", req->cstate );
-}
-
 static void dump_set_socket_deferred_request( const struct set_socket_deferred_request *req )
 {
     fprintf( stderr, " handle=%04x", req->handle );
     fprintf( stderr, ", deferred=%04x", req->deferred );
+}
+
+static void dump_recv_socket_request( const struct recv_socket_request *req )
+{
+    fprintf( stderr, " oob=%d", req->oob );
+    dump_async_data( ", async=", &req->async );
+    fprintf( stderr, ", status=%08x", req->status );
+    fprintf( stderr, ", total=%08x", req->total );
+}
+
+static void dump_recv_socket_reply( const struct recv_socket_reply *req )
+{
+    fprintf( stderr, " wait=%04x", req->wait );
+    fprintf( stderr, ", options=%08x", req->options );
+}
+
+static void dump_poll_socket_request( const struct poll_socket_request *req )
+{
+    dump_async_data( " async=", &req->async );
+    dump_timeout( ", timeout=", &req->timeout );
+    dump_varargs_poll_socket_input( ", sockets=", cur_size );
+}
+
+static void dump_poll_socket_reply( const struct poll_socket_reply *req )
+{
+    fprintf( stderr, " wait=%04x", req->wait );
+    fprintf( stderr, ", options=%08x", req->options );
+    dump_varargs_poll_socket_output( ", sockets=", cur_size );
+}
+
+static void dump_send_socket_request( const struct send_socket_request *req )
+{
+    dump_async_data( " async=", &req->async );
+    fprintf( stderr, ", status=%08x", req->status );
+    fprintf( stderr, ", total=%08x", req->total );
+}
+
+static void dump_send_socket_reply( const struct send_socket_reply *req )
+{
+    fprintf( stderr, " wait=%04x", req->wait );
+    fprintf( stderr, ", options=%08x", req->options );
 }
 
 static void dump_get_next_console_request_request( const struct get_next_console_request_request *req )
@@ -2627,6 +2719,7 @@ static void dump_send_hardware_message_request( const struct send_hardware_messa
     fprintf( stderr, " win=%08x", req->win );
     dump_hw_input( ", input=", &req->input );
     fprintf( stderr, ", flags=%08x", req->flags );
+    dump_varargs_bytes( ", report=", cur_size );
 }
 
 static void dump_send_hardware_message_reply( const struct send_hardware_message_reply *req )
@@ -4138,6 +4231,7 @@ static void dump_get_kernel_object_handle_reply( const struct get_kernel_object_
 
 static void dump_make_process_system_request( const struct make_process_system_request *req )
 {
+    fprintf( stderr, " handle=%04x", req->handle );
 }
 
 static void dump_make_process_system_reply( const struct make_process_system_reply *req )
@@ -4508,8 +4602,10 @@ static const dump_func req_dumpers[REQ_NB_REQUESTS] = {
     (dump_func)dump_set_socket_event_request,
     (dump_func)dump_get_socket_event_request,
     (dump_func)dump_get_socket_info_request,
-    (dump_func)dump_enable_socket_event_request,
     (dump_func)dump_set_socket_deferred_request,
+    (dump_func)dump_recv_socket_request,
+    (dump_func)dump_poll_socket_request,
+    (dump_func)dump_send_socket_request,
     (dump_func)dump_get_next_console_request_request,
     (dump_func)dump_read_directory_changes_request,
     (dump_func)dump_read_change_request,
@@ -4786,7 +4882,9 @@ static const dump_func reply_dumpers[REQ_NB_REQUESTS] = {
     (dump_func)dump_get_socket_event_reply,
     (dump_func)dump_get_socket_info_reply,
     NULL,
-    NULL,
+    (dump_func)dump_recv_socket_reply,
+    (dump_func)dump_poll_socket_reply,
+    (dump_func)dump_send_socket_reply,
     (dump_func)dump_get_next_console_request_reply,
     NULL,
     (dump_func)dump_read_change_reply,
@@ -5062,8 +5160,10 @@ static const char * const req_names[REQ_NB_REQUESTS] = {
     "set_socket_event",
     "get_socket_event",
     "get_socket_info",
-    "enable_socket_event",
     "set_socket_deferred",
+    "recv_socket",
+    "poll_socket",
+    "send_socket",
     "get_next_console_request",
     "read_directory_changes",
     "read_change",
@@ -5301,6 +5401,7 @@ static const struct
     { "CANT_OPEN_ANONYMOUS",         STATUS_CANT_OPEN_ANONYMOUS },
     { "CHILD_MUST_BE_VOLATILE",      STATUS_CHILD_MUST_BE_VOLATILE },
     { "CONNECTION_ABORTED",          STATUS_CONNECTION_ABORTED },
+    { "CONNECTION_ACTIVE",           STATUS_CONNECTION_ACTIVE },
     { "CONNECTION_REFUSED",          STATUS_CONNECTION_REFUSED },
     { "CONNECTION_RESET",            STATUS_CONNECTION_RESET },
     { "DEBUGGER_INACTIVE",           STATUS_DEBUGGER_INACTIVE },

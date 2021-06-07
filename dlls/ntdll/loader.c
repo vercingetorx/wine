@@ -78,7 +78,6 @@ const struct unix_funcs *unix_funcs = NULL;
 const WCHAR windows_dir[] = L"C:\\windows";
 /* system directory with trailing backslash */
 const WCHAR system_dir[] = L"C:\\windows\\system32\\";
-const WCHAR syswow64_dir[] = L"C:\\windows\\syswow64\\";
 
 HMODULE kernel32_handle = 0;
 
@@ -2866,7 +2865,7 @@ static NTSTATUS load_dll( const WCHAR *load_path, const WCHAR *libname, const WC
     HANDLE mapping = 0;
     SECTION_IMAGE_INFORMATION image_info;
     NTSTATUS nts;
-    void *prev;
+    ULONG64 prev;
 
     TRACE( "looking for %s in %s\n", debugstr_w(libname), debugstr_w(load_path) );
 
@@ -2885,8 +2884,16 @@ static NTSTATUS load_dll( const WCHAR *load_path, const WCHAR *libname, const WC
 
     if (nts && nts != STATUS_INVALID_IMAGE_NOT_MZ) goto done;
 
-    prev = NtCurrentTeb()->Tib.ArbitraryUserPointer;
-    NtCurrentTeb()->Tib.ArbitraryUserPointer = nt_name.Buffer + 4;
+    if (NtCurrentTeb64())
+    {
+        prev = NtCurrentTeb64()->Tib.ArbitraryUserPointer;
+        NtCurrentTeb64()->Tib.ArbitraryUserPointer = (ULONG_PTR)(nt_name.Buffer + 4);
+    }
+    else
+    {
+        prev = (ULONG_PTR)NtCurrentTeb()->Tib.ArbitraryUserPointer;
+        NtCurrentTeb()->Tib.ArbitraryUserPointer = nt_name.Buffer + 4;
+    }
 
     switch (nts)
     {
@@ -2898,7 +2905,11 @@ static NTSTATUS load_dll( const WCHAR *load_path, const WCHAR *libname, const WC
         nts = load_native_dll( load_path, &nt_name, mapping, &image_info, &id, flags, pwm );
         break;
     }
-    NtCurrentTeb()->Tib.ArbitraryUserPointer = prev;
+
+    if (NtCurrentTeb64())
+        NtCurrentTeb64()->Tib.ArbitraryUserPointer = prev;
+    else
+        NtCurrentTeb()->Tib.ArbitraryUserPointer = (void *)(ULONG_PTR)prev;
 
 done:
     if (nts == STATUS_SUCCESS)
@@ -3683,12 +3694,10 @@ static void init_wow64(void)
 
     if (!NtCurrentTeb64()) return;
     peb64 = UlongToPtr( NtCurrentTeb64()->Peb );
-    peb64->ImageBaseAddress = PtrToUlong( peb->ImageBaseAddress );
     peb64->OSMajorVersion   = peb->OSMajorVersion;
     peb64->OSMinorVersion   = peb->OSMinorVersion;
     peb64->OSBuildNumber    = peb->OSBuildNumber;
     peb64->OSPlatformId     = peb->OSPlatformId;
-    peb64->SessionId        = peb->SessionId;
 
     map_wow64cpu();
 }

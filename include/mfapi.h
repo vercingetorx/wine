@@ -552,8 +552,10 @@ HRESULT WINAPI MFTEnumEx(GUID category, UINT32 flags, const MFT_REGISTER_TYPE_IN
                          UINT32 *pcount);
 HRESULT WINAPI MFInitAttributesFromBlob(IMFAttributes *attributes, const UINT8 *buffer, UINT size);
 HRESULT WINAPI MFInitMediaTypeFromWaveFormatEx(IMFMediaType *mediatype, const WAVEFORMATEX *format, UINT32 size);
+HRESULT WINAPI MFInitVideoFormat_RGB(MFVIDEOFORMAT *format, DWORD width, DWORD height, DWORD d3dformat);
 HRESULT WINAPI MFInvokeCallback(IMFAsyncResult *result);
 LONGLONG WINAPI MFllMulDiv(LONGLONG val, LONGLONG num, LONGLONG denom, LONGLONG factor);
+HRESULT WINAPI MFLockDXGIDeviceManager(UINT *token, IMFDXGIDeviceManager **manager);
 HRESULT WINAPI MFLockPlatform(void);
 HRESULT WINAPI MFLockSharedWorkQueue(const WCHAR *name, LONG base_priority, DWORD *taskid, DWORD *queue);
 DXGI_FORMAT WINAPI MFMapDX9FormatToDXGIFormat(DWORD format);
@@ -580,6 +582,7 @@ HRESULT WINAPI MFTRegisterLocalByCLSID(REFCLSID clsid, REFGUID category, LPCWSTR
 HRESULT WINAPI MFRemovePeriodicCallback(DWORD key);
 HRESULT WINAPI MFShutdown(void);
 HRESULT WINAPI MFStartup(ULONG version, DWORD flags);
+HRESULT WINAPI MFUnlockDXGIDeviceManager(void);
 HRESULT WINAPI MFUnlockPlatform(void);
 HRESULT WINAPI MFUnlockWorkQueue(DWORD queue);
 HRESULT WINAPI MFUnregisterPlatformFromMMCSS(void);

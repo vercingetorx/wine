@@ -920,7 +920,7 @@ static void wined3d_texture_update_map_binding(struct wined3d_texture *texture)
     texture->update_map_binding = 0;
 }
 
-void wined3d_texture_set_map_binding(struct wined3d_texture *texture, DWORD map_binding)
+static void wined3d_texture_set_map_binding(struct wined3d_texture *texture, DWORD map_binding)
 {
     texture->update_map_binding = map_binding;
     if (!texture->resource.map_count)
@@ -1297,7 +1297,7 @@ void wined3d_texture_gl_bind(struct wined3d_texture_gl *texture_gl,
 
     if (texture_gl->t.flags & WINED3D_TEXTURE_COND_NP2)
     {
-        /* Conditinal non power of two textures use a different clamping
+        /* Conditional non power of two textures use a different clamping
          * default. If we're using the GL_WINE_normalized_texrect partial
          * driver emulation, we're dealing with a GL_TEXTURE_2D texture which
          * has the address mode set to repeat - something that prevents us
@@ -1741,7 +1741,7 @@ DWORD CDECL wined3d_texture_set_lod(struct wined3d_texture *texture, DWORD lod)
         wined3d_texture_gl(texture)->texture_rgb.base_level = ~0u;
         wined3d_texture_gl(texture)->texture_srgb.base_level = ~0u;
         if (resource->bind_count)
-            wined3d_cs_emit_set_sampler_state(device->cs, texture->sampler, WINED3D_SAMP_MAX_MIP_LEVEL,
+            wined3d_device_context_emit_set_sampler_state(&device->cs->c, texture->sampler, WINED3D_SAMP_MAX_MIP_LEVEL,
                     device->cs->c.state->sampler_states[texture->sampler][WINED3D_SAMP_MAX_MIP_LEVEL]);
     }
 

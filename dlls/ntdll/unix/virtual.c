@@ -104,7 +104,34 @@ struct file_view
     unsigned int  protect;       /* protection for all pages at allocation time and SEC_* flags */
 };
 
-#define __EXCEPT_SYSCALL __EXCEPT_HANDLER(0)
+#undef __TRY
+#undef __EXCEPT
+#undef __ENDTRY
+
+#define __TRY \
+    do { __wine_jmp_buf __jmp; \
+         int __first = 1; \
+         assert( !ntdll_get_thread_data()->jmp_buf ); \
+         for (;;) if (!__first) \
+         { \
+             do {
+
+#define __EXCEPT \
+             } while(0); \
+             ntdll_get_thread_data()->jmp_buf = NULL; \
+             break; \
+         } else { \
+             if (__wine_setjmpex( &__jmp, NULL )) { \
+                 do {
+
+#define __ENDTRY \
+                 } while (0); \
+                 break; \
+             } \
+             ntdll_get_thread_data()->jmp_buf = &__jmp; \
+             __first = 0; \
+         } \
+    } while (0);
 
 /* per-page protection flags */
 #define VPROT_READ       0x01
@@ -722,7 +749,9 @@ static void free_ranges_insert_view( struct file_view *view )
         (range->end == view_base && next->base >= view_end))
     {
         /* on Win64, assert that it's correctly aligned so we're not going to be in trouble later */
-        assert( (!is_win64 && !is_wow64) || view->base == view_base );
+#ifdef _WIN64
+        assert( view->base == view_base );
+#endif
         WARN( "range %p - %p is already mapped\n", view_base, view_end );
         return;
     }
@@ -2810,27 +2839,8 @@ NTSTATUS virtual_create_builtin_view( void *module, const UNICODE_STRING *nt_nam
 }
 
 
-/* set some initial values in the new PEB */
-static PEB *init_peb( void *ptr )
-{
-    PEB32 *peb32 = ptr;
-    PEB64 *peb64 = (PEB64 *)((char *)ptr + page_size);
-
-    peb32->OSMajorVersion = peb64->OSMajorVersion = 6;
-    peb32->OSMinorVersion = peb64->OSMinorVersion = 1;
-    peb32->OSBuildNumber  = peb64->OSBuildNumber  = 0x1db1;
-    peb32->OSPlatformId   = peb64->OSPlatformId   = VER_PLATFORM_WIN32_NT;
-    peb32->SessionId      = peb64->SessionId      = 1;
-#ifdef _WIN64
-    return (PEB *)peb64;
-#else
-    return (PEB *)peb32;
-#endif
-}
-
-
 /* set some initial values in a new TEB */
-static TEB *init_teb( void *ptr, PEB *peb )
+static TEB *init_teb( void *ptr, PEB *peb, BOOL is_wow )
 {
     struct ntdll_thread_data *thread_data;
     TEB *teb;
@@ -2839,7 +2849,7 @@ static TEB *init_teb( void *ptr, PEB *peb )
 
 #ifdef _WIN64
     teb = (TEB *)teb64;
-    teb32->Peb = PtrToUlong( (char *)peb - page_size );
+    teb32->Peb = PtrToUlong( (char *)peb + page_size );
     teb32->Tib.Self = PtrToUlong( teb32 );
     teb32->Tib.ExceptionList = ~0u;
     teb32->ActivationContextStackPointer = PtrToUlong( &teb32->ActivationContextStack );
@@ -2848,9 +2858,12 @@ static TEB *init_teb( void *ptr, PEB *peb )
             PtrToUlong( &teb32->ActivationContextStack.FrameListCache );
     teb32->StaticUnicodeString.Buffer = PtrToUlong( teb32->StaticUnicodeBuffer );
     teb32->StaticUnicodeString.MaximumLength = sizeof( teb32->StaticUnicodeBuffer );
+    teb32->GdiBatchCount = PtrToUlong( teb64 );
+    teb32->WowTebOffset  = -teb_offset;
+    if (is_wow) teb64->WowTebOffset = teb_offset;
 #else
     teb = (TEB *)teb32;
-    teb64->Peb = PtrToUlong( (char *)peb + page_size );
+    teb64->Peb = PtrToUlong( (char *)peb - page_size );
     teb64->Tib.Self = PtrToUlong( teb64 );
     teb64->Tib.ExceptionList = PtrToUlong( teb32 );
     teb64->ActivationContextStackPointer = PtrToUlong( &teb64->ActivationContextStack );
@@ -2859,6 +2872,12 @@ static TEB *init_teb( void *ptr, PEB *peb )
             PtrToUlong( &teb64->ActivationContextStack.FrameListCache );
     teb64->StaticUnicodeString.Buffer = PtrToUlong( teb64->StaticUnicodeBuffer );
     teb64->StaticUnicodeString.MaximumLength = sizeof( teb64->StaticUnicodeBuffer );
+    teb64->WowTebOffset = teb_offset;
+    if (is_wow)
+    {
+        teb32->GdiBatchCount = PtrToUlong( teb64 );
+        teb32->WowTebOffset  = -teb_offset;
+    }
 #endif
     teb->Peb = peb;
     teb->Tib.Self = &teb->Tib;
@@ -2883,7 +2902,6 @@ static TEB *init_teb( void *ptr, PEB *peb )
  */
 TEB *virtual_alloc_first_teb(void)
 {
-    struct ntdll_thread_data *thread_data;
     TEB *teb;
     PEB *peb;
     void *ptr;
@@ -2907,11 +2925,9 @@ TEB *virtual_alloc_first_teb(void)
     ptr = (char *)teb_block + 30 * block_size;
     data_size = 2 * block_size;
     NtAllocateVirtualMemory( NtCurrentProcess(), (void **)&ptr, 0, &data_size, MEM_COMMIT, PAGE_READWRITE );
-    peb = init_peb( (char *)teb_block + 31 * block_size );
-    teb = init_teb( ptr, peb );
+    peb = (PEB *)((char *)teb_block + 31 * block_size + (is_win64 ? 0 : page_size));
+    teb = init_teb( ptr, peb, FALSE );
     *(ULONG_PTR *)&peb->CloudFileFlags = get_image_address();
-    thread_data = (struct ntdll_thread_data *)&teb->GdiTebBatch;
-    thread_data->debug_info = (struct debug_info *)((char *)teb_block + 31 * block_size + 2 * page_size);
     return teb;
 }
 
@@ -2953,7 +2969,7 @@ NTSTATUS virtual_alloc_teb( TEB **ret_teb )
         NtAllocateVirtualMemory( NtCurrentProcess(), (void **)&ptr, 0, &block_size,
                                  MEM_COMMIT, PAGE_READWRITE );
     }
-    *ret_teb = teb = init_teb( ptr, NtCurrentTeb()->Peb );
+    *ret_teb = teb = init_teb( ptr, NtCurrentTeb()->Peb, !!NtCurrentTeb()->WowTebOffset );
     server_leave_uninterrupted_section( &virtual_mutex, &sigset );
 
     if ((status = signal_alloc_thread( teb )))
@@ -2987,6 +3003,21 @@ void virtual_free_teb( TEB *teb )
     {
         size = 0;
         NtFreeVirtualMemory( GetCurrentProcess(), &thread_data->start_stack, &size, MEM_RELEASE );
+    }
+    if (teb->WowTebOffset)
+    {
+#ifdef _WIN64
+        TEB32 *teb32 = (TEB32 *)((char *)teb + teb->WowTebOffset);
+        void *addr = ULongToPtr( teb32->DeallocationStack );
+#else
+        TEB64 *teb64 = (TEB64 *)((char *)teb + teb->WowTebOffset);
+        void *addr = ULongToPtr( teb64->DeallocationStack );
+#endif
+        if (addr)
+        {
+            size = 0;
+            NtFreeVirtualMemory( GetCurrentProcess(), &addr, &size, MEM_RELEASE );
+        }
     }
 
     server_enter_uninterrupted_section( &virtual_mutex, &sigset );
@@ -3352,9 +3383,9 @@ ssize_t virtual_locked_pread( int fd, void *addr, size_t size, off_t offset )
 
 
 /***********************************************************************
- *           __wine_locked_recvmsg   (NTDLL.@)
+ *           virtual_locked_recvmsg
  */
-ssize_t CDECL __wine_locked_recvmsg( int fd, struct msghdr *hdr, int flags )
+ssize_t virtual_locked_recvmsg( int fd, struct msghdr *hdr, int flags )
 {
     sigset_t sigset;
     size_t i;
@@ -3424,7 +3455,7 @@ BOOL virtual_check_buffer_for_read( const void *ptr, SIZE_T size )
         dummy = p[0];
         dummy = p[count - 1];
     }
-    __EXCEPT_SYSCALL
+    __EXCEPT
     {
         return FALSE;
     }
@@ -3457,7 +3488,7 @@ BOOL virtual_check_buffer_for_write( void *ptr, SIZE_T size )
         p[0] |= 0;
         p[count - 1] |= 0;
     }
-    __EXCEPT_SYSCALL
+    __EXCEPT
     {
         return FALSE;
     }
@@ -3650,7 +3681,9 @@ NTSTATUS WINAPI NtAllocateVirtualMemory( HANDLE process, PVOID *ret, ULONG_PTR z
 
     if (!size) return STATUS_INVALID_PARAMETER;
     if (zero_bits > 21 && zero_bits < 32) return STATUS_INVALID_PARAMETER_3;
-    if (!is_win64 && !is_wow64 && zero_bits >= 32) return STATUS_INVALID_PARAMETER_3;
+#ifndef _WIN64
+    if (!is_wow64 && zero_bits >= 32) return STATUS_INVALID_PARAMETER_3;
+#endif
 
     if (process != NtCurrentProcess())
     {
@@ -4320,8 +4353,6 @@ NTSTATUS WINAPI NtMapViewOfSection( HANDLE handle, HANDLE process, PVOID *addr_p
     /* Check parameters */
     if (zero_bits > 21 && zero_bits < 32)
         return STATUS_INVALID_PARAMETER_4;
-    if (!is_win64 && !is_wow64 && zero_bits >= 32)
-        return STATUS_INVALID_PARAMETER_4;
 
     /* If both addr_ptr and zero_bits are passed, they have match */
     if (*addr_ptr && zero_bits && zero_bits < 32 &&
@@ -4332,10 +4363,14 @@ NTSTATUS WINAPI NtMapViewOfSection( HANDLE handle, HANDLE process, PVOID *addr_p
         return STATUS_INVALID_PARAMETER_4;
 
 #ifndef _WIN64
-    if (!is_wow64 && (alloc_type & AT_ROUND_TO_PAGE))
+    if (!is_wow64)
     {
-        *addr_ptr = ROUND_ADDR( *addr_ptr, page_mask );
-        mask = page_mask;
+        if (zero_bits >= 32) return STATUS_INVALID_PARAMETER_4;
+        if (alloc_type & AT_ROUND_TO_PAGE)
+        {
+            *addr_ptr = ROUND_ADDR( *addr_ptr, page_mask );
+            mask = page_mask;
+        }
     }
 #endif
 

@@ -324,6 +324,19 @@ static char* get_temp_file(const char* prefix, const char* suffix)
     return tmp;
 }
 
+static int is_pe_target( const struct options *opts )
+{
+    switch(opts->target_platform)
+    {
+    case PLATFORM_MINGW:
+    case PLATFORM_CYGWIN:
+    case PLATFORM_WINDOWS:
+        return 1;
+    default:
+        return 0;
+    }
+}
+
 enum tool
 {
     TOOL_CC,
@@ -581,6 +594,7 @@ static strarray *get_link_args( struct options *opts, const char *output_name )
         }
         if (!try_link( opts->prefix, link_args, "-Wl,-z,max-page-size=0x1000"))
             strarray_add( flags, "-Wl,-z,max-page-size=0x1000");
+        if (opts->unix_lib) strarray_add( flags, strmake( "-Wl,-soname,%s.so", output_name ));
         break;
     }
 
@@ -1069,14 +1083,27 @@ static const char *find_libgcc(const strarray *prefix, const strarray *link_tool
 /* add specified library to the list of files */
 static void add_library( struct options *opts, strarray *lib_dirs, strarray *files, const char *library )
 {
-    char *static_lib, *fullname = 0;
+    char *static_lib, *fullname = 0, *unixlib;
 
-    switch(get_lib_type(opts->target_platform, lib_dirs, library, opts->lib_suffix, &fullname))
+    switch(get_lib_type(opts->target_platform, lib_dirs, library, "lib", opts->lib_suffix, &fullname))
     {
     case file_arh:
         strarray_add(files, strmake("-a%s", fullname));
         break;
     case file_dll:
+        if (opts->unix_lib && opts->subsystem && !strcmp(opts->subsystem, "native"))
+        {
+            if (get_lib_type(opts->target_platform, lib_dirs, library, "", ".so", &unixlib) == file_so)
+            {
+                strarray_add(files, strmake("-s%s", unixlib));
+                free(unixlib);
+            }
+            else
+            {
+                strarray_add(files, strmake("-l%s", library));
+            }
+            break;
+        }
         strarray_add(files, strmake("-d%s", fullname));
         if ((static_lib = find_static_lib(fullname)))
         {
@@ -1103,7 +1130,7 @@ static void build(struct options* opts)
     int generate_app_loader = 1;
     const char *crt_lib = NULL, *entry_point = NULL;
     int fake_module = 0;
-    int is_pe = (opts->target_platform == PLATFORM_WINDOWS || opts->target_platform == PLATFORM_CYGWIN || opts->target_platform == PLATFORM_MINGW);
+    int is_pe = is_pe_target( opts );
     unsigned int j;
 
     /* NOTE: for the files array we'll use the following convention:
@@ -1252,7 +1279,7 @@ static void build(struct options* opts)
     /* set default entry point, if needed */
     if (!opts->entry_point)
     {
-        if (opts->subsystem && !strcmp( opts->subsystem, "native" ))
+        if (opts->subsystem && !opts->unix_lib && !strcmp( opts->subsystem, "native" ))
             entry_point = (is_pe && opts->target_cpu == CPU_x86) ? "DriverEntry@8" : "DriverEntry";
         else if (opts->use_msvcrt && !opts->shared && !opts->win16_app)
             entry_point = opts->unicode_app ? "wmainCRTStartup" : "mainCRTStartup";
@@ -2089,6 +2116,8 @@ int main(int argc, char **argv)
 
     if (opts.processor == proc_cpp) linking = 0;
     if (linking == -1) error("Static linking is not supported\n");
+
+    if (!opts.wine_objdir && is_pe_target( &opts )) opts.use_msvcrt = 1;
 
     if (opts.files->size == 0) forward(&opts);
     else if (linking) build(&opts);

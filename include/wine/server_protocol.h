@@ -262,30 +262,44 @@ struct hw_msg_source
     unsigned int    origin;
 };
 
+union rawinput
+{
+    int type;
+    struct
+    {
+        int            type;
+        unsigned int   message;
+        unsigned short vkey;
+        unsigned short scan;
+    } kbd;
+    struct
+    {
+        int            type;
+        int            x;
+        int            y;
+        unsigned int   data;
+    } mouse;
+    struct
+    {
+        int            type;
+        unsigned int   device;
+        unsigned int   param;
+        unsigned short usage_page;
+        unsigned short usage;
+        unsigned int   count;
+        unsigned int   length;
+    } hid;
+};
+
 struct hardware_msg_data
 {
     lparam_t             info;
+    data_size_t          size;
+    int                  __pad;
     unsigned int         hw_id;
     unsigned int         flags;
     struct hw_msg_source source;
-    union
-    {
-        int type;
-        struct
-        {
-            int            type;
-            unsigned int   message;
-            unsigned short vkey;
-            unsigned short scan;
-        } kbd;
-        struct
-        {
-            int            type;
-            int            x;
-            int            y;
-            unsigned int   data;
-        } mouse;
-    } rawinput;
+    union rawinput       rawinput;
 };
 
 struct callback_msg_data
@@ -330,6 +344,7 @@ typedef union
         int            type;
         unsigned int   msg;
         lparam_t       lparam;
+        union rawinput rawinput;
     } hw;
 } hw_input_t;
 
@@ -444,7 +459,6 @@ enum apc_type
 {
     APC_NONE,
     APC_USER,
-    APC_TIMER,
     APC_ASYNC_IO,
     APC_VIRTUAL_ALLOC,
     APC_VIRTUAL_FREE,
@@ -460,24 +474,12 @@ enum apc_type
     APC_BREAK_PROCESS
 };
 
-typedef union
+typedef struct
 {
-    enum apc_type type;
-    struct
-    {
-        enum apc_type    type;
-        int              __pad;
-        client_ptr_t     func;
-        apc_param_t      args[3];
-    } user;
-    struct
-    {
-        enum apc_type    type;
-        int              __pad;
-        client_ptr_t     func;
-        abstime_t        time;
-        client_ptr_t     arg;
-    } timer;
+    enum apc_type    type;
+    int              __pad;
+    client_ptr_t     func;
+    apc_param_t      args[3];
 } user_apc_t;
 
 typedef union
@@ -830,10 +832,13 @@ struct new_process_request
     char __pad_38[2];
     data_size_t  info_size;
     data_size_t  handles_size;
+    data_size_t  jobs_size;
     /* VARARG(objattr,object_attributes); */
     /* VARARG(handles,uints,handles_size); */
+    /* VARARG(jobs,uints,jobs_size); */
     /* VARARG(info,startup_info,info_size); */
     /* VARARG(env,unicode_str); */
+    char __pad_52[4];
 };
 struct new_process_reply
 {
@@ -899,6 +904,9 @@ struct init_process_done_request
 {
     struct request_header __header;
     char __pad_12[4];
+    client_ptr_t teb;
+    client_ptr_t peb;
+    client_ptr_t ldt_copy;
 };
 struct init_process_done_reply
 {
@@ -916,9 +924,6 @@ struct init_first_thread_request
     int          unix_pid;
     int          unix_tid;
     int          debug_level;
-    client_ptr_t teb;
-    client_ptr_t peb;
-    client_ptr_t ldt_copy;
     int          reply_fd;
     int          wait_fd;
 };
@@ -1775,21 +1780,6 @@ struct get_socket_info_reply
 };
 
 
-
-struct enable_socket_event_request
-{
-    struct request_header __header;
-    obj_handle_t handle;
-    unsigned int mask;
-    unsigned int sstate;
-    unsigned int cstate;
-    char __pad_28[4];
-};
-struct enable_socket_event_reply
-{
-    struct reply_header __header;
-};
-
 struct set_socket_deferred_request
 {
     struct request_header __header;
@@ -1800,6 +1790,70 @@ struct set_socket_deferred_request
 struct set_socket_deferred_reply
 {
     struct reply_header __header;
+};
+
+
+
+struct recv_socket_request
+{
+    struct request_header __header;
+    int          oob;
+    async_data_t async;
+    unsigned int status;
+    unsigned int total;
+};
+struct recv_socket_reply
+{
+    struct reply_header __header;
+    obj_handle_t wait;
+    unsigned int options;
+};
+
+
+struct poll_socket_input
+{
+    obj_handle_t socket;
+    int flags;
+};
+
+struct poll_socket_output
+{
+    int flags;
+    unsigned int status;
+};
+
+
+struct poll_socket_request
+{
+    struct request_header __header;
+    char __pad_12[4];
+    async_data_t async;
+    timeout_t    timeout;
+    /* VARARG(sockets,poll_socket_input); */
+};
+struct poll_socket_reply
+{
+    struct reply_header __header;
+    obj_handle_t wait;
+    unsigned int options;
+    /* VARARG(sockets,poll_socket_output); */
+};
+
+
+
+struct send_socket_request
+{
+    struct request_header __header;
+    char __pad_12[4];
+    async_data_t async;
+    unsigned int status;
+    unsigned int total;
+};
+struct send_socket_reply
+{
+    struct reply_header __header;
+    obj_handle_t wait;
+    unsigned int options;
 };
 
 
@@ -2696,7 +2750,8 @@ struct send_hardware_message_request
     user_handle_t   win;
     hw_input_t      input;
     unsigned int    flags;
-    char __pad_52[4];
+    /* VARARG(report,bytes); */
+    char __pad_60[4];
 };
 struct send_hardware_message_reply
 {
@@ -4886,7 +4941,7 @@ struct get_kernel_object_handle_reply
 struct make_process_system_request
 {
     struct request_header __header;
-    char __pad_12[4];
+    obj_handle_t handle;
 };
 struct make_process_system_reply
 {
@@ -5451,8 +5506,10 @@ enum request
     REQ_set_socket_event,
     REQ_get_socket_event,
     REQ_get_socket_info,
-    REQ_enable_socket_event,
     REQ_set_socket_deferred,
+    REQ_recv_socket,
+    REQ_poll_socket,
+    REQ_send_socket,
     REQ_get_next_console_request,
     REQ_read_directory_changes,
     REQ_read_change,
@@ -5732,8 +5789,10 @@ union generic_request
     struct set_socket_event_request set_socket_event_request;
     struct get_socket_event_request get_socket_event_request;
     struct get_socket_info_request get_socket_info_request;
-    struct enable_socket_event_request enable_socket_event_request;
     struct set_socket_deferred_request set_socket_deferred_request;
+    struct recv_socket_request recv_socket_request;
+    struct poll_socket_request poll_socket_request;
+    struct send_socket_request send_socket_request;
     struct get_next_console_request_request get_next_console_request_request;
     struct read_directory_changes_request read_directory_changes_request;
     struct read_change_request read_change_request;
@@ -6011,8 +6070,10 @@ union generic_reply
     struct set_socket_event_reply set_socket_event_reply;
     struct get_socket_event_reply get_socket_event_reply;
     struct get_socket_info_reply get_socket_info_reply;
-    struct enable_socket_event_reply enable_socket_event_reply;
     struct set_socket_deferred_reply set_socket_deferred_reply;
+    struct recv_socket_reply recv_socket_reply;
+    struct poll_socket_reply poll_socket_reply;
+    struct send_socket_reply send_socket_reply;
     struct get_next_console_request_reply get_next_console_request_reply;
     struct read_directory_changes_reply read_directory_changes_reply;
     struct read_change_reply read_change_reply;
@@ -6233,7 +6294,7 @@ union generic_reply
 
 /* ### protocol_version begin ### */
 
-#define SERVER_PROTOCOL_VERSION 698
+#define SERVER_PROTOCOL_VERSION 711
 
 /* ### protocol_version end ### */
 
