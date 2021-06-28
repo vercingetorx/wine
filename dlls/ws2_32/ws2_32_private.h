@@ -89,9 +89,6 @@
 # undef if_indextoname
 # undef if_nametoindex
 #endif
-#ifdef HAVE_LINUX_FILTER_H
-# include <linux/filter.h>
-#endif
 #ifdef HAVE_IFADDRS_H
 # include <ifaddrs.h>
 #endif
@@ -151,7 +148,6 @@
 #include "winnt.h"
 #define USE_WC_PREFIX   /* For CMSG_DATA */
 #include "iphlpapi.h"
-#include "netioapi.h"
 #include "ip2string.h"
 #include "wine/afd.h"
 #include "wine/server.h"
@@ -194,8 +190,6 @@ struct per_thread_data
     struct WS_hostent *he_buffer;
     struct WS_servent *se_buffer;
     struct WS_protoent *pe_buffer;
-    struct pollfd *fd_cache;
-    unsigned int fd_count;
     int he_len;
     int se_len;
     int pe_len;

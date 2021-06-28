@@ -455,7 +455,7 @@ struct wined3d_cs_map
     enum wined3d_cs_op opcode;
     struct wined3d_resource *resource;
     unsigned int sub_resource_idx;
-    struct wined3d_map_desc *map_desc;
+    void **map_ptr;
     const struct wined3d_box *box;
     DWORD flags;
     HRESULT *hr;
@@ -2214,15 +2214,21 @@ static void wined3d_cs_mt_push_constants(struct wined3d_device_context *context,
 
 static void wined3d_cs_exec_reset_state(struct wined3d_cs *cs, const void *data)
 {
+    const struct wined3d_device *device = cs->c.device;
     const struct wined3d_cs_reset_state *op = data;
+    const struct wined3d_state_entry *state_table;
     unsigned int state;
 
     state_cleanup(&cs->state);
-    wined3d_state_reset(&cs->state, &cs->c.device->adapter->d3d_info);
+    wined3d_state_reset(&cs->state, &device->adapter->d3d_info);
     if (op->invalidate)
     {
+        state_table = device->state_table;
         for (state = 0; state <= STATE_HIGHEST; ++state)
-            device_invalidate_state(cs->c.device, state);
+        {
+            if (state_table[state].representative)
+                device_invalidate_state(device, state);
+        }
     }
 }
 
@@ -2402,12 +2408,11 @@ static void wined3d_cs_exec_map(struct wined3d_cs *cs, const void *data)
     struct wined3d_resource *resource = op->resource;
 
     *op->hr = resource->resource_ops->resource_sub_resource_map(resource,
-            op->sub_resource_idx, op->map_desc, op->box, op->flags);
+            op->sub_resource_idx, op->map_ptr, op->box, op->flags);
 }
 
 static HRESULT wined3d_cs_map(struct wined3d_device_context *context, struct wined3d_resource *resource,
-        unsigned int sub_resource_idx, struct wined3d_map_desc *map_desc, const struct wined3d_box *box,
-        unsigned int flags)
+        unsigned int sub_resource_idx, void **map_ptr, const struct wined3d_box *box, unsigned int flags)
 {
     struct wined3d_cs *cs = wined3d_cs_from_context(context);
     struct wined3d_cs_map *op;
@@ -2423,7 +2428,7 @@ static HRESULT wined3d_cs_map(struct wined3d_device_context *context, struct win
     op->opcode = WINED3D_CS_OP_MAP;
     op->resource = resource;
     op->sub_resource_idx = sub_resource_idx;
-    op->map_desc = map_desc;
+    op->map_ptr = map_ptr;
     op->box = box;
     op->flags = flags;
     op->hr = &hr;
@@ -3357,12 +3362,11 @@ static void wined3d_deferred_context_push_constants(struct wined3d_device_contex
     FIXME("context %p, p %#x, start_idx %u, count %u, constants %p, stub!\n", context, p, start_idx, count, constants);
 }
 
-static HRESULT wined3d_deferred_context_map(struct wined3d_device_context *context,
-        struct wined3d_resource *resource, unsigned int sub_resource_idx,
-        struct wined3d_map_desc *map_desc, const struct wined3d_box *box, unsigned int flags)
+static HRESULT wined3d_deferred_context_map(struct wined3d_device_context *context, struct wined3d_resource *resource,
+        unsigned int sub_resource_idx, void **map_ptr, const struct wined3d_box *box, unsigned int flags)
 {
-    FIXME("context %p, resource %p, sub_resource_idx %u, map_desc %p, box %p, flags %#x, stub!\n",
-            context, resource, sub_resource_idx, map_desc, box, flags);
+    FIXME("context %p, resource %p, sub_resource_idx %u, map_ptr %p, box %p, flags %#x, stub!\n",
+            context, resource, sub_resource_idx, map_ptr, box, flags);
     return E_NOTIMPL;
 }
 

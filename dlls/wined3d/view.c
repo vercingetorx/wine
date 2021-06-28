@@ -773,8 +773,19 @@ static VkImageView wined3d_view_vk_create_vk_image_view(struct wined3d_context_v
     }
     create_info.subresourceRange.baseMipLevel = desc->u.texture.level_idx;
     create_info.subresourceRange.levelCount = desc->u.texture.level_count;
-    create_info.subresourceRange.baseArrayLayer = desc->u.texture.layer_idx;
-    create_info.subresourceRange.layerCount = desc->u.texture.layer_count;
+    if (create_info.viewType == VK_IMAGE_VIEW_TYPE_3D)
+    {
+        if (desc->u.texture.layer_idx || (desc->u.texture.layer_count != texture_vk->t.resource.depth
+                && desc->u.texture.layer_count != ~0u))
+            WARN("Partial 3D texture views are not supported.\n");
+        create_info.subresourceRange.baseArrayLayer = 0;
+        create_info.subresourceRange.layerCount = 1;
+    }
+    else
+    {
+        create_info.subresourceRange.baseArrayLayer = desc->u.texture.layer_idx;
+        create_info.subresourceRange.layerCount = desc->u.texture.layer_count;
+    }
     if ((vr = VK_CALL(vkCreateImageView(device_vk->vk_device, &create_info, NULL, &vk_image_view))) < 0)
     {
         ERR("Failed to create Vulkan image view, vr %s.\n", wined3d_debug_vkresult(vr));
@@ -1594,21 +1605,15 @@ void wined3d_unordered_access_view_set_counter(struct wined3d_unordered_access_v
 void wined3d_unordered_access_view_copy_counter(struct wined3d_unordered_access_view *view,
         struct wined3d_buffer *buffer, unsigned int offset, struct wined3d_context *context)
 {
-    struct wined3d_bo_address dst, src;
-    DWORD dst_location;
+    struct wined3d_const_bo_address src;
 
     if (!view->counter_bo)
         return;
 
-    dst_location = wined3d_buffer_get_memory(buffer, &dst, buffer->locations);
-    dst.addr += offset;
-
     src.buffer_object = view->counter_bo;
     src.addr = NULL;
 
-    wined3d_context_copy_bo_address(context, &dst, &src, sizeof(uint32_t));
-
-    wined3d_buffer_invalidate_location(buffer, ~dst_location);
+    wined3d_buffer_copy_bo_address(buffer, context, offset, &src, sizeof(uint32_t));
 }
 
 void wined3d_unordered_access_view_gl_update(struct wined3d_unordered_access_view_gl *uav_gl,
