@@ -1214,7 +1214,7 @@ static void test_set_getsockopt(void)
     value = 0xdeadbeef;
     err = getsockopt(s, SOL_SOCKET, SO_SNDBUF, (char *)&value, &size);
     ok( !err, "getsockopt(SO_SNDBUF) failed error: %u\n", WSAGetLastError() );
-    todo_wine ok( value == 4096, "expected 4096, got %u\n", value );
+    ok( value == 4096, "expected 4096, got %u\n", value );
 
     /* SO_RCVBUF */
     value = 4096;
@@ -1224,7 +1224,7 @@ static void test_set_getsockopt(void)
     value = 0xdeadbeef;
     err = getsockopt(s, SOL_SOCKET, SO_RCVBUF, (char *)&value, &size);
     ok( !err, "getsockopt(SO_RCVBUF) failed error: %u\n", WSAGetLastError() );
-    todo_wine ok( value == 4096, "expected 4096, got %u\n", value );
+    ok( value == 4096, "expected 4096, got %u\n", value );
 
     /* SO_LINGER */
     for( i = 0; i < ARRAY_SIZE(linger_testvals);i++) {
@@ -10919,7 +10919,7 @@ static void test_timeout(void)
     WSASetLastError(0xdeadbeef);
     ret = getsockopt(client, SOL_SOCKET, SO_RCVTIMEO, (char *)&timeout, &len);
     ok(!ret, "expected success\n");
-    todo_wine ok(!WSAGetLastError(), "got error %u\n", WSAGetLastError());
+    ok(!WSAGetLastError(), "got error %u\n", WSAGetLastError());
     ok(len == sizeof(timeout), "got size %u\n", len);
     ok(!timeout, "got timeout %u\n", timeout);
 
@@ -10927,15 +10927,15 @@ static void test_timeout(void)
     WSASetLastError(0xdeadbeef);
     ret = setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, (char *)&timeout, sizeof(timeout));
     ok(!ret, "expected success\n");
-    todo_wine ok(!WSAGetLastError(), "got error %u\n", WSAGetLastError());
+    ok(!WSAGetLastError(), "got error %u\n", WSAGetLastError());
 
     timeout = 0xdeadbeef;
     len = sizeof(timeout);
     WSASetLastError(0xdeadbeef);
     ret = getsockopt(client, SOL_SOCKET, SO_RCVTIMEO, (char *)&timeout, &len);
     ok(!ret, "expected success\n");
-    todo_wine ok(!WSAGetLastError(), "got error %u\n", WSAGetLastError());
-    todo_wine ok(timeout == 100, "got timeout %u\n", timeout);
+    ok(!WSAGetLastError(), "got error %u\n", WSAGetLastError());
+    ok(timeout == 100, "got timeout %u\n", timeout);
 
     WSASetLastError(0xdeadbeef);
     ret = recv(client, &buffer, 1, 0);
@@ -11011,6 +11011,47 @@ static void test_so_debug(void)
     closesocket(s);
 }
 
+static void test_set_only_options(void)
+{
+    unsigned int i;
+    int ret, len;
+    int value;
+    SOCKET s;
+
+    static const struct
+    {
+        int level;
+        int option;
+    }
+    tests[] =
+    {
+        {IPPROTO_IP, IP_ADD_MEMBERSHIP},
+        {IPPROTO_IP, IP_DROP_MEMBERSHIP},
+        {IPPROTO_IPV6, IPV6_ADD_MEMBERSHIP},
+        {IPPROTO_IPV6, IPV6_DROP_MEMBERSHIP},
+    };
+
+    for (i = 0; i < ARRAY_SIZE(tests); ++i)
+    {
+        if (tests[i].level == IPPROTO_IPV6)
+        {
+            s = socket(AF_INET6, SOCK_STREAM, IPPROTO_TCP);
+            if (s == INVALID_SOCKET) continue;
+        }
+        else
+        {
+            s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        }
+
+        len = sizeof(value);
+        ret = getsockopt(s, tests[i].level, tests[i].option, (char *)&value, &len);
+        ok(ret == -1, "expected failure\n");
+        ok(WSAGetLastError() == WSAENOPROTOOPT, "got error %u\n", WSAGetLastError());
+
+        closesocket(s);
+    }
+}
+
 START_TEST( sock )
 {
     int i;
@@ -11027,6 +11068,7 @@ START_TEST( sock )
     test_ip_pktinfo();
     test_extendedSocketOptions();
     test_so_debug();
+    test_set_only_options();
 
     for (i = 0; i < ARRAY_SIZE(tests); i++)
         do_test(&tests[i]);

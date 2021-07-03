@@ -694,14 +694,6 @@ static inline void release_sock_fd( SOCKET s, int fd )
     close( fd );
 }
 
-static int _get_fd_type(int fd)
-{
-    int sock_type = -1;
-    socklen_t optlen = sizeof(sock_type);
-    getsockopt(fd, SOL_SOCKET, SO_TYPE, (char*) &sock_type, &optlen);
-    return sock_type;
-}
-
 static BOOL set_dont_fragment(SOCKET s, int level, BOOL value)
 {
     int fd, optname;
@@ -911,34 +903,6 @@ static int convert_sockopt(INT *level, INT *optname)
      default: FIXME("Unimplemented or unknown socket level\n");
   }
   return 0;
-}
-
-/* Utility: get the SO_RCVTIMEO or SO_SNDTIMEO socket option
- * from an fd and return the value converted to milli seconds
- * or 0 if there is an infinite time out */
-static inline INT64 get_rcvsnd_timeo( int fd, BOOL is_recv)
-{
-  struct timeval tv;
-  socklen_t len = sizeof(tv);
-  int optname, res;
-
-  if (is_recv)
-#ifdef SO_RCVTIMEO
-      optname = SO_RCVTIMEO;
-#else
-      return 0;
-#endif
-  else
-#ifdef SO_SNDTIMEO
-      optname = SO_SNDTIMEO;
-#else
-      return 0;
-#endif
-
-  res = getsockopt(fd, SOL_SOCKET, optname, &tv, &len);
-  if (res < 0)
-      return 0;
-  return (UINT64)tv.tv_sec * 1000 + tv.tv_usec / 1000;
 }
 
 int
@@ -2088,22 +2052,6 @@ INT WINAPI WS_getsockopt(SOCKET s, INT level,
         case WS_SO_BROADCAST:
             return server_getsockopt( s, IOCTL_AFD_WINE_GET_SO_BROADCAST, optval, optlen );
 
-        /* Handle common cases. The special cases are below, sorted
-         * alphabetically */
-        case WS_SO_RCVBUF:
-        case WS_SO_REUSEADDR:
-        case WS_SO_SNDBUF:
-            if ( (fd = get_sock_fd( s, 0, NULL )) == -1)
-                return SOCKET_ERROR;
-            convert_sockopt(&level, &optname);
-            if (getsockopt(fd, level, optname, optval, (socklen_t *)optlen) != 0 )
-            {
-                SetLastError(wsaErrno());
-                ret = SOCKET_ERROR;
-            }
-            release_sock_fd( s, fd );
-            return ret;
-
         case WS_SO_BSP_STATE:
         {
             CSADDR_INFO *csinfo = (CSADDR_INFO *)optval;
@@ -2220,22 +2168,24 @@ INT WINAPI WS_getsockopt(SOCKET s, INT level,
 
         case WS_SO_LINGER:
         {
+            WSAPROTOCOL_INFOW info;
+            int size;
+
             /* struct linger and LINGER have different sizes */
             if (!optlen || *optlen < sizeof(LINGER) || !optval)
             {
                 SetLastError(WSAEFAULT);
                 return SOCKET_ERROR;
             }
-            if ( (fd = get_sock_fd( s, 0, NULL )) == -1)
-                return SOCKET_ERROR;
 
-            if (_get_fd_type(fd) == SOCK_DGRAM)
+            if (!ws_protocol_info( s, TRUE, &info, &size ))
+                return -1;
+
+            if (info.iSocketType == SOCK_DGRAM)
             {
-                release_sock_fd( s, fd );
                 SetLastError( WSAENOPROTOOPT );
                 return -1;
             }
-            release_sock_fd( s, fd );
 
             return server_getsockopt( s, IOCTL_AFD_WINE_GET_SO_LINGER, optval, optlen );
         }
@@ -2285,48 +2235,40 @@ INT WINAPI WS_getsockopt(SOCKET s, INT level,
             }
             return ret ? 0 : SOCKET_ERROR;
         }
+
+        case WS_SO_RCVBUF:
+            return server_getsockopt( s, IOCTL_AFD_WINE_GET_SO_RCVBUF, optval, optlen );
+
         case WS_SO_RCVTIMEO:
+            return server_getsockopt( s, IOCTL_AFD_WINE_GET_SO_RCVTIMEO, optval, optlen );
+
+        case WS_SO_REUSEADDR:
+            return server_getsockopt( s, IOCTL_AFD_WINE_GET_SO_REUSEADDR, optval, optlen );
+
+        case WS_SO_SNDBUF:
+            return server_getsockopt( s, IOCTL_AFD_WINE_GET_SO_SNDBUF, optval, optlen );
+
         case WS_SO_SNDTIMEO:
-        {
-            INT64 timeout;
+            return server_getsockopt( s, IOCTL_AFD_WINE_GET_SO_SNDTIMEO, optval, optlen );
 
-            if (!optlen || *optlen < sizeof(int)|| !optval)
-            {
-                SetLastError(WSAEFAULT);
-                return SOCKET_ERROR;
-            }
-            if ( (fd = get_sock_fd( s, 0, NULL )) == -1)
-                return SOCKET_ERROR;
-
-            timeout = get_rcvsnd_timeo(fd, optname == WS_SO_RCVTIMEO);
-            *(int *)optval = timeout <= UINT_MAX ? timeout : UINT_MAX;
-
-            release_sock_fd( s, fd );
-            return ret;
-        }
         case WS_SO_TYPE:
         {
-            int sock_type;
+            WSAPROTOCOL_INFOW info;
+            int size;
+
             if (!optlen || *optlen < sizeof(int) || !optval)
             {
                 SetLastError(WSAEFAULT);
                 return SOCKET_ERROR;
             }
-            if ( (fd = get_sock_fd( s, 0, NULL )) == -1)
-                return SOCKET_ERROR;
 
-            sock_type = _get_fd_type(fd);
-            if (sock_type == -1)
-            {
-                SetLastError(wsaErrno());
-                ret = SOCKET_ERROR;
-            }
-            else
-                (*(int *)optval) = convert_socktype_u2w(sock_type);
+            if (!ws_protocol_info( s, TRUE, &info, &size ))
+                return -1;
 
-            release_sock_fd( s, fd );
-            return ret;
+            *(int *)optval = info.iSocketType;
+            return 0;
         }
+
         default:
             TRACE("Unknown SOL_SOCKET optname: 0x%08x\n", optname);
             SetLastError(WSAENOPROTOOPT);
@@ -2491,8 +2433,9 @@ INT WINAPI WS_getsockopt(SOCKET s, INT level,
     case WS_IPPROTO_IP:
         switch(optname)
         {
-        case WS_IP_ADD_MEMBERSHIP:
-        case WS_IP_DROP_MEMBERSHIP:
+        case WS_IP_DONTFRAGMENT:
+            return server_getsockopt( s, IOCTL_AFD_WINE_GET_IP_DONTFRAGMENT, optval, optlen );
+
 #ifdef IP_HDRINCL
         case WS_IP_HDRINCL:
 #endif
@@ -2518,21 +2461,20 @@ INT WINAPI WS_getsockopt(SOCKET s, INT level,
             }
             release_sock_fd( s, fd );
             return ret;
-        case WS_IP_DONTFRAGMENT:
-            return get_dont_fragment(s, IPPROTO_IP, (BOOL *)optval) ? 0 : SOCKET_ERROR;
+
+        default:
+            FIXME( "unrecognized IP option %u\n", optname );
+            /* fall through */
+
+        case WS_IP_ADD_MEMBERSHIP:
+        case WS_IP_DROP_MEMBERSHIP:
+            SetLastError( WSAENOPROTOOPT );
+            return -1;
         }
-        FIXME("Unknown IPPROTO_IP optname 0x%08x\n", optname);
-        return SOCKET_ERROR;
 
     case WS_IPPROTO_IPV6:
         switch(optname)
         {
-#ifdef IPV6_ADD_MEMBERSHIP
-        case WS_IPV6_ADD_MEMBERSHIP:
-#endif
-#ifdef IPV6_DROP_MEMBERSHIP
-        case WS_IPV6_DROP_MEMBERSHIP:
-#endif
         case WS_IPV6_MULTICAST_IF:
         case WS_IPV6_MULTICAST_HOPS:
         case WS_IPV6_MULTICAST_LOOP:
@@ -2553,9 +2495,16 @@ INT WINAPI WS_getsockopt(SOCKET s, INT level,
             return ret;
         case WS_IPV6_DONTFRAG:
             return get_dont_fragment(s, IPPROTO_IPV6, (BOOL *)optval) ? 0 : SOCKET_ERROR;
+
+        default:
+            FIXME( "unrecognized IPv6 option %u\n", optname );
+            /* fall through */
+
+        case WS_IPV6_ADD_MEMBERSHIP:
+        case WS_IPV6_DROP_MEMBERSHIP:
+            SetLastError( WSAENOPROTOOPT );
+            return -1;
         }
-        FIXME("Unknown IPPROTO_IPV6 optname 0x%08x\n", optname);
-        return SOCKET_ERROR;
 
     default:
         WARN("Unknown level: 0x%08x\n", level);
@@ -3508,7 +3457,6 @@ int WINAPI WS_setsockopt(SOCKET s, int level, int optname,
 {
     int fd;
     int woptval;
-    struct timeval tval;
     struct ip_mreq_source mreq_source;
 
     TRACE("(socket %04lx, %s, optval %s, optlen %d)\n", s,
@@ -3559,39 +3507,20 @@ int WINAPI WS_setsockopt(SOCKET s, int level, int optname,
         case WS_SO_OOBINLINE:
             return server_setsockopt( s, IOCTL_AFD_WINE_SET_SO_OOBINLINE, optval, optlen );
 
-        /* Some options need some conversion before they can be sent to
-         * setsockopt. The conversions are done here, then they will fall through
-         * to the general case. Special options that are not passed to
-         * setsockopt follow below that.*/
+        case WS_SO_RCVBUF:
+            return server_setsockopt( s, IOCTL_AFD_WINE_SET_SO_RCVBUF, optval, optlen );
+
+        case WS_SO_RCVTIMEO:
+            return server_setsockopt( s, IOCTL_AFD_WINE_SET_SO_RCVTIMEO, optval, optlen );
+
+        case WS_SO_REUSEADDR:
+            return server_setsockopt( s, IOCTL_AFD_WINE_SET_SO_REUSEADDR, optval, optlen );
 
         case WS_SO_SNDBUF:
-            if (!*(const int *)optval)
-            {
-                FIXME("SO_SNDBUF ignoring request to disable send buffering\n");
-#ifdef __APPLE__
-                return 0;
-#endif
-            }
-            convert_sockopt(&level, &optname);
-            break;
+            return server_setsockopt( s, IOCTL_AFD_WINE_SET_SO_SNDBUF, optval, optlen );
 
-        case WS_SO_RCVBUF:
-            if (*(const int*)optval < 2048)
-            {
-                WARN("SO_RCVBF for %d bytes is too small: ignored\n", *(const int*)optval );
-                return 0;
-            }
-            /* Fall through */
-
-        /* The options listed here don't need any special handling. Thanks to
-         * the conversion happening above, options from there will fall through
-         * to this, too.*/
-        /* BSD socket SO_REUSEADDR is not 100% compatible to winsock semantics.
-         * however, using it the BSD way fixes bug 8513 and seems to be what
-         * most programmers assume, anyway */
-        case WS_SO_REUSEADDR:
-            convert_sockopt(&level, &optname);
-            break;
+        case WS_SO_SNDTIMEO:
+            return server_setsockopt( s, IOCTL_AFD_WINE_SET_SO_SNDTIMEO, optval, optlen );
 
         /* SO_DEBUG is a privileged operation, ignore it. */
         case WS_SO_DEBUG:
@@ -3632,32 +3561,6 @@ int WINAPI WS_setsockopt(SOCKET s, int level, int optname,
             get_per_thread_data()->opentype = *(const int *)optval;
             TRACE("setting global SO_OPENTYPE = 0x%x\n", *((const int*)optval) );
             return 0;
-
-#ifdef SO_RCVTIMEO
-        case WS_SO_RCVTIMEO:
-#endif
-#ifdef SO_SNDTIMEO
-        case WS_SO_SNDTIMEO:
-#endif
-#if defined(SO_RCVTIMEO) || defined(SO_SNDTIMEO)
-            if (optval && optlen == sizeof(UINT32)) {
-                /* WinSock passes milliseconds instead of struct timeval */
-                tval.tv_usec = (*(const UINT32*)optval % 1000) * 1000;
-                tval.tv_sec = *(const UINT32*)optval / 1000;
-                /* min of 500 milliseconds */
-                if (tval.tv_sec == 0 && tval.tv_usec && tval.tv_usec < 500000)
-                    tval.tv_usec = 500000;
-                optlen = sizeof(struct timeval);
-                optval = (char*)&tval;
-            } else if (optlen == sizeof(struct timeval)) {
-                WARN("SO_SND/RCVTIMEO for %d bytes: assuming unixism\n", optlen);
-            } else {
-                WARN("SO_SND/RCVTIMEO for %d bytes is weird: ignored\n", optlen);
-                return 0;
-            }
-            convert_sockopt(&level, &optname);
-            break;
-#endif
 
         case WS_SO_RANDOMIZE_PORT:
             FIXME("Ignoring WS_SO_RANDOMIZE_PORT\n");
@@ -3722,9 +3625,19 @@ int WINAPI WS_setsockopt(SOCKET s, int level, int optname,
     case WS_IPPROTO_IP:
         switch(optname)
         {
+        case WS_IP_ADD_MEMBERSHIP:
+            return server_setsockopt( s, IOCTL_AFD_WINE_SET_IP_ADD_MEMBERSHIP, optval, optlen );
+
         case WS_IP_ADD_SOURCE_MEMBERSHIP:
-        case WS_IP_DROP_SOURCE_MEMBERSHIP:
+            return server_setsockopt( s, IOCTL_AFD_WINE_SET_IP_ADD_SOURCE_MEMBERSHIP, optval, optlen );
+
         case WS_IP_BLOCK_SOURCE:
+            return server_setsockopt( s, IOCTL_AFD_WINE_SET_IP_BLOCK_SOURCE, optval, optlen );
+
+        case WS_IP_DONTFRAGMENT:
+            return server_setsockopt( s, IOCTL_AFD_WINE_SET_IP_DONTFRAGMENT, optval, optlen );
+
+        case WS_IP_DROP_SOURCE_MEMBERSHIP:
         case WS_IP_UNBLOCK_SOURCE:
         {
             WS_IP_MREQ_SOURCE* val = (void*)optval;
@@ -3738,7 +3651,6 @@ int WINAPI WS_setsockopt(SOCKET s, int level, int optname,
             convert_sockopt(&level, &optname);
             break;
         }
-        case WS_IP_ADD_MEMBERSHIP:
         case WS_IP_DROP_MEMBERSHIP:
 #ifdef IP_HDRINCL
         case WS_IP_HDRINCL:
@@ -3757,8 +3669,7 @@ int WINAPI WS_setsockopt(SOCKET s, int level, int optname,
 #endif
             convert_sockopt(&level, &optname);
             break;
-        case WS_IP_DONTFRAGMENT:
-            return set_dont_fragment(s, IPPROTO_IP, *(BOOL *)optval) ? 0 : SOCKET_ERROR;
+
         default:
             FIXME("Unknown IPPROTO_IP optname 0x%08x\n", optname);
             return SOCKET_ERROR;

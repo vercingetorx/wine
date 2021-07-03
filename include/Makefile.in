@@ -540,6 +540,7 @@ SOURCES = \
 	ntddvdeo.h \
 	ntdef.h \
 	ntdsapi.h \
+	ntgdi.h \
 	ntlsa.h \
 	ntquery.h \
 	ntsecapi.h \
@@ -581,6 +582,7 @@ SOURCES = \
 	powrprof.h \
 	prntvpt.h \
 	profinfo.h \
+	proofofpossessioncookieinfo.idl \
 	propidl.idl \
 	propkey.h \
 	propkeydef.h \
@@ -685,6 +687,7 @@ SOURCES = \
 	t2embapi.h \
 	tapi.h \
 	taskschd.idl \
+	tbs.h \
 	tchar.h \
 	tcpestats.h \
 	tcpmib.h \

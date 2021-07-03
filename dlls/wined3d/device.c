@@ -1750,7 +1750,8 @@ void CDECL wined3d_device_context_set_state(struct wined3d_device_context *conte
 
     for (i = 0; i < WINED3D_HIGHEST_TRANSFORM_STATE + 1; ++i)
     {
-        wined3d_device_context_emit_set_transform(context, i, state->transforms + i);
+        if (context->device->state_table[STATE_TRANSFORM(i)].representative)
+            wined3d_device_context_emit_set_transform(context, i, state->transforms + i);
     }
 
     for (i = 0; i < WINED3D_MAX_CLIP_DISTANCES; ++i)
@@ -1774,7 +1775,8 @@ void CDECL wined3d_device_context_set_state(struct wined3d_device_context *conte
 
     for (i = 0; i < WINEHIGHEST_RENDER_STATE + 1; ++i)
     {
-        wined3d_device_context_emit_set_render_state(context, i, state->render_states[i]);
+        if (context->device->state_table[STATE_RENDER(i)].representative)
+            wined3d_device_context_emit_set_render_state(context, i, state->render_states[i]);
     }
 
     wined3d_device_context_emit_set_blend_state(context, state->blend_state, &state->blend_factor, state->sample_mask);
@@ -4608,7 +4610,7 @@ HRESULT CDECL wined3d_device_context_copy_sub_resource_region(struct wined3d_dev
             wined3d_box_set(&b, 0, 0, min(src_w, dst_w), min(src_h, dst_h), 0, min(src_d, dst_d));
             src_box = &b;
         }
-        else if (FAILED(wined3d_texture_check_box_dimensions(src_texture, src_level, src_box)))
+        else if (FAILED(wined3d_resource_check_box_dimensions(src_resource, src_sub_resource_idx, src_box)))
         {
             WARN("Invalid source box %s.\n", debug_box(src_box));
             return WINED3DERR_INVALIDCALL;
@@ -4631,8 +4633,7 @@ HRESULT CDECL wined3d_device_context_copy_sub_resource_region(struct wined3d_dev
                     dst_y + (src_row_count * dst_resource->format->block_height),
                     dst_z, dst_z + (src_box->back - src_box->front));
         }
-        if (FAILED(wined3d_texture_check_box_dimensions(dst_texture,
-                dst_sub_resource_idx % dst_texture->level_count, &dst_box)))
+        if (FAILED(wined3d_resource_check_box_dimensions(dst_resource, dst_sub_resource_idx, &dst_box)))
         {
             WARN("Invalid destination box %s.\n", debug_box(&dst_box));
             return WINED3DERR_INVALIDCALL;
@@ -4680,7 +4681,8 @@ void CDECL wined3d_device_context_update_sub_resource(struct wined3d_device_cont
         return;
     }
 
-    context->ops->update_sub_resource(context, resource, sub_resource_idx, box, data, row_pitch, depth_pitch);
+    wined3d_device_context_emit_update_sub_resource(context, resource,
+            sub_resource_idx, box, data, row_pitch, depth_pitch);
 }
 
 void CDECL wined3d_device_context_resolve_sub_resource(struct wined3d_device_context *context,
@@ -4760,11 +4762,9 @@ HRESULT CDECL wined3d_device_context_clear_rendertarget_view(struct wined3d_devi
     else
     {
         struct wined3d_box b = {rect->left, rect->top, rect->right, rect->bottom, 0, 1};
-        struct wined3d_texture *texture = texture_from_resource(view->resource);
         HRESULT hr;
 
-        if (FAILED(hr = wined3d_texture_check_box_dimensions(texture,
-                view->sub_resource_idx % texture->level_count, &b)))
+        if (FAILED(hr = wined3d_resource_check_box_dimensions(resource, view->sub_resource_idx, &b)))
             return hr;
     }
 
@@ -4869,8 +4869,19 @@ HRESULT CDECL wined3d_device_context_map(struct wined3d_device_context *context,
         wined3d_box_set(&b, 0, 0, desc.width, desc.height, 0, desc.depth);
         box = &b;
     }
+    else if (FAILED(wined3d_resource_check_box_dimensions(resource, sub_resource_idx, box)))
+    {
+        WARN("Map box is invalid.\n");
 
-    if (SUCCEEDED(hr = context->ops->map(context, resource, sub_resource_idx, &map_desc->data, box, flags)))
+        if (resource->type != WINED3D_RTYPE_BUFFER && resource->type != WINED3D_RTYPE_TEXTURE_2D)
+            return WINED3DERR_INVALIDCALL;
+
+        if ((resource->format_flags & WINED3DFMT_FLAG_BLOCKS) && !(resource->access & WINED3D_RESOURCE_ACCESS_CPU))
+            return WINED3DERR_INVALIDCALL;
+    }
+
+    if (SUCCEEDED(hr = wined3d_device_context_emit_map(context, resource,
+            sub_resource_idx, &map_desc->data, box, flags)))
         wined3d_resource_get_sub_resource_map_pitch(resource, sub_resource_idx,
                 &map_desc->row_pitch, &map_desc->slice_pitch);
     return hr;
@@ -4881,7 +4892,7 @@ HRESULT CDECL wined3d_device_context_unmap(struct wined3d_device_context *contex
 {
     TRACE("context %p, resource %p, sub_resource_idx %u.\n", context, resource, sub_resource_idx);
 
-    return context->ops->unmap(context, resource, sub_resource_idx);
+    return wined3d_device_context_emit_unmap(context, resource, sub_resource_idx);
 }
 
 void CDECL wined3d_device_context_issue_query(struct wined3d_device_context *context,
@@ -5525,7 +5536,7 @@ void device_resource_add(struct wined3d_device *device, struct wined3d_resource 
 {
     TRACE("device %p, resource %p.\n", device, resource);
 
-    wined3d_not_from_cs(device->cs);
+    wined3d_not_from_cs(device);
 
     list_add_head(&device->resources, &resource->resource_list_entry);
 }
@@ -5534,7 +5545,7 @@ static void device_resource_remove(struct wined3d_device *device, struct wined3d
 {
     TRACE("device %p, resource %p.\n", device, resource);
 
-    wined3d_not_from_cs(device->cs);
+    wined3d_not_from_cs(device);
 
     list_remove(&resource->resource_list_entry);
 }

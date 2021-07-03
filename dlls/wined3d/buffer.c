@@ -849,7 +849,7 @@ static HRESULT buffer_resource_sub_resource_get_desc(struct wined3d_resource *re
         return E_INVALIDARG;
     }
 
-    desc->format = WINED3DFMT_UNKNOWN;
+    desc->format = WINED3DFMT_R8_UNORM;
     desc->multisample_type = WINED3D_MULTISAMPLE_NONE;
     desc->multisample_quality = 0;
     desc->usage = resource->usage;
@@ -1054,25 +1054,6 @@ void wined3d_buffer_copy(struct wined3d_buffer *dst_buffer, unsigned int dst_off
     context_release(context);
 }
 
-void wined3d_buffer_upload_data(struct wined3d_buffer *buffer, struct wined3d_context *context,
-        const struct wined3d_box *box, const void *data)
-{
-    struct wined3d_range range;
-
-    if (box)
-    {
-        range.offset = box->left;
-        range.size = box->right - box->left;
-    }
-    else
-    {
-        range.offset = 0;
-        range.size = buffer->resource.size;
-    }
-
-    buffer->buffer_ops->buffer_upload_ranges(buffer, context, data, range.offset, 1, &range);
-}
-
 static void wined3d_buffer_init_data(struct wined3d_buffer *buffer,
         struct wined3d_device *device, const struct wined3d_sub_resource_data *data)
 {
@@ -1082,7 +1063,7 @@ static void wined3d_buffer_init_data(struct wined3d_buffer *buffer,
     if (buffer->flags & WINED3D_BUFFER_USE_BO)
     {
         wined3d_box_set(&box, 0, 0, resource->size, 1, 0, 1);
-        device->cs->c.ops->update_sub_resource(&device->cs->c, resource,
+        wined3d_device_context_emit_update_sub_resource(&device->cs->c, resource,
                 0, &box, data->data, data->row_pitch, data->slice_pitch);
     }
     else
@@ -1156,7 +1137,7 @@ static HRESULT wined3d_buffer_init(struct wined3d_buffer *buffer, struct wined3d
         const struct wined3d_buffer_desc *desc, const struct wined3d_sub_resource_data *data,
         void *parent, const struct wined3d_parent_ops *parent_ops, const struct wined3d_buffer_ops *buffer_ops)
 {
-    const struct wined3d_format *format = wined3d_get_format(device->adapter, WINED3DFMT_UNKNOWN, desc->bind_flags);
+    const struct wined3d_format *format = wined3d_get_format(device->adapter, WINED3DFMT_R8_UNORM, desc->bind_flags);
     struct wined3d_resource *resource = &buffer->resource;
     HRESULT hr;
 

@@ -207,6 +207,10 @@ struct sock
     struct connect_req *connect_req; /* pending connection request */
     union win_sockaddr  addr;        /* socket name */
     int                 addr_len;    /* socket name length */
+    unsigned int        rcvbuf;      /* advisory recv buffer size */
+    unsigned int        sndbuf;      /* advisory send buffer size */
+    unsigned int        rcvtimeo;    /* receive timeout in ms */
+    unsigned int        sndtimeo;    /* send timeout in ms */
     unsigned int        rd_shutdown : 1; /* is the read end shut down? */
     unsigned int        wr_shutdown : 1; /* is the write end shut down? */
     unsigned int        wr_shutdown_pending : 1; /* is a write shutdown pending? */
@@ -1386,6 +1390,10 @@ static struct sock *create_socket(void)
     sock->wr_shutdown_pending = 0;
     sock->nonblocking = 0;
     sock->bound = 0;
+    sock->rcvbuf = 0;
+    sock->sndbuf = 0;
+    sock->rcvtimeo = 0;
+    sock->sndtimeo = 0;
     init_async_queue( &sock->read_q );
     init_async_queue( &sock->write_q );
     init_async_queue( &sock->ifchange_q );
@@ -1477,7 +1485,8 @@ static void set_dont_fragment( int fd, int level, int value )
 static int init_socket( struct sock *sock, int family, int type, int protocol, unsigned int flags )
 {
     unsigned int options = 0;
-    int sockfd, unix_type, unix_family, unix_protocol;
+    int sockfd, unix_type, unix_family, unix_protocol, value;
+    socklen_t len;
 
     unix_family = get_unix_family( family );
     unix_type = get_unix_type( type );
@@ -1542,6 +1551,14 @@ static int init_socket( struct sock *sock, int family, int type, int protocol, u
         setsockopt( sockfd, IPPROTO_IPV6, IPV6_V6ONLY, &enable, sizeof(enable) );
     }
 #endif
+
+    len = sizeof(value);
+    if (!getsockopt( sockfd, SOL_SOCKET, SO_RCVBUF, &value, &len ))
+        sock->rcvbuf = value;
+
+    len = sizeof(value);
+    if (!getsockopt( sockfd, SOL_SOCKET, SO_SNDBUF, &value, &len ))
+        sock->sndbuf = value;
 
     sock->state  = (type == WS_SOCK_STREAM ? SOCK_UNCONNECTED : SOCK_CONNECTIONLESS);
     sock->flags  = flags;
@@ -2580,6 +2597,137 @@ static int sock_ioctl( struct fd *fd, ioctl_code_t code, struct async *async )
         return 1;
     }
 
+    case IOCTL_AFD_WINE_GET_SO_RCVBUF:
+    {
+        int rcvbuf = sock->rcvbuf;
+
+        if (get_reply_max_size() < sizeof(rcvbuf))
+        {
+            set_error( STATUS_BUFFER_TOO_SMALL );
+            return 0;
+        }
+
+        set_reply_data( &rcvbuf, sizeof(rcvbuf) );
+        return 1;
+    }
+
+    case IOCTL_AFD_WINE_SET_SO_RCVBUF:
+    {
+        DWORD rcvbuf;
+
+        if (get_req_data_size() < sizeof(rcvbuf))
+        {
+            set_error( STATUS_BUFFER_TOO_SMALL );
+            return 0;
+        }
+        rcvbuf = *(DWORD *)get_req_data();
+
+        if (!setsockopt( unix_fd, SOL_SOCKET, SO_RCVBUF, (char *)&rcvbuf, sizeof(rcvbuf) ))
+            sock->rcvbuf = rcvbuf;
+        else
+            set_error( sock_get_ntstatus( errno ) );
+        return 0;
+    }
+
+    case IOCTL_AFD_WINE_GET_SO_RCVTIMEO:
+    {
+        DWORD rcvtimeo = sock->rcvtimeo;
+
+        if (get_reply_max_size() < sizeof(rcvtimeo))
+        {
+            set_error( STATUS_BUFFER_TOO_SMALL );
+            return 0;
+        }
+
+        set_reply_data( &rcvtimeo, sizeof(rcvtimeo) );
+        return 1;
+    }
+
+    case IOCTL_AFD_WINE_SET_SO_RCVTIMEO:
+    {
+        DWORD rcvtimeo;
+
+        if (get_req_data_size() < sizeof(rcvtimeo))
+        {
+            set_error( STATUS_BUFFER_TOO_SMALL );
+            return 0;
+        }
+        rcvtimeo = *(DWORD *)get_req_data();
+
+        sock->rcvtimeo = rcvtimeo;
+        return 0;
+    }
+
+    case IOCTL_AFD_WINE_GET_SO_SNDBUF:
+    {
+        int sndbuf = sock->sndbuf;
+
+        if (get_reply_max_size() < sizeof(sndbuf))
+        {
+            set_error( STATUS_BUFFER_TOO_SMALL );
+            return 0;
+        }
+
+        set_reply_data( &sndbuf, sizeof(sndbuf) );
+        return 1;
+    }
+
+    case IOCTL_AFD_WINE_SET_SO_SNDBUF:
+    {
+        DWORD sndbuf;
+
+        if (get_req_data_size() < sizeof(sndbuf))
+        {
+            set_error( STATUS_BUFFER_TOO_SMALL );
+            return 0;
+        }
+        sndbuf = *(DWORD *)get_req_data();
+
+#ifdef __APPLE__
+        if (!sndbuf)
+        {
+            /* setsockopt fails if a zero value is passed */
+            sock->sndbuf = sndbuf;
+            return 0;
+        }
+#endif
+
+        if (!setsockopt( unix_fd, SOL_SOCKET, SO_SNDBUF, (char *)&sndbuf, sizeof(sndbuf) ))
+            sock->sndbuf = sndbuf;
+        else
+            set_error( sock_get_ntstatus( errno ) );
+        return 0;
+    }
+
+    case IOCTL_AFD_WINE_GET_SO_SNDTIMEO:
+    {
+        DWORD sndtimeo = sock->sndtimeo;
+
+        if (get_reply_max_size() < sizeof(sndtimeo))
+        {
+            set_error( STATUS_BUFFER_TOO_SMALL );
+            return 0;
+        }
+
+        set_reply_data( &sndtimeo, sizeof(sndtimeo) );
+        return 1;
+    }
+
+    case IOCTL_AFD_WINE_SET_SO_SNDTIMEO:
+    {
+        DWORD sndtimeo;
+
+        if (get_req_data_size() < sizeof(sndtimeo))
+        {
+            set_error( STATUS_BUFFER_TOO_SMALL );
+            return 0;
+        }
+        sndtimeo = *(DWORD *)get_req_data();
+
+        sock->sndtimeo = sndtimeo;
+        return 0;
+    }
+
     default:
         set_error( STATUS_NOT_SUPPORTED );
         return 0;
@@ -2990,19 +3138,14 @@ DECL_HANDLER(recv_socket)
     /* recv() returned EWOULDBLOCK, i.e. no data available yet */
     if (status == STATUS_DEVICE_NOT_READY && !sock->nonblocking)
     {
-#ifdef SO_RCVTIMEO
-        struct timeval tv;
-        socklen_t len = sizeof(tv);
-
         /* Set a timeout on the async if necessary.
          *
          * We want to do this *only* if the client gave us STATUS_DEVICE_NOT_READY.
          * If the client gave us STATUS_PENDING, it expects the async to always
          * block (it was triggered by WSARecv*() with a valid OVERLAPPED
          * structure) and for the timeout not to be respected. */
-        if (is_fd_overlapped( fd ) && !getsockopt( get_unix_fd( fd ), SOL_SOCKET, SO_RCVTIMEO, (char *)&tv, &len ))
-            timeout = tv.tv_sec * -10000000 + tv.tv_usec * -10;
-#endif
+        if (is_fd_overlapped( fd ))
+            timeout = (timeout_t)sock->rcvtimeo * -10000;
 
         status = STATUS_PENDING;
     }
@@ -3105,19 +3248,14 @@ DECL_HANDLER(send_socket)
     /* send() returned EWOULDBLOCK or a short write, i.e. cannot send all data yet */
     if (status == STATUS_DEVICE_NOT_READY && !sock->nonblocking)
     {
-#ifdef SO_SNDTIMEO
-        struct timeval tv;
-        socklen_t len = sizeof(tv);
-
         /* Set a timeout on the async if necessary.
          *
          * We want to do this *only* if the client gave us STATUS_DEVICE_NOT_READY.
          * If the client gave us STATUS_PENDING, it expects the async to always
          * block (it was triggered by WSASend*() with a valid OVERLAPPED
          * structure) and for the timeout not to be respected. */
-        if (is_fd_overlapped( fd ) && !getsockopt( get_unix_fd( fd ), SOL_SOCKET, SO_SNDTIMEO, (char *)&tv, &len ))
-            timeout = tv.tv_sec * -10000000 + tv.tv_usec * -10;
-#endif
+        if (is_fd_overlapped( fd ))
+            timeout = (timeout_t)sock->sndtimeo * -10000;
 
         status = STATUS_PENDING;
     }
