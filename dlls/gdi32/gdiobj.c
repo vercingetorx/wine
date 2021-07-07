@@ -1029,9 +1029,9 @@ HGDIOBJ WINAPI GetStockObject( INT obj )
 
 
 /***********************************************************************
- *           GetObjectA    (GDI32.@)
+ *           NtGdiExtGetObjectW    (win32u.@)
  */
-INT WINAPI GetObjectA( HGDIOBJ handle, INT count, LPVOID buffer )
+INT WINAPI NtGdiExtGetObjectW( HGDIOBJ handle, INT count, void *buffer )
 {
     GDI_HANDLE_ENTRY *entry;
     const struct gdi_obj_funcs *funcs = NULL;
@@ -1047,42 +1047,9 @@ INT WINAPI GetObjectA( HGDIOBJ handle, INT count, LPVOID buffer )
     }
     LeaveCriticalSection( &gdi_section );
 
-    if (funcs)
+    if (funcs && funcs->pGetObjectW)
     {
-        if (!funcs->pGetObjectA)
-            SetLastError( ERROR_INVALID_HANDLE );
-        else if (buffer && ((ULONG_PTR)buffer >> 16) == 0) /* catch apps getting argument order wrong */
-            SetLastError( ERROR_NOACCESS );
-        else
-            result = funcs->pGetObjectA( handle, count, buffer );
-    }
-    return result;
-}
-
-/***********************************************************************
- *           GetObjectW    (GDI32.@)
- */
-INT WINAPI GetObjectW( HGDIOBJ handle, INT count, LPVOID buffer )
-{
-    GDI_HANDLE_ENTRY *entry;
-    const struct gdi_obj_funcs *funcs = NULL;
-    INT result = 0;
-
-    TRACE("%p %d %p\n", handle, count, buffer );
-
-    EnterCriticalSection( &gdi_section );
-    if ((entry = handle_entry( handle )))
-    {
-        funcs = entry_obj( entry )->funcs;
-        handle = entry_to_handle( entry );  /* make it a full handle */
-    }
-    LeaveCriticalSection( &gdi_section );
-
-    if (funcs)
-    {
-        if (!funcs->pGetObjectW)
-            SetLastError( ERROR_INVALID_HANDLE );
-        else if (buffer && ((ULONG_PTR)buffer >> 16) == 0) /* catch apps getting argument order wrong */
+        if (buffer && ((ULONG_PTR)buffer >> 16) == 0) /* catch apps getting argument order wrong */
             SetLastError( ERROR_NOACCESS );
         else
             result = funcs->pGetObjectW( handle, count, buffer );

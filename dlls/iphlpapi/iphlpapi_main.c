@@ -56,7 +56,9 @@
 #include "netioapi.h"
 #include "tcpestats.h"
 #include "ip2string.h"
+#include "netiodef.h"
 
+#include "wine/nsi.h"
 #include "wine/debug.h"
 #include "wine/unicode.h"
 
@@ -3162,20 +3164,31 @@ ULONG WINAPI GetTcp6Table2(PMIB_TCP6TABLE2 table, PULONG size, BOOL order)
  */
 DWORD WINAPI ConvertInterfaceGuidToLuid(const GUID *guid, NET_LUID *luid)
 {
-    DWORD ret;
-    MIB_IFROW row;
+    struct nsi_ndis_ifinfo_static *data;
+    DWORD err, count, i;
+    NET_LUID *keys;
 
-    TRACE("(%s %p)\n", debugstr_guid(guid), luid);
+    TRACE( "(%s %p)\n", debugstr_guid(guid), luid );
 
     if (!guid || !luid) return ERROR_INVALID_PARAMETER;
+    luid->Value = 0;
 
-    row.dwIndex = guid->Data1;
-    if ((ret = GetIfEntry( &row ))) return ret;
+    err = NsiAllocateAndGetTable( 1, &NPI_MS_NDIS_MODULEID, NSI_NDIS_IFINFO_TABLE, (void **)&keys, sizeof(*keys),
+                                  NULL, 0, NULL, 0, (void **)&data, sizeof(*data), &count, 0 );
+    if (err) return err;
 
-    luid->Info.Reserved     = 0;
-    luid->Info.NetLuidIndex = guid->Data1;
-    luid->Info.IfType       = row.dwType;
-    return NO_ERROR;
+    err = ERROR_INVALID_PARAMETER;
+    for (i = 0; i < count; i++)
+    {
+        if (IsEqualGUID( &data[i].if_guid, guid ))
+        {
+            luid->Value = keys[i].Value;
+            err = ERROR_SUCCESS;
+            break;
+        }
+    }
+    NsiFreeTable( keys, NULL, NULL, data );
+    return err;
 }
 
 /******************************************************************
@@ -3183,20 +3196,16 @@ DWORD WINAPI ConvertInterfaceGuidToLuid(const GUID *guid, NET_LUID *luid)
  */
 DWORD WINAPI ConvertInterfaceIndexToLuid(NET_IFINDEX index, NET_LUID *luid)
 {
-    MIB_IFROW row;
+    DWORD err;
 
-    TRACE("(%u %p)\n", index, luid);
+    TRACE( "(%u %p)\n", index, luid );
 
     if (!luid) return ERROR_INVALID_PARAMETER;
-    memset( luid, 0, sizeof(*luid) );
 
-    row.dwIndex = index;
-    if (GetIfEntry( &row )) return ERROR_FILE_NOT_FOUND;
-
-    luid->Info.Reserved     = 0;
-    luid->Info.NetLuidIndex = index;
-    luid->Info.IfType       = row.dwType;
-    return NO_ERROR;
+    err = NsiGetParameter( 1, &NPI_MS_NDIS_MODULEID, NSI_NDIS_INDEX_LUID_TABLE, &index, sizeof(index),
+                           NSI_PARAM_TYPE_STATIC, luid, sizeof(*luid), 0 );
+    if (err) luid->Value = 0;
+    return err;
 }
 
 /******************************************************************
@@ -3204,20 +3213,17 @@ DWORD WINAPI ConvertInterfaceIndexToLuid(NET_IFINDEX index, NET_LUID *luid)
  */
 DWORD WINAPI ConvertInterfaceLuidToGuid(const NET_LUID *luid, GUID *guid)
 {
-    DWORD ret;
-    MIB_IFROW row;
+    DWORD err;
 
-    TRACE("(%p %p)\n", luid, guid);
+    TRACE( "(%p %p)\n", luid, guid );
 
     if (!luid || !guid) return ERROR_INVALID_PARAMETER;
 
-    row.dwIndex = luid->Info.NetLuidIndex;
-    if ((ret = GetIfEntry( &row ))) return ret;
-
-    memset( guid, 0, sizeof(*guid) );
-    guid->Data1 = luid->Info.NetLuidIndex;
-    memcpy( guid->Data4+2, "NetDev", 6 );
-    return NO_ERROR;
+    err = NsiGetParameter( 1, &NPI_MS_NDIS_MODULEID, NSI_NDIS_IFINFO_TABLE, luid, sizeof(*luid),
+                           NSI_PARAM_TYPE_STATIC, guid, sizeof(*guid),
+                           FIELD_OFFSET(struct nsi_ndis_ifinfo_static, if_guid) );
+    if (err) memset( guid, 0, sizeof(*guid) );
+    return err;
 }
 
 /******************************************************************
@@ -3225,18 +3231,17 @@ DWORD WINAPI ConvertInterfaceLuidToGuid(const NET_LUID *luid, GUID *guid)
  */
 DWORD WINAPI ConvertInterfaceLuidToIndex(const NET_LUID *luid, NET_IFINDEX *index)
 {
-    DWORD ret;
-    MIB_IFROW row;
+    DWORD err;
 
-    TRACE("(%p %p)\n", luid, index);
+    TRACE( "(%p %p)\n", luid, index );
 
     if (!luid || !index) return ERROR_INVALID_PARAMETER;
 
-    row.dwIndex = luid->Info.NetLuidIndex;
-    if ((ret = GetIfEntry( &row ))) return ret;
-
-    *index = luid->Info.NetLuidIndex;
-    return NO_ERROR;
+    err = NsiGetParameter( 1, &NPI_MS_NDIS_MODULEID, NSI_NDIS_IFINFO_TABLE, luid, sizeof(*luid),
+                           NSI_PARAM_TYPE_STATIC, index, sizeof(*index),
+                           FIELD_OFFSET(struct nsi_ndis_ifinfo_static, if_index) );
+    if (err) *index = 0;
+    return err;
 }
 
 /******************************************************************

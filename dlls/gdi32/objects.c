@@ -23,6 +23,7 @@
 
 #include "windef.h"
 #include "winbase.h"
+#include "winnls.h"
 #include "ntgdi.h"
 #include "winternl.h"
 
@@ -110,4 +111,117 @@ HGDIOBJ WINAPI SelectObject( HDC hdc, HGDIOBJ obj )
 
     if (!ret) SetLastError( ERROR_INVALID_HANDLE );
     return ret;
+}
+
+/***********************************************************************
+ *           GetObjectW    (GDI32.@)
+ */
+INT WINAPI GetObjectW( HGDIOBJ handle, INT count, void *buffer )
+{
+    int result;
+
+    TRACE( "%p %d %p\n", handle, count, buffer );
+
+    result = NtGdiExtGetObjectW( handle, count, buffer );
+    if (!result && count)
+    {
+        switch(get_object_type( handle ))
+        {
+        case 0:
+        case OBJ_BITMAP:
+        case OBJ_BRUSH:
+        case OBJ_FONT:
+        case OBJ_PAL:
+        case OBJ_PEN:
+        case OBJ_EXTPEN:
+            break;
+        default:
+            SetLastError( ERROR_INVALID_HANDLE );
+        }
+    }
+    return result;
+}
+
+/***********************************************************************
+ *           GetObjectA    (GDI32.@)
+ */
+INT WINAPI GetObjectA( HGDIOBJ handle, INT count, void *buffer )
+{
+    TRACE("%p %d %p\n", handle, count, buffer );
+
+    if (get_object_type( handle ) == OBJ_FONT)
+    {
+        LOGFONTA *lfA = buffer;
+        LOGFONTW lf;
+
+        if (!buffer) return sizeof(*lfA);
+        if (!GetObjectW( handle, sizeof(lf), &lf )) return 0;
+        if (count > sizeof(*lfA)) count = sizeof(*lfA);
+        memcpy( lfA, &lf, min( count, FIELD_OFFSET(LOGFONTA, lfFaceName) ));
+        if (count > FIELD_OFFSET(LOGFONTA, lfFaceName))
+        {
+            WideCharToMultiByte( CP_ACP, 0, lf.lfFaceName, -1, lfA->lfFaceName,
+                                 count - FIELD_OFFSET(LOGFONTA, lfFaceName), NULL, NULL );
+            if (count == sizeof(*lfA)) lfA->lfFaceName[LF_FACESIZE - 1] = 0;
+        }
+        return count;
+    }
+
+    return GetObjectW( handle, count, buffer );
+}
+
+/***********************************************************************
+ *           CreatePenIndirect    (GDI32.@)
+ */
+HPEN WINAPI CreatePenIndirect( const LOGPEN *pen )
+{
+    return CreatePen( pen->lopnStyle, pen->lopnWidth.x, pen->lopnColor );
+}
+
+/***********************************************************************
+ *           CreatePen    (GDI32.@)
+ */
+HPEN WINAPI CreatePen( INT style, INT width, COLORREF color )
+{
+    if (style < 0 || style > PS_INSIDEFRAME) style = PS_SOLID;
+    return NtGdiCreatePen( style, width, color, NULL );
+}
+
+/***********************************************************************
+ *           CreateBitmapIndirect (GDI32.@)
+ */
+HBITMAP WINAPI CreateBitmapIndirect( const BITMAP *bmp )
+{
+    if (!bmp || bmp->bmType)
+    {
+        SetLastError( ERROR_INVALID_PARAMETER );
+        return NULL;
+    }
+
+    return CreateBitmap( bmp->bmWidth, bmp->bmHeight, bmp->bmPlanes,
+                         bmp->bmBitsPixel, bmp->bmBits );
+}
+
+/******************************************************************************
+ *           CreateBitmap (GDI32.@)
+ *
+ * Creates a bitmap with the specified info.
+ */
+HBITMAP WINAPI CreateBitmap( INT width, INT height, UINT planes,
+                             UINT bpp, const void *bits )
+{
+    if (!width || !height)
+        return GetStockObject( STOCK_LAST + 1 ); /* default 1x1 bitmap */
+
+    return NtGdiCreateBitmap( width, height, planes, bpp, bits );
+}
+
+/******************************************************************************
+ *           CreateDiscardableBitmap (GDI32.@)
+ *
+ * Creates a discardable bitmap.
+ */
+HBITMAP WINAPI CreateDiscardableBitmap( HDC hdc, INT width, INT height )
+{
+    return CreateCompatibleBitmap( hdc, width, height );
 }

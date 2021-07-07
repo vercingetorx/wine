@@ -45,7 +45,6 @@ static BOOL PEN_DeleteObject( HGDIOBJ handle );
 
 static const struct gdi_obj_funcs pen_funcs =
 {
-    PEN_GetObject,     /* pGetObjectA */
     PEN_GetObject,     /* pGetObjectW */
     NULL,              /* pUnrealizeObject */
     PEN_DeleteObject   /* pDeleteObject */
@@ -53,45 +52,17 @@ static const struct gdi_obj_funcs pen_funcs =
 
 
 /***********************************************************************
- *           CreatePen    (GDI32.@)
+ *           NtGdiCreatePen    (win32u.@)
  */
-HPEN WINAPI CreatePen( INT style, INT width, COLORREF color )
+HPEN WINAPI NtGdiCreatePen( INT style, INT width, COLORREF color, HBRUSH brush )
 {
-    LOGPEN logpen;
-
-    TRACE("%d %d %06x\n", style, width, color );
-
-    logpen.lopnStyle = style;
-    logpen.lopnWidth.x = width;
-    logpen.lopnWidth.y = 0;
-    logpen.lopnColor = color;
-
-    return CreatePenIndirect( &logpen );
-}
-
-
-/***********************************************************************
- *           CreatePenIndirect    (GDI32.@)
- */
-HPEN WINAPI CreatePenIndirect( const LOGPEN * pen )
-{
-    PENOBJ * penPtr;
+    PENOBJ *penPtr;
     HPEN hpen;
 
-    if (pen->lopnStyle == PS_NULL)
-    {
-        hpen = GetStockObject(NULL_PEN);
-        if (hpen) return hpen;
-    }
+    TRACE( "%d %d %06x\n", style, width, color );
+    if (brush) FIXME( "brush not supported\n" );
 
-    if (!(penPtr = HeapAlloc( GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*penPtr) ))) return 0;
-
-    penPtr->logpen.elpPenStyle = pen->lopnStyle;
-    penPtr->logpen.elpWidth = abs(pen->lopnWidth.x);
-    penPtr->logpen.elpColor = pen->lopnColor;
-    penPtr->logpen.elpBrushStyle = BS_SOLID;
-
-    switch (pen->lopnStyle)
+    switch (style)
     {
     case PS_SOLID:
     case PS_DASH:
@@ -101,13 +72,20 @@ HPEN WINAPI CreatePenIndirect( const LOGPEN * pen )
     case PS_INSIDEFRAME:
         break;
     case PS_NULL:
-        penPtr->logpen.elpWidth = 1;
-        penPtr->logpen.elpColor = 0;
+        if ((hpen = GetStockObject( NULL_PEN ))) return hpen;
+        width = 1;
+        color = 0;
         break;
     default:
-        penPtr->logpen.elpPenStyle = PS_SOLID;
-        break;
+        return 0;
     }
+
+    if (!(penPtr = HeapAlloc( GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*penPtr) ))) return 0;
+
+    penPtr->logpen.elpPenStyle   = style;
+    penPtr->logpen.elpWidth      = abs(width);
+    penPtr->logpen.elpColor      = color;
+    penPtr->logpen.elpBrushStyle = BS_SOLID;
 
     if (!(hpen = alloc_gdi_handle( &penPtr->obj, OBJ_PEN, &pen_funcs )))
         HeapFree( GetProcessHeap(), 0, penPtr );
