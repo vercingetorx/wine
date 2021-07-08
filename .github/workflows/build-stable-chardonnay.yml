@@ -19,6 +19,7 @@ jobs:
         id: vars
         run: |
           wine_version=$(cat VERSION)
+          echo "${wine_version}"
           echo "::set-output name=release_version::${wine_version:13}"
 
       - name: Fetching Build Tools
