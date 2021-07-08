@@ -1,4 +1,4 @@
-name: build-unstable-chardonnay
+name: build-unstable-vaniglia
 on:
   push:
     branches: [ stable ]
@@ -18,35 +18,35 @@ jobs:
         run: git clone https://github.com/bottlesdevs/build-tools.git
       
       - name: Make build scripts executable
-        working-directory: /home/runner/work/build-tools/runners/chardonnay
+        working-directory: /home/runner/work/build-tools/runners/vaniglia
         run: chmod +x *
       
       - name: Launch environment.sh
-        working-directory: /home/runner/work/build-tools/runners/chardonnay
+        working-directory: /home/runner/work/build-tools/runners/vaniglia
         run: ./environment.sh
       
       - name: Launch patch-josh-flat-theme.sh
-        working-directory: /home/runner/work/build-tools/runners/chardonnay
+        working-directory: /home/runner/work/build-tools/runners/vaniglia
         run: ./patch-josh-flat-theme.sh
       
       - name: Launch patch-staging.sh
-        working-directory: /home/runner/work/build-tools/runners/chardonnay
+        working-directory: /home/runner/work/build-tools/runners/vaniglia
         run: ./patch-staging.sh -r ${{ steps.vars.outputs.release_version }}
       
       - name: Launch build-tools.sh
-        working-directory: /home/runner/work/build-tools/runners/chardonnay
+        working-directory: /home/runner/work/build-tools/runners/vaniglia
         run: ./build-tools.sh
       
       - name: Launch build64.sh
-        working-directory: /home/runner/work/build-tools/runners/chardonnay
+        working-directory: /home/runner/work/build-tools/runners/vaniglia
         run: ./build64.sh
       
       - name: Launch build32.sh
-        working-directory: /home/runner/work/build-tools/runners/chardonnay
+        working-directory: /home/runner/work/build-tools/runners/vaniglia
         run: ./build32.sh
       
       - name: Launch package.sh
-        working-directory: /home/runner/work/build-tools/runners/chardonnay
+        working-directory: /home/runner/work/build-tools/runners/vaniglia
         run: ./package.sh
 
       - name: Get release version
@@ -62,7 +62,7 @@ jobs:
           draft: false
           prerelease: false
           automatic_release_tag: "${{ steps.vars.outputs.release_version }}"
-          title: "Chardonnay ${{ steps.vars.outputs.release_version }}"
-          files: "/home/runner/work/wine/wine/chardonnay-${{ steps.vars.outputs.release_version }}-x86_64.tar.gz"
+          title: "Vaniglia ${{ steps.vars.outputs.release_version }}"
+          files: "/home/runner/work/wine/wine/vaniglia-${{ steps.vars.outputs.release_version }}-x86_64.tar.gz"
           
 
