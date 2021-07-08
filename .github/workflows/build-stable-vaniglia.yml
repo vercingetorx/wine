@@ -1,4 +1,4 @@
-name: build-unstable-vaniglia
+name: build-stable-vaniglia
 on:
   push:
     branches: [ stable ]
