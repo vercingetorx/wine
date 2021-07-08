@@ -77,6 +77,16 @@ DWORD WINAPI GetObjectType( HGDIOBJ handle )
 }
 
 /***********************************************************************
+ *           DeleteObject    (GDI32.@)
+ *
+ * Delete a Gdi object.
+ */
+BOOL WINAPI DeleteObject( HGDIOBJ obj )
+{
+    return NtGdiDeleteObjectApp( obj );
+}
+
+/***********************************************************************
  *           SelectObject    (GDI32.@)
  *
  * Select a Gdi object into a device context.
@@ -224,4 +234,48 @@ HBITMAP WINAPI CreateBitmap( INT width, INT height, UINT planes,
 HBITMAP WINAPI CreateDiscardableBitmap( HDC hdc, INT width, INT height )
 {
     return CreateCompatibleBitmap( hdc, width, height );
+}
+
+/***********************************************************************
+ *           ExtCreateRegion   (GDI32.@)
+ *
+ * Creates a region as specified by the transformation data and region data.
+ */
+HRGN WINAPI ExtCreateRegion( const XFORM *xform, DWORD count, const RGNDATA *data )
+{
+    if (!data)
+    {
+        SetLastError( ERROR_INVALID_PARAMETER );
+        return 0;
+    }
+
+    return NtGdiExtCreateRegion( xform, count, data );
+}
+
+/***********************************************************************
+ *           CreateRectRgnIndirect    (GDI32.@)
+ *
+ * Creates a simple rectangular region.
+ */
+HRGN WINAPI CreateRectRgnIndirect( const RECT* rect )
+{
+    return NtGdiCreateRectRgn( rect->left, rect->top, rect->right, rect->bottom );
+}
+
+/***********************************************************************
+ *           CreateEllipticRgnIndirect    (GDI32.@)
+ *
+ * Creates an elliptical region.
+ */
+HRGN WINAPI CreateEllipticRgnIndirect( const RECT *rect )
+{
+    return NtGdiCreateEllipticRgn( rect->left, rect->top, rect->right, rect->bottom );
+}
+
+/***********************************************************************
+ *           CreatePolygonRgn    (GDI32.@)
+ */
+HRGN WINAPI CreatePolygonRgn( const POINT *points, INT count, INT mode )
+{
+    return CreatePolyPolygonRgn( points, &count, 1, mode );
 }

@@ -3637,7 +3637,12 @@ int WINAPI WS_setsockopt(SOCKET s, int level, int optname,
         case WS_IP_DONTFRAGMENT:
             return server_setsockopt( s, IOCTL_AFD_WINE_SET_IP_DONTFRAGMENT, optval, optlen );
 
+        case WS_IP_DROP_MEMBERSHIP:
+            return server_setsockopt( s, IOCTL_AFD_WINE_SET_IP_DROP_MEMBERSHIP, optval, optlen );
+
         case WS_IP_DROP_SOURCE_MEMBERSHIP:
+            return server_setsockopt( s, IOCTL_AFD_WINE_SET_IP_DROP_SOURCE_MEMBERSHIP, optval, optlen );
+
         case WS_IP_UNBLOCK_SOURCE:
         {
             WS_IP_MREQ_SOURCE* val = (void*)optval;
@@ -3651,7 +3656,6 @@ int WINAPI WS_setsockopt(SOCKET s, int level, int optname,
             convert_sockopt(&level, &optname);
             break;
         }
-        case WS_IP_DROP_MEMBERSHIP:
 #ifdef IP_HDRINCL
         case WS_IP_HDRINCL:
 #endif

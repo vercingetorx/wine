@@ -1703,13 +1703,8 @@ void CDECL wined3d_device_context_set_state(struct wined3d_device_context *conte
     }
 
     for (i = 0; i < WINED3D_PIPELINE_COUNT; ++i)
-    {
-        for (j = 0; j < MAX_UNORDERED_ACCESS_VIEWS; ++j)
-        {
-            wined3d_device_context_emit_set_unordered_access_view(context, i, j,
-                    state->unordered_access_view[i][j], ~0);
-        }
-    }
+        wined3d_device_context_emit_set_unordered_access_views(context, i, 0, MAX_UNORDERED_ACCESS_VIEWS,
+                state->unordered_access_view[i], NULL);
 
     wined3d_device_context_push_constants(context, WINED3D_PUSH_CONSTANTS_VS_F,
             0, WINED3D_MAX_VS_CONSTS_F, state->vs_consts_f);
@@ -1837,7 +1832,7 @@ void CDECL wined3d_device_context_set_constant_buffers(struct wined3d_device_con
 
     TRACE("context %p, type %#x, start_idx %u, count %u, buffers %p.\n", context, type, start_idx, count, buffers);
 
-    if (start_idx >= MAX_CONSTANT_BUFFERS || count > MAX_CONSTANT_BUFFERS - start_idx)
+    if (!wined3d_bound_range(start_idx, count, MAX_CONSTANT_BUFFERS))
     {
         WARN("Invalid constant buffer index %u, count %u.\n", start_idx, count);
         return;
@@ -1988,7 +1983,7 @@ void CDECL wined3d_device_context_set_shader_resource_views(struct wined3d_devic
 
     TRACE("context %p, type %#x, start_idx %u, count %u, views %p.\n", context, type, start_idx, count, views);
 
-    if (start_idx >= MAX_SHADER_RESOURCE_VIEWS || count > MAX_SHADER_RESOURCE_VIEWS - start_idx)
+    if (!wined3d_bound_range(start_idx, count, MAX_SHADER_RESOURCE_VIEWS))
     {
         WARN("Invalid view index %u, count %u.\n", start_idx, count);
         return;
@@ -2040,7 +2035,7 @@ void CDECL wined3d_device_context_set_samplers(struct wined3d_device_context *co
 
     TRACE("context %p, type %#x, start_idx %u, count %u, samplers %p.\n", context, type, start_idx, count, samplers);
 
-    if (start_idx >= MAX_SAMPLER_OBJECTS || count > MAX_SAMPLER_OBJECTS - start_idx)
+    if (!wined3d_bound_range(start_idx, count, MAX_SAMPLER_OBJECTS))
     {
         WARN("Invalid sampler index %u, count %u.\n", start_idx, count);
         return;
@@ -2063,31 +2058,37 @@ void CDECL wined3d_device_context_set_samplers(struct wined3d_device_context *co
     }
 }
 
-void CDECL wined3d_device_context_set_unordered_access_view(struct wined3d_device_context *context,
-        enum wined3d_pipeline pipeline, unsigned int idx, struct wined3d_unordered_access_view *uav,
-        unsigned int initial_count)
+void CDECL wined3d_device_context_set_unordered_access_views(struct wined3d_device_context *context,
+        enum wined3d_pipeline pipeline, unsigned int start_idx, unsigned int count,
+        struct wined3d_unordered_access_view *const *uavs, const unsigned int *initial_counts)
 {
     struct wined3d_state *state = context->state;
-    struct wined3d_unordered_access_view *prev;
+    unsigned int i;
 
-    TRACE("context %p, pipeline %#x, idx %u, uav %p, initial_count %u.\n", context, pipeline, idx, uav, initial_count);
+    TRACE("context %p, pipeline %#x, start_idx %u, count %u, uavs %p, initial_counts %p.\n",
+            context, pipeline, start_idx, count, uavs, initial_counts);
 
-    if (idx >= MAX_UNORDERED_ACCESS_VIEWS)
+    if (!wined3d_bound_range(start_idx, count, MAX_UNORDERED_ACCESS_VIEWS))
     {
-        WARN("Invalid UAV index %u.\n", idx);
+        WARN("Invalid UAV index %u, count %u.\n", start_idx, count);
         return;
     }
 
-    prev = state->unordered_access_view[pipeline][idx];
-    if (uav == prev && initial_count == ~0u)
+    if (!memcmp(uavs, &state->unordered_access_view[pipeline][start_idx], count * sizeof(*uavs)) && !initial_counts)
         return;
 
-    if (uav)
-        wined3d_unordered_access_view_incref(uav);
-    state->unordered_access_view[pipeline][idx] = uav;
-    wined3d_device_context_emit_set_unordered_access_view(context, pipeline, idx, uav, initial_count);
-    if (prev)
-        wined3d_unordered_access_view_decref(prev);
+    wined3d_device_context_emit_set_unordered_access_views(context, pipeline, start_idx, count, uavs, initial_counts);
+    for (i = 0; i < count; ++i)
+    {
+        struct wined3d_unordered_access_view *prev = state->unordered_access_view[pipeline][start_idx + i];
+        struct wined3d_unordered_access_view *uav = uavs[i];
+
+        if (uav)
+            wined3d_unordered_access_view_incref(uav);
+        state->unordered_access_view[pipeline][start_idx + i] = uav;
+        if (prev)
+            wined3d_unordered_access_view_decref(prev);
+    }
 }
 
 static void wined3d_device_context_unbind_srv_for_rtv(struct wined3d_device_context *context,
