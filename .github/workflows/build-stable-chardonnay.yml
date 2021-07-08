@@ -11,7 +11,15 @@ jobs:
     steps:
       - uses: actions/checkout@v2
         with:
-          ref: 'master'
+          ref: stable
+          path: bottlesdevs_wine
+
+      - name: Get release version
+        working-directory: /home/runner/work/bottlesdevs_wine
+        id: vars
+        run: |
+          wine_version=$(cat VERSION)
+          echo "::set-output name=release_version::${wine_version:13}"
 
       - name: Fetching Build Tools
         working-directory: /home/runner/work/
@@ -20,6 +28,10 @@ jobs:
       - name: Make build scripts executable
         working-directory: /home/runner/work/build-tools/runners/vaniglia
         run: chmod +x *
+      
+      - name: Launch fetch.sh
+        working-directory: /home/runner/work/build-tools/runners/vaniglia
+        run: ./fetch.sh -r ${{ steps.vars.outputs.release_version }}
       
       - name: Launch environment.sh
         working-directory: /home/runner/work/build-tools/runners/vaniglia
@@ -48,13 +60,6 @@ jobs:
       - name: Launch package.sh
         working-directory: /home/runner/work/build-tools/runners/vaniglia
         run: ./package.sh
-
-      - name: Get release version
-        working-directory: /home/runner/work/wine/wine
-        id: vars
-        run: |
-          wine_version=$(cat VERSION)
-          echo "::set-output name=release_version::${wine_version:13}"
         
       - uses: "marvinpinto/action-automatic-releases@latest"
         with:
