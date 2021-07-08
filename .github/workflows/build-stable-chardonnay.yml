@@ -15,7 +15,7 @@ jobs:
           path: bottlesdevs_wine
 
       - name: Get release version
-        working-directory: /home/runner/work/bottlesdevs_wine
+        working-directory: /home/runner/work/wine/wine/bottlesdevs_wine
         id: vars
         run: |
           wine_version=$(cat VERSION)
