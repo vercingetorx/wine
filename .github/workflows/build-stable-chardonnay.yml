@@ -20,7 +20,6 @@ jobs:
         run: |
           wine_version=$(cat VERSION)
           echo "::set-output name=release_version::${wine_version:13}"
-          echo "${{ steps.vars.outputs.release_version }}"
 
       - name: Fetching Build Tools
         working-directory: /home/runner/work/
