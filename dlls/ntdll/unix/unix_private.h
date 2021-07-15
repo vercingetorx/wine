@@ -69,7 +69,7 @@ static inline struct ntdll_thread_data *ntdll_get_thread_data(void)
     return (struct ntdll_thread_data *)&NtCurrentTeb()->GdiTebBatch;
 }
 
-typedef NTSTATUS async_callback_t( void *user, IO_STATUS_BLOCK *io, NTSTATUS status );
+typedef NTSTATUS async_callback_t( void *user, ULONG_PTR *info, NTSTATUS status );
 
 struct async_fileio
 {
@@ -316,6 +316,12 @@ static inline void ascii_to_unicode( WCHAR *dst, const char *src, size_t len )
 static inline void *get_signal_stack(void)
 {
     return (void *)(((ULONG_PTR)NtCurrentTeb() & ~signal_stack_mask) + teb_size);
+}
+
+static inline BOOL is_inside_signal_stack( void *ptr )
+{
+    return ((char *)ptr >= (char *)get_signal_stack() &&
+            (char *)ptr < (char *)get_signal_stack() + signal_stack_size);
 }
 
 static inline void mutex_lock( pthread_mutex_t *mutex )

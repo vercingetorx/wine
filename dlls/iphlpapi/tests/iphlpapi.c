@@ -53,9 +53,6 @@
 static HMODULE hLibrary = NULL;
 
 static DWORD (WINAPI *pAllocateAndGetTcpExTableFromStack)(void**,BOOL,HANDLE,DWORD,DWORD);
-static DWORD (WINAPI *pGetIfEntry2)(PMIB_IF_ROW2);
-static DWORD (WINAPI *pGetIfTable2)(PMIB_IF_TABLE2*);
-static DWORD (WINAPI *pGetIfTable2Ex)(MIB_IF_TABLE_LEVEL,PMIB_IF_TABLE2*);
 static DWORD (WINAPI *pGetTcp6Table)(PMIB_TCP6TABLE,PDWORD,BOOL);
 static DWORD (WINAPI *pGetUdp6Table)(PMIB_UDP6TABLE,PDWORD,BOOL);
 static DWORD (WINAPI *pGetUnicastIpAddressEntry)(MIB_UNICASTIPADDRESS_ROW*);
@@ -64,21 +61,21 @@ static DWORD (WINAPI *pGetExtendedTcpTable)(PVOID,PDWORD,BOOL,ULONG,TCP_TABLE_CL
 static DWORD (WINAPI *pGetExtendedUdpTable)(PVOID,PDWORD,BOOL,ULONG,UDP_TABLE_CLASS,ULONG);
 static DWORD (WINAPI *pCreateSortedAddressPairs)(const PSOCKADDR_IN6,ULONG,const PSOCKADDR_IN6,ULONG,ULONG,
                                                  PSOCKADDR_IN6_PAIR*,ULONG*);
-static void (WINAPI *pFreeMibTable)(void*);
 static DWORD (WINAPI *pConvertLengthToIpv4Mask)(ULONG,ULONG*);
 static DWORD (WINAPI *pParseNetworkString)(const WCHAR*,DWORD,NET_ADDRESS_INFO*,USHORT*,BYTE*);
 static DWORD (WINAPI *pNotifyUnicastIpAddressChange)(ADDRESS_FAMILY, PUNICAST_IPADDRESS_CHANGE_CALLBACK,
                                                 PVOID, BOOLEAN, HANDLE *);
 static DWORD (WINAPI *pCancelMibChangeNotify2)(HANDLE);
 
+DWORD WINAPI ConvertGuidToStringA( const GUID *, char *, DWORD );
+DWORD WINAPI ConvertGuidToStringW( const GUID *, WCHAR *, DWORD );
+DWORD WINAPI ConvertStringToGuidW( const WCHAR *, GUID * );
+
 static void loadIPHlpApi(void)
 {
   hLibrary = LoadLibraryA("iphlpapi.dll");
   if (hLibrary) {
     pAllocateAndGetTcpExTableFromStack = (void *)GetProcAddress(hLibrary, "AllocateAndGetTcpExTableFromStack");
-    pGetIfEntry2 = (void *)GetProcAddress(hLibrary, "GetIfEntry2");
-    pGetIfTable2 = (void *)GetProcAddress(hLibrary, "GetIfTable2");
-    pGetIfTable2Ex = (void *)GetProcAddress(hLibrary, "GetIfTable2Ex");
     pGetTcp6Table = (void *)GetProcAddress(hLibrary, "GetTcp6Table");
     pGetUdp6Table = (void *)GetProcAddress(hLibrary, "GetUdp6Table");
     pGetUnicastIpAddressEntry = (void *)GetProcAddress(hLibrary, "GetUnicastIpAddressEntry");
@@ -86,7 +83,6 @@ static void loadIPHlpApi(void)
     pGetExtendedTcpTable = (void *)GetProcAddress(hLibrary, "GetExtendedTcpTable");
     pGetExtendedUdpTable = (void *)GetProcAddress(hLibrary, "GetExtendedUdpTable");
     pCreateSortedAddressPairs = (void *)GetProcAddress(hLibrary, "CreateSortedAddressPairs");
-    pFreeMibTable = (void *)GetProcAddress(hLibrary, "FreeMibTable");
     pConvertLengthToIpv4Mask = (void *)GetProcAddress(hLibrary, "ConvertLengthToIpv4Mask");
     pParseNetworkString = (void *)GetProcAddress(hLibrary, "ParseNetworkString");
     pNotifyUnicastIpAddressChange = (void *)GetProcAddress(hLibrary, "NotifyUnicastIpAddressChange");
@@ -146,10 +142,6 @@ static void testGetNumberOfInterfaces(void)
     }
 
     apiReturn = GetNumberOfInterfaces(&numInterfaces);
-    if (apiReturn == ERROR_NOT_SUPPORTED) {
-        skip("GetNumberOfInterfaces is not supported\n");
-        return;
-    }
     ok(apiReturn == NO_ERROR,
        "GetNumberOfInterfaces returned %d, expected 0\n", apiReturn);
 }
@@ -244,27 +236,46 @@ static void testGetIfTable(void)
            "GetIfTable(buf, &dwSize, FALSE) returned %d, expected NO_ERROR\n\n",
            apiReturn);
 
-        if (apiReturn == NO_ERROR && winetest_debug > 1)
+        if (apiReturn == NO_ERROR)
         {
-            DWORD i, j;
-            char name[MAX_INTERFACE_NAME_LEN];
+            char descr[MAX_INTERFACE_NAME_LEN];
+            WCHAR name[MAX_INTERFACE_NAME_LEN];
+            DWORD i, index;
 
-            trace( "interface table: %u entries\n", buf->dwNumEntries );
+            if (winetest_debug > 1) trace( "interface table: %u entries\n", buf->dwNumEntries );
             for (i = 0; i < buf->dwNumEntries; i++)
             {
                 MIB_IFROW *row = &buf->table[i];
-                WideCharToMultiByte( CP_ACP, 0, row->wszName, -1, name, MAX_INTERFACE_NAME_LEN, NULL, NULL );
-                trace( "%u: '%s' type %u mtu %u speed %u phys",
-                       row->dwIndex, name, row->dwType, row->dwMtu, row->dwSpeed );
-                for (j = 0; j < row->dwPhysAddrLen; j++)
-                    printf( " %02x", row->bPhysAddr[j] );
-                printf( "\n" );
-                trace( "        in: bytes %u upkts %u nupkts %u disc %u err %u unk %u\n",
-                       row->dwInOctets, row->dwInUcastPkts, row->dwInNUcastPkts,
-                       row->dwInDiscards, row->dwInErrors, row->dwInUnknownProtos );
-                trace( "        out: bytes %u upkts %u nupkts %u disc %u err %u\n",
-                       row->dwOutOctets, row->dwOutUcastPkts, row->dwOutNUcastPkts,
-                       row->dwOutDiscards, row->dwOutErrors );
+                MIB_IF_ROW2 row2;
+                GUID *guid;
+
+                if (winetest_debug > 1)
+                {
+                    trace( "%u: '%s' type %u mtu %u speed %u\n",
+                           row->dwIndex, debugstr_w(row->wszName), row->dwType, row->dwMtu, row->dwSpeed );
+                    trace( "        in: bytes %u upkts %u nupkts %u disc %u err %u unk %u\n",
+                           row->dwInOctets, row->dwInUcastPkts, row->dwInNUcastPkts,
+                           row->dwInDiscards, row->dwInErrors, row->dwInUnknownProtos );
+                    trace( "        out: bytes %u upkts %u nupkts %u disc %u err %u\n",
+                           row->dwOutOctets, row->dwOutUcastPkts, row->dwOutNUcastPkts,
+                           row->dwOutDiscards, row->dwOutErrors );
+                }
+                apiReturn = GetAdapterIndex( row->wszName, &index );
+                ok( !apiReturn, "got %d\n", apiReturn );
+                ok( index == row->dwIndex ||
+                    broken( index != row->dwIndex && index ), /* Win8 can have identical guids for two different ifaces */
+                    "got %d vs %d\n", index, row->dwIndex );
+                memset( &row2, 0, sizeof(row2) );
+                row2.InterfaceIndex = row->dwIndex;
+                GetIfEntry2( &row2 );
+                WideCharToMultiByte( CP_ACP, 0, row2.Description, -1, descr, sizeof(descr), NULL, NULL );
+                ok( !strcmp( (char *)row->bDescr, descr ), "got %s vs %s\n", row->bDescr, descr );
+                guid = &row2.InterfaceGuid;
+                swprintf( name, ARRAY_SIZE(name), L"\\DEVICE\\TCPIP_{%08X-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X}",
+                          guid->Data1, guid->Data2, guid->Data3, guid->Data4[0], guid->Data4[1],
+                          guid->Data4[2], guid->Data4[3], guid->Data4[4], guid->Data4[5],
+                          guid->Data4[6], guid->Data4[7]);
+                ok( !wcscmp( row->wszName, name ), "got %s vs %s\n", debugstr_w( row->wszName ), debugstr_w( name ) );
             }
         }
         HeapFree(GetProcessHeap(), 0, buf);
@@ -1048,7 +1059,7 @@ static void testWinNT4Functions(void)
 static void testGetInterfaceInfo(void)
 {
     DWORD apiReturn;
-    ULONG len = 0;
+    ULONG len = 0, i;
 
     apiReturn = GetInterfaceInfo(NULL, NULL);
     if (apiReturn == ERROR_NOT_SUPPORTED) {
@@ -1069,6 +1080,16 @@ static void testGetInterfaceInfo(void)
         ok(apiReturn == NO_ERROR,
            "GetInterfaceInfo(buf, &dwSize) returned %d, expected NO_ERROR\n",
            apiReturn);
+
+        for (i = 0; i < buf->NumAdapters; i++)
+        {
+            MIB_IFROW row = { .dwIndex = buf->Adapter[i].Index };
+            GetIfEntry( &row );
+            ok( !wcscmp( buf->Adapter[i].Name, row.wszName ), "got %s vs %s\n",
+                debugstr_w( buf->Adapter[i].Name ), debugstr_w( row.wszName ) );
+todo_wine_if( row.dwType == IF_TYPE_SOFTWARE_LOOPBACK)
+            ok( row.dwType != IF_TYPE_SOFTWARE_LOOPBACK, "got loopback\n" );
+        }
         HeapFree(GetProcessHeap(), 0, buf);
     }
 }
@@ -1576,7 +1597,7 @@ static void test_CreateSortedAddressPairs(void)
     ok( pair_count >= 1, "got %u\n", pair_count );
     ok( pair[0].SourceAddress != NULL, "src address not set\n" );
     ok( pair[0].DestinationAddress != NULL, "dst address not set\n" );
-    pFreeMibTable( pair );
+    FreeMibTable( pair );
 
     dst[1].sin6_family = AF_INET6;
     dst[1].sin6_addr.u.Word[5] = 0xffff;
@@ -1593,7 +1614,7 @@ static void test_CreateSortedAddressPairs(void)
     ok( pair[0].DestinationAddress != NULL, "dst address not set\n" );
     ok( pair[1].SourceAddress != NULL, "src address not set\n" );
     ok( pair[1].DestinationAddress != NULL, "dst address not set\n" );
-    pFreeMibTable( pair );
+    FreeMibTable( pair );
 }
 
 static DWORD get_interface_index(void)
@@ -1862,27 +1883,22 @@ static void test_GetIfEntry2(void)
     MIB_IF_ROW2 row;
     NET_IFINDEX index;
 
-    if (!pGetIfEntry2)
-    {
-        win_skip( "GetIfEntry2 not available\n" );
-        return;
-    }
     if (!(index = get_interface_index()))
     {
         skip( "no suitable interface found\n" );
         return;
     }
 
-    ret = pGetIfEntry2( NULL );
+    ret = GetIfEntry2( NULL );
     ok( ret == ERROR_INVALID_PARAMETER, "got %u\n", ret );
 
     memset( &row, 0, sizeof(row) );
-    ret = pGetIfEntry2( &row );
+    ret = GetIfEntry2( &row );
     ok( ret == ERROR_INVALID_PARAMETER, "got %u\n", ret );
 
     memset( &row, 0, sizeof(row) );
     row.InterfaceIndex = index;
-    ret = pGetIfEntry2( &row );
+    ret = GetIfEntry2( &row );
     ok( ret == NO_ERROR, "got %u\n", ret );
     ok( row.InterfaceIndex == index, "got %u\n", index );
 }
@@ -1892,17 +1908,11 @@ static void test_GetIfTable2(void)
     DWORD ret;
     MIB_IF_TABLE2 *table;
 
-    if (!pGetIfTable2)
-    {
-        win_skip( "GetIfTable2 not available\n" );
-        return;
-    }
-
     table = NULL;
-    ret = pGetIfTable2( &table );
+    ret = GetIfTable2( &table );
     ok( ret == NO_ERROR, "got %u\n", ret );
     ok( table != NULL, "table not set\n" );
-    pFreeMibTable( table );
+    FreeMibTable( table );
 }
 
 static void test_GetIfTable2Ex(void)
@@ -1910,35 +1920,29 @@ static void test_GetIfTable2Ex(void)
     DWORD ret;
     MIB_IF_TABLE2 *table;
 
-    if (!pGetIfTable2Ex)
-    {
-        win_skip( "GetIfTable2Ex not available\n" );
-        return;
-    }
-
     table = NULL;
-    ret = pGetIfTable2Ex( MibIfTableNormal, &table );
+    ret = GetIfTable2Ex( MibIfTableNormal, &table );
     ok( ret == NO_ERROR, "got %u\n", ret );
     ok( table != NULL, "table not set\n" );
-    pFreeMibTable( table );
+    FreeMibTable( table );
 
     table = NULL;
-    ret = pGetIfTable2Ex( MibIfTableRaw, &table );
+    ret = GetIfTable2Ex( MibIfTableRaw, &table );
     ok( ret == NO_ERROR, "got %u\n", ret );
     ok( table != NULL, "table not set\n" );
-    pFreeMibTable( table );
+    FreeMibTable( table );
 
     table = NULL;
-    ret = pGetIfTable2Ex( MibIfTableNormalWithoutStatistics, &table );
+    ret = GetIfTable2Ex( MibIfTableNormalWithoutStatistics, &table );
     ok( ret == NO_ERROR || broken(ret == ERROR_INVALID_PARAMETER), "got %u\n", ret );
     ok( table != NULL || broken(!table), "table not set\n" );
-    pFreeMibTable( table );
+    FreeMibTable( table );
 
     table = NULL;
-    ret = pGetIfTable2Ex( 3, &table );
+    ret = GetIfTable2Ex( 3, &table );
     ok( ret == ERROR_INVALID_PARAMETER, "got %u\n", ret );
     ok( !table, "table should not be set\n" );
-    pFreeMibTable( table );
+    FreeMibTable( table );
 }
 
 static void test_GetUnicastIpAddressEntry(void)
@@ -2070,12 +2074,12 @@ static void test_GetUnicastIpAddressTable(void)
     ret = pGetUnicastIpAddressTable(AF_INET, &table);
     ok( ret == NO_ERROR, "got %u\n", ret );
     trace("GetUnicastIpAddressTable(AF_INET): NumEntries %u\n", table->NumEntries);
-    pFreeMibTable(table);
+    FreeMibTable( table );
 
     ret = pGetUnicastIpAddressTable(AF_INET6, &table);
     ok( ret == NO_ERROR, "got %u\n", ret );
     trace("GetUnicastIpAddressTable(AF_INET6): NumEntries %u\n", table->NumEntries);
-    pFreeMibTable(table);
+    FreeMibTable( table );
 
     ret = pGetUnicastIpAddressTable(AF_UNSPEC, &table);
     ok( ret == NO_ERROR, "got %u\n", ret );
@@ -2099,7 +2103,7 @@ static void test_GetUnicastIpAddressTable(void)
         trace("CreationTimeStamp:               %08x%08x\n", table->Table[i].CreationTimeStamp.HighPart, table->Table[i].CreationTimeStamp.LowPart);
     }
 
-    pFreeMibTable(table);
+    FreeMibTable( table );
 }
 
 static void test_ConvertLengthToIpv4Mask(void)
@@ -2360,6 +2364,33 @@ static void test_NotifyUnicastIpAddressChange(void)
     ok(!CloseHandle(handle), "CloseHandle() succeeded.\n");
 }
 
+static void test_ConvertGuidToString( void )
+{
+    DWORD err;
+    char bufA[39];
+    WCHAR bufW[39];
+    GUID guid = { 0xa, 0xb, 0xc, { 0xd, 0, 0xe, 0xf } }, guid2;
+
+    err = ConvertGuidToStringA( &guid, bufA, 38 );
+    ok( err, "got %d\n", err );
+    err = ConvertGuidToStringA( &guid, bufA, 39 );
+    ok( !err, "got %d\n", err );
+    ok( !strcmp( bufA, "{0000000A-000B-000C-0D00-0E0F00000000}" ), "got %s\n", bufA );
+
+    err = ConvertGuidToStringW( &guid, bufW, 38 );
+    ok( err, "got %d\n", err );
+    err = ConvertGuidToStringW( &guid, bufW, 39 );
+    ok( !err, "got %d\n", err );
+    ok( !wcscmp( bufW, L"{0000000A-000B-000C-0D00-0E0F00000000}" ), "got %s\n", debugstr_w( bufW ) );
+
+    err = ConvertStringToGuidW( bufW, &guid2 );
+    ok( !err, "got %d\n", err );
+    ok( IsEqualGUID( &guid, &guid2 ), "guid mismatch\n" );
+
+    err = ConvertStringToGuidW( L"foo", &guid2 );
+    ok( err == ERROR_INVALID_PARAMETER, "got %d\n", err );
+}
+
 START_TEST(iphlpapi)
 {
 
@@ -2392,6 +2423,7 @@ START_TEST(iphlpapi)
     test_GetUdp6Table();
     test_ParseNetworkString();
     test_NotifyUnicastIpAddressChange();
+    test_ConvertGuidToString();
     freeIPHlpApi();
   }
 }
