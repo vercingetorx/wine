@@ -11,7 +11,7 @@ jobs:
     steps:
       - uses: actions/checkout@v2
         with:
-          ref: stable
+          ref: testing
           path: bottlesdevs_wine
 
       - name: Get release version
