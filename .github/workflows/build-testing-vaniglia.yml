@@ -1,9 +1,9 @@
-name: build-stable-vaniglia
+name: build-testing-vaniglia
 on:
   push:
-    branches: [ stable ]
+    branches: [ testing ]
   pull_request:
-    branches: [ stable ]
+    branches: [ testing ]
   workflow_dispatch:
 jobs:
   build:
@@ -59,15 +59,15 @@ jobs:
       
       - name: Launch package.sh
         working-directory: /home/runner/work/build-tools/runners/vaniglia
-        run: ./package.sh
+        run: ./package.sh -s testing
         
       - uses: "marvinpinto/action-automatic-releases@latest"
         with:
           repo_token: "${{ secrets.GITHUB_TOKEN }}"
           draft: false
           prerelease: false
-          automatic_release_tag: "${{ steps.vars.outputs.release_version }}"
-          title: "Vaniglia ${{ steps.vars.outputs.release_version }}"
-          files: "/home/runner/work/wine/wine/vaniglia-${{ steps.vars.outputs.release_version }}-x86_64.tar.gz"
+          automatic_release_tag: "${{ steps.vars.outputs.release_version }}-testing"
+          title: "Vaniglia ${{ steps.vars.outputs.release_version }}-testing"
+          files: "/home/runner/work/wine/wine/vaniglia-${{ steps.vars.outputs.release_version }}-testing-x86_64.tar.gz"
           
 
