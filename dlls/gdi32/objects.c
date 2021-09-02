@@ -19,15 +19,25 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
+#include <stdlib.h>
+
+#include "ntstatus.h"
+#define WIN32_NO_STATUS
 #include "gdi_private.h"
+#include "winuser.h"
+#include "winreg.h"
 #include "winnls.h"
-#include "winternl.h"
+#include "initguid.h"
+#include "devguid.h"
+#include "setupapi.h"
 
 #include "wine/rbtree.h"
 #include "wine/debug.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(gdi);
 
+
+DEFINE_DEVPROPKEY(DEVPROPKEY_GPU_LUID, 0x60b193cb, 0x5276, 0x4d0f, 0x96, 0xfc, 0xf1, 0x73, 0xab, 0xad, 0x3e, 0xc6, 2);
 
 struct hdc_list
 {
@@ -153,7 +163,14 @@ BOOL WINAPI DeleteObject( HGDIOBJ obj )
     struct hdc_list *hdc_list = NULL;
     struct wine_rb_entry *entry;
 
-    if (is_meta_dc( obj )) return METADC_DeleteDC( obj );
+    switch (gdi_handle_type( obj ))
+    {
+    case NTGDI_OBJ_DC:
+    case NTGDI_OBJ_MEMDC:
+    case NTGDI_OBJ_ENHMETADC:
+    case NTGDI_OBJ_METADC:
+        return DeleteDC( obj );
+    }
 
     EnterCriticalSection( &obj_map_cs );
 
@@ -382,6 +399,103 @@ HPEN WINAPI CreatePen( INT style, INT width, COLORREF color )
 }
 
 /***********************************************************************
+ *           ExtCreatePen    (GDI32.@)
+ */
+HPEN WINAPI ExtCreatePen( DWORD style, DWORD width, const LOGBRUSH *brush, DWORD style_count,
+                          const DWORD *style_bits )
+{
+    ULONG brush_style = brush->lbStyle;
+    ULONG_PTR hatch = brush->lbHatch;
+    HPEN pen;
+
+    if (brush_style == BS_DIBPATTERN)
+    {
+        if (!(hatch = (ULONG_PTR)GlobalLock( (HGLOBAL)hatch ))) return 0;
+        brush_style = BS_DIBPATTERNPT;
+    }
+
+    pen = NtGdiExtCreatePen( style, width, brush_style, brush->lbColor, brush->lbHatch, hatch,
+                             style_count, style_bits, /* FIXME */ 0, FALSE, NULL );
+
+    if (brush->lbStyle == BS_DIBPATTERN) GlobalUnlock( (HGLOBAL)brush->lbHatch );
+    return pen;
+}
+
+/***********************************************************************
+ *           CreateBrushIndirect    (GDI32.@)
+ */
+HBRUSH WINAPI CreateBrushIndirect( const LOGBRUSH *brush )
+{
+    switch (brush->lbStyle)
+    {
+    case BS_NULL:
+        return GetStockObject( NULL_BRUSH );
+    case BS_SOLID:
+        return CreateSolidBrush( brush->lbColor );
+    case BS_HATCHED:
+        return CreateHatchBrush( brush->lbHatch, brush->lbColor );
+    case BS_PATTERN:
+    case BS_PATTERN8X8:
+        return CreatePatternBrush( (HBITMAP)brush->lbHatch );
+    case BS_DIBPATTERN:
+        return CreateDIBPatternBrush( (HGLOBAL)brush->lbHatch, brush->lbColor );
+    case BS_DIBPATTERNPT:
+        return CreateDIBPatternBrushPt( (void *)brush->lbHatch, brush->lbColor );
+    default:
+        WARN( "invalid brush style %u\n", brush->lbStyle );
+        return 0;
+    }
+}
+
+/***********************************************************************
+ *           CreateSolidBrush    (GDI32.@)
+ */
+HBRUSH WINAPI CreateSolidBrush( COLORREF color )
+{
+    return NtGdiCreateSolidBrush( color, NULL );
+}
+
+/***********************************************************************
+ *           CreateHatchBrush    (GDI32.@)
+ */
+HBRUSH WINAPI CreateHatchBrush( INT style, COLORREF color )
+{
+    return NtGdiCreateHatchBrush( style, color, FALSE );
+}
+
+/***********************************************************************
+ *           CreatePatternBrush    (GDI32.@)
+ */
+HBRUSH WINAPI CreatePatternBrush( HBITMAP bitmap )
+{
+    return NtGdiCreatePatternBrushInternal( bitmap, FALSE, FALSE );
+}
+
+/***********************************************************************
+ *           CreateDIBPatternBrush    (GDI32.@)
+ */
+HBRUSH WINAPI CreateDIBPatternBrush( HGLOBAL hbitmap, UINT coloruse )
+{
+    HBRUSH brush;
+    void *mem;
+
+    TRACE( "%p\n", hbitmap );
+
+    if (!(mem = GlobalLock( hbitmap ))) return 0;
+    brush = NtGdiCreateDIBBrush( mem, coloruse, /* FIXME */ 0, FALSE, FALSE, hbitmap );
+    GlobalUnlock( hbitmap );
+    return brush;
+}
+
+/***********************************************************************
+ *           CreateDIBPatternBrushPt    (GDI32.@)
+ */
+HBRUSH WINAPI CreateDIBPatternBrushPt( const void *data, UINT coloruse )
+{
+    return NtGdiCreateDIBBrush( data, coloruse, /* FIXME */ 0, FALSE, FALSE, data );
+}
+
+/***********************************************************************
  *           CreateBitmapIndirect (GDI32.@)
  */
 HBITMAP WINAPI CreateBitmapIndirect( const BITMAP *bmp )
@@ -408,6 +522,19 @@ HBITMAP WINAPI CreateBitmap( INT width, INT height, UINT planes,
         return GetStockObject( STOCK_LAST + 1 ); /* default 1x1 bitmap */
 
     return NtGdiCreateBitmap( width, height, planes, bpp, bits );
+}
+
+/******************************************************************************
+ *           CreateCompatibleBitmap    (GDI32.@)
+ *
+ * Creates a bitmap compatible with the DC.
+ */
+HBITMAP WINAPI CreateCompatibleBitmap( HDC hdc, INT width, INT height )
+{
+    if (!width || !height)
+        return GetStockObject( STOCK_LAST + 1 ); /* default 1x1 bitmap */
+
+    return NtGdiCreateCompatibleBitmap( hdc, width, height );
 }
 
 /******************************************************************************
@@ -598,6 +725,53 @@ UINT WINAPI GetSystemPaletteEntries( HDC hdc, UINT start, UINT count, PALETTEENT
 }
 
 /***********************************************************************
+ *           CreateDIBitmap    (GDI32.@)
+ */
+HBITMAP WINAPI CreateDIBitmap( HDC hdc, const BITMAPINFOHEADER *header, DWORD init,
+                               const void *bits, const BITMAPINFO *data, UINT coloruse )
+{
+    int width, height;
+
+    if (!header) return 0;
+
+    if (header->biSize == sizeof(BITMAPCOREHEADER))
+    {
+        const BITMAPCOREHEADER *core = (const BITMAPCOREHEADER *)header;
+        width  = core->bcWidth;
+        height = core->bcHeight;
+    }
+    else if (header->biSize >= sizeof(BITMAPINFOHEADER))
+    {
+        if (header->biCompression == BI_JPEG || header->biCompression == BI_PNG) return 0;
+        width  = header->biWidth;
+        height = header->biHeight;
+    }
+    else return 0;
+
+    if (!width || !height) return GetStockObject( STOCK_LAST + 1 ); /* default 1x1 bitmap */
+    return NtGdiCreateDIBitmapInternal( hdc, width, height, init, bits, data, coloruse,
+                                        0, 0, 0, 0 );
+}
+
+/***********************************************************************
+ *           CreateDIBSection    (GDI32.@)
+ */
+HBITMAP WINAPI DECLSPEC_HOTPATCH CreateDIBSection( HDC hdc, const BITMAPINFO *bmi, UINT usage,
+                                                   void **bits, HANDLE section, DWORD offset )
+{
+    return NtGdiCreateDIBSection( hdc, section, offset, bmi, usage, 0, 0, 0, bits );
+}
+
+/***********************************************************************
+ *           GetDIBits    (win32u.@)
+ */
+INT WINAPI DECLSPEC_HOTPATCH GetDIBits( HDC hdc, HBITMAP hbitmap, UINT startscan, UINT lines,
+                                        void *bits, BITMAPINFO *info, UINT coloruse )
+{
+    return NtGdiGetDIBitsInternal( hdc, hbitmap, startscan, lines, bits, info, coloruse, 0, 0 );
+}
+
+/***********************************************************************
  *           GetDIBColorTable    (GDI32.@)
  */
 UINT WINAPI GetDIBColorTable( HDC hdc, UINT start, UINT count, RGBQUAD *colors )
@@ -611,4 +785,219 @@ UINT WINAPI GetDIBColorTable( HDC hdc, UINT start, UINT count, RGBQUAD *colors )
 UINT WINAPI SetDIBColorTable( HDC hdc, UINT start, UINT count, const RGBQUAD *colors )
 {
     return NtGdiDoPalette( hdc, start, count, (void *)colors, NtGdiSetDIBColorTable, FALSE );
+}
+
+static HANDLE get_display_device_init_mutex( void )
+{
+    HANDLE mutex = CreateMutexW( NULL, FALSE, L"display_device_init" );
+
+    WaitForSingleObject( mutex, INFINITE );
+    return mutex;
+}
+
+static void release_display_device_init_mutex( HANDLE mutex )
+{
+    ReleaseMutex( mutex );
+    CloseHandle( mutex );
+}
+
+/***********************************************************************
+ *           D3DKMTOpenAdapterFromGdiDisplayName    (GDI32.@)
+ */
+NTSTATUS WINAPI D3DKMTOpenAdapterFromGdiDisplayName( D3DKMT_OPENADAPTERFROMGDIDISPLAYNAME *desc )
+{
+    WCHAR *end, key_nameW[MAX_PATH], bufferW[MAX_PATH];
+    HDEVINFO devinfo = INVALID_HANDLE_VALUE;
+    NTSTATUS status = STATUS_UNSUCCESSFUL;
+    D3DKMT_OPENADAPTERFROMLUID luid_desc;
+    SP_DEVINFO_DATA device_data;
+    DWORD size, state_flags;
+    DEVPROPTYPE type;
+    HANDLE mutex;
+    int index;
+
+    TRACE("(%p)\n", desc);
+
+    if (!desc)
+        return STATUS_UNSUCCESSFUL;
+
+    TRACE("DeviceName: %s\n", wine_dbgstr_w( desc->DeviceName ));
+    if (wcsnicmp( desc->DeviceName, L"\\\\.\\DISPLAY", lstrlenW(L"\\\\.\\DISPLAY") ))
+        return STATUS_UNSUCCESSFUL;
+
+    index = wcstol( desc->DeviceName + lstrlenW(L"\\\\.\\DISPLAY"), &end, 10 ) - 1;
+    if (*end)
+        return STATUS_UNSUCCESSFUL;
+
+    /* Get adapter LUID from SetupAPI */
+    mutex = get_display_device_init_mutex();
+
+    size = sizeof( bufferW );
+    swprintf( key_nameW, MAX_PATH, L"\\Device\\Video%d", index );
+    if (RegGetValueW( HKEY_LOCAL_MACHINE, L"HARDWARE\\DEVICEMAP\\VIDEO", key_nameW,
+                      RRF_RT_REG_SZ, NULL, bufferW, &size ))
+        goto done;
+
+    /* Strip \Registry\Machine\ prefix and retrieve Wine specific data set by the display driver */
+    lstrcpyW( key_nameW, bufferW + 18 );
+    size = sizeof( state_flags );
+    if (RegGetValueW( HKEY_CURRENT_CONFIG, key_nameW, L"StateFlags", RRF_RT_REG_DWORD, NULL,
+                      &state_flags, &size ))
+        goto done;
+
+    if (!(state_flags & DISPLAY_DEVICE_ATTACHED_TO_DESKTOP))
+        goto done;
+
+    size = sizeof( bufferW );
+    if (RegGetValueW( HKEY_CURRENT_CONFIG, key_nameW, L"GPUID", RRF_RT_REG_SZ, NULL, bufferW, &size ))
+        goto done;
+
+    devinfo = SetupDiCreateDeviceInfoList( &GUID_DEVCLASS_DISPLAY, NULL );
+    device_data.cbSize = sizeof( device_data );
+    SetupDiOpenDeviceInfoW( devinfo, bufferW, NULL, 0, &device_data );
+    if (!SetupDiGetDevicePropertyW( devinfo, &device_data, &DEVPROPKEY_GPU_LUID, &type,
+                                    (BYTE *)&luid_desc.AdapterLuid, sizeof( luid_desc.AdapterLuid ),
+                                    NULL, 0))
+        goto done;
+
+    if ((status = NtGdiDdDDIOpenAdapterFromLuid( &luid_desc ))) goto done;
+
+    desc->hAdapter = luid_desc.hAdapter;
+    desc->AdapterLuid = luid_desc.AdapterLuid;
+    desc->VidPnSourceId = index;
+
+done:
+    SetupDiDestroyDeviceInfoList( devinfo );
+    release_display_device_init_mutex( mutex );
+    return status;
+}
+
+/***********************************************************************
+ *           SetObjectOwner    (GDI32.@)
+ */
+void WINAPI SetObjectOwner( HGDIOBJ handle, HANDLE owner )
+{
+    /* Nothing to do */
+}
+
+/***********************************************************************
+ *           GdiInitializeLanguagePack    (GDI32.@)
+ */
+DWORD WINAPI GdiInitializeLanguagePack( DWORD arg )
+{
+    FIXME( "stub\n" );
+    return 0;
+}
+
+/***********************************************************************
+ *           GdiGetBatchLimit    (GDI32.@)
+ */
+DWORD WINAPI GdiGetBatchLimit(void)
+{
+    return 1;  /* FIXME */
+}
+
+/***********************************************************************
+ *           GdiSetBatchLimit    (GDI32.@)
+ */
+DWORD WINAPI GdiSetBatchLimit( DWORD limit )
+{
+    return 1; /* FIXME */
+}
+
+/* Solid colors to enumerate */
+static const COLORREF solid_colors[] =
+{
+    RGB(0x00,0x00,0x00), RGB(0xff,0xff,0xff),
+    RGB(0xff,0x00,0x00), RGB(0x00,0xff,0x00),
+    RGB(0x00,0x00,0xff), RGB(0xff,0xff,0x00),
+    RGB(0xff,0x00,0xff), RGB(0x00,0xff,0xff),
+    RGB(0x80,0x00,0x00), RGB(0x00,0x80,0x00),
+    RGB(0x80,0x80,0x00), RGB(0x00,0x00,0x80),
+    RGB(0x80,0x00,0x80), RGB(0x00,0x80,0x80),
+    RGB(0x80,0x80,0x80), RGB(0xc0,0xc0,0xc0)
+};
+
+/***********************************************************************
+ *           EnumObjects    (GDI32.@)
+ */
+INT WINAPI EnumObjects( HDC hdc, INT type, GOBJENUMPROC enum_func, LPARAM param )
+{
+    UINT i;
+    INT retval = 0;
+    LOGPEN pen;
+    LOGBRUSH brush;
+
+    TRACE( "%p %d %p %08lx\n", hdc, type, enum_func, param );
+
+    switch(type)
+    {
+    case OBJ_PEN:
+        /* Enumerate solid pens */
+        for (i = 0; i < ARRAY_SIZE(solid_colors); i++)
+        {
+            pen.lopnStyle   = PS_SOLID;
+            pen.lopnWidth.x = 1;
+            pen.lopnWidth.y = 0;
+            pen.lopnColor   = solid_colors[i];
+            retval = enum_func( &pen, param );
+            TRACE( "solid pen %08x, ret=%d\n", solid_colors[i], retval );
+            if (!retval) break;
+        }
+        break;
+
+    case OBJ_BRUSH:
+        /* Enumerate solid brushes */
+        for (i = 0; i < ARRAY_SIZE(solid_colors); i++)
+        {
+            brush.lbStyle = BS_SOLID;
+            brush.lbColor = solid_colors[i];
+            brush.lbHatch = 0;
+            retval = enum_func( &brush, param );
+            TRACE( "solid brush %08x, ret=%d\n", solid_colors[i], retval );
+            if (!retval) break;
+        }
+
+        /* Now enumerate hatched brushes */
+        for (i = HS_HORIZONTAL; retval && i <= HS_DIAGCROSS; i++)
+        {
+            brush.lbStyle = BS_HATCHED;
+            brush.lbColor = RGB(0,0,0);
+            brush.lbHatch = i;
+            retval = enum_func( &brush, param );
+            TRACE( "hatched brush %d, ret=%d\n", i, retval );
+        }
+        break;
+
+    default:
+        /* FIXME: implement Win32 types */
+        WARN( "(%d): Invalid type\n", type );
+        break;
+    }
+
+    return retval;
+}
+
+/***********************************************************************
+ *           CombineTransform  (GDI32.@)
+ *
+ * Combines two transformation matrices.
+ */
+BOOL WINAPI CombineTransform( XFORM *result, const XFORM *xform1, const XFORM *xform2 )
+{
+    XFORM r;
+
+    if (!result || !xform1 || !xform2) return FALSE;
+
+    /* Create the result in a temporary XFORM, since result may be
+     * equal to xform1 or xform2 */
+    r.eM11 = xform1->eM11 * xform2->eM11 + xform1->eM12 * xform2->eM21;
+    r.eM12 = xform1->eM11 * xform2->eM12 + xform1->eM12 * xform2->eM22;
+    r.eM21 = xform1->eM21 * xform2->eM11 + xform1->eM22 * xform2->eM21;
+    r.eM22 = xform1->eM21 * xform2->eM12 + xform1->eM22 * xform2->eM22;
+    r.eDx  = xform1->eDx  * xform2->eM11 + xform1->eDy  * xform2->eM21 + xform2->eDx;
+    r.eDy  = xform1->eDx  * xform2->eM12 + xform1->eDy  * xform2->eM22 + xform2->eDy;
+
+    *result = r;
+    return TRUE;
 }

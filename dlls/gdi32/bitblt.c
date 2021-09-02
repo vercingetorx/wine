@@ -789,7 +789,7 @@ BOOL WINAPI MaskBlt(HDC hdcDest, INT nXDest, INT nYDest,
 
     /* make bitmap */
     hDC1 = NtGdiCreateCompatibleDC( hdcDest );
-    hBitmap1 = CreateCompatibleBitmap(hdcDest, nWidth, nHeight);
+    hBitmap1 = NtGdiCreateCompatibleBitmap( hdcDest, nWidth, nHeight );
     hOldBitmap1 = NtGdiSelectBitmap(hDC1, hBitmap1);
 
     /* draw using bkgnd rop */
@@ -800,7 +800,7 @@ BOOL WINAPI MaskBlt(HDC hdcDest, INT nXDest, INT nYDest,
 
     /* make bitmap */
     hDC2 = NtGdiCreateCompatibleDC( hdcDest );
-    hBitmap2 = CreateCompatibleBitmap(hdcDest, nWidth, nHeight);
+    hBitmap2 = NtGdiCreateCompatibleBitmap( hdcDest, nWidth, nHeight );
     hOldBitmap2 = NtGdiSelectBitmap(hDC2, hBitmap2);
 
     /* draw using foregnd rop */
@@ -827,8 +827,8 @@ BOOL WINAPI MaskBlt(HDC hdcDest, INT nXDest, INT nYDest,
     DeleteObject(hBitmap2);
     DeleteObject(hbrMask);
 
-    DeleteDC(hDC1);
-    DeleteDC(hDC2);
+    NtGdiDeleteObjectApp( hDC1 );
+    NtGdiDeleteObjectApp( hDC2 );
 
     return TRUE;
 }
@@ -877,9 +877,9 @@ BOOL WINAPI GdiTransparentBlt( HDC hdcDest, int xDest, int yDest, int widthDest,
         info.bmiHeader.biPlanes = 1;
         info.bmiHeader.biBitCount = 24;
         info.bmiHeader.biCompression = BI_RGB;
-        bmpWork = CreateDIBSection( 0, &info, DIB_RGB_COLORS, NULL, NULL, 0 );
+        bmpWork = NtGdiCreateDIBSection( 0, NULL, 0, &info, DIB_RGB_COLORS, 0, 0, 0, NULL );
     }
-    else bmpWork = CreateCompatibleBitmap(hdcDest, widthDest, heightDest);
+    else bmpWork = NtGdiCreateCompatibleBitmap( hdcDest, widthDest, heightDest );
     oldWork = NtGdiSelectBitmap(hdcWork, bmpWork);
     if(!StretchBlt(hdcWork, 0, 0, widthDest, heightDest, hdcSrc, xSrc, ySrc, widthSrc, heightSrc, SRCCOPY)) {
         TRACE("Failed to stretch\n");
@@ -889,7 +889,7 @@ BOOL WINAPI GdiTransparentBlt( HDC hdcDest, int xDest, int yDest, int widthDest,
 
     /* Create mask */
     hdcMask = NtGdiCreateCompatibleDC( hdcDest );
-    bmpMask = CreateCompatibleBitmap(hdcMask, widthDest, heightDest);
+    bmpMask = NtGdiCreateCompatibleBitmap( hdcMask, widthDest, heightDest );
     oldMask = NtGdiSelectBitmap(hdcMask, bmpMask);
     if(!BitBlt(hdcMask, 0, 0, widthDest, heightDest, hdcWork, 0, 0, SRCCOPY)) {
         TRACE("Failed to create mask\n");
@@ -923,12 +923,12 @@ error:
     SetTextColor(hdcDest, oldForeground);
     if(hdcWork) {
         NtGdiSelectBitmap(hdcWork, oldWork);
-        DeleteDC(hdcWork);
+        NtGdiDeleteObjectApp( hdcWork );
     }
     if(bmpWork) DeleteObject(bmpWork);
     if(hdcMask) {
         NtGdiSelectBitmap(hdcMask, oldMask);
-        DeleteDC(hdcMask);
+        NtGdiDeleteObjectApp( hdcMask );
     }
     if(bmpMask) DeleteObject(bmpMask);
     return ret;
@@ -1019,7 +1019,7 @@ BOOL WINAPI PlgBlt( HDC hdcDest, const POINT *lpPoint,
                         HDC hdcSrc, INT nXSrc, INT nYSrc, INT nWidth,
                         INT nHeight, HBITMAP hbmMask, INT xMask, INT yMask)
 {
-    int oldgMode;
+    DWORD prev_mode;
     /* parallelogram coords */
     POINT plg[3];
     /* rect coords */
@@ -1030,8 +1030,7 @@ BOOL WINAPI PlgBlt( HDC hdcDest, const POINT *lpPoint,
     double det;
 
     /* save actual mode, set GM_ADVANCED */
-    oldgMode = SetGraphicsMode(hdcDest,GM_ADVANCED);
-    if (oldgMode == 0)
+    if (!NtGdiGetAndSetDCDword( hdcDest, NtGdiSetGraphicsMode, GM_ADVANCED, &prev_mode ))
         return FALSE;
 
     memcpy(plg,lpPoint,sizeof(POINT)*3);
@@ -1047,7 +1046,7 @@ BOOL WINAPI PlgBlt( HDC hdcDest, const POINT *lpPoint,
 
     if (fabs(det) < 1e-5)
     {
-        SetGraphicsMode(hdcDest,oldgMode);
+        NtGdiGetAndSetDCDword( hdcDest, NtGdiSetGraphicsMode, prev_mode, NULL );
         return FALSE;
     }
 
@@ -1071,7 +1070,7 @@ BOOL WINAPI PlgBlt( HDC hdcDest, const POINT *lpPoint,
                ) / det;
 
     GetWorldTransform(hdcSrc,&SrcXf);
-    CombineTransform(&xf,&xf,&SrcXf);
+    combine_transform( &xf, &xf, &SrcXf );
 
     /* save actual dest transform */
     GetWorldTransform(hdcDest,&oldDestXf);
@@ -1084,7 +1083,7 @@ BOOL WINAPI PlgBlt( HDC hdcDest, const POINT *lpPoint,
             SRCCOPY);
     /* restore dest DC */
     SetWorldTransform(hdcDest,&oldDestXf);
-    SetGraphicsMode(hdcDest,oldgMode);
+    NtGdiGetAndSetDCDword( hdcDest, NtGdiSetGraphicsMode, prev_mode, NULL );
 
     return TRUE;
 }

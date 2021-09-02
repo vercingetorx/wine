@@ -311,6 +311,32 @@ static CVReturn WineDisplayLinkCallback(CVDisplayLinkRef displayLink, const CVTi
 @end
 
 
+#ifndef MAC_OS_X_VERSION_10_14
+@protocol NSViewLayerContentScaleDelegate <NSObject>
+@optional
+
+    - (BOOL) layer:(CALayer*)layer shouldInheritContentsScale:(CGFloat)newScale fromWindow:(NSWindow*)window;
+
+@end
+#endif
+
+
+@interface CAShapeLayer (WineShapeMaskExtensions)
+
+@property(readonly, nonatomic, getter=isEmptyShaped) BOOL emptyShaped;
+
+@end
+
+@implementation CAShapeLayer (WineShapeMaskExtensions)
+
+    - (BOOL) isEmptyShaped
+    {
+        return CGRectEqualToRect(CGPathGetBoundingBox(self.path), CGRectZero);
+    }
+
+@end
+
+
 @interface WineBaseView : NSView
 @end
 
@@ -327,7 +353,7 @@ static CVReturn WineDisplayLinkCallback(CVDisplayLinkRef displayLink, const CVTi
 #endif
 
 
-@interface WineContentView : WineBaseView <NSTextInputClient>
+@interface WineContentView : WineBaseView <NSTextInputClient, NSViewLayerContentScaleDelegate>
 {
     NSMutableArray* glContexts;
     NSMutableArray* pendingGlContexts;
@@ -339,6 +365,7 @@ static CVReturn WineDisplayLinkCallback(CVDisplayLinkRef displayLink, const CVTi
     NSMutableAttributedString* markedText;
     NSRange markedTextSelection;
 
+    BOOL _retinaMode;
     int backingSize[2];
 
 #ifdef HAVE_METAL_METAL_H
@@ -377,8 +404,6 @@ static CVReturn WineDisplayLinkCallback(CVDisplayLinkRef displayLink, const CVTi
 @property (nonatomic) void* surface;
 @property (nonatomic) pthread_mutex_t* surface_mutex;
 
-@property (copy, nonatomic) NSBezierPath* shape;
-@property (copy, nonatomic) NSData* shapeData;
 @property (nonatomic) BOOL shapeChangedSinceLastDraw;
 @property (readonly, nonatomic) BOOL needsTransparency;
 
@@ -390,6 +415,8 @@ static CVReturn WineDisplayLinkCallback(CVDisplayLinkRef displayLink, const CVTi
 @property (nonatomic) BOOL commandDone;
 
 @property (readonly, copy, nonatomic) NSArray* childWineWindows;
+
+    - (void) setShape:(CGPathRef)newShape;
 
     - (void) updateForGLSubviews;
 
@@ -464,9 +491,57 @@ static CVReturn WineDisplayLinkCallback(CVDisplayLinkRef displayLink, const CVTi
         return YES;
     }
 
-    - (void) drawRect:(NSRect)rect
+    - (BOOL) wantsUpdateLayer
+    {
+        return YES /*!_everHadGLContext*/;
+    }
+
+    - (void) updateLayer
     {
         WineWindow* window = (WineWindow*)[self window];
+        CGImageRef image = NULL;
+        CGRect imageRect;
+        CALayer* layer = [self layer];
+
+        if ([window contentView] != self)
+            return;
+
+        if (!window.surface || !window.surface_mutex)
+            return;
+
+        pthread_mutex_lock(window.surface_mutex);
+        if (get_surface_blit_rects(window.surface, NULL, NULL))
+        {
+            imageRect = layer.bounds;
+            imageRect.origin.x *= layer.contentsScale;
+            imageRect.origin.y *= layer.contentsScale;
+            imageRect.size.width *= layer.contentsScale;
+            imageRect.size.height *= layer.contentsScale;
+            image = create_surface_image(window.surface, &imageRect, FALSE, window.colorKeyed,
+                                         window.colorKeyRed, window.colorKeyGreen, window.colorKeyBlue);
+        }
+        pthread_mutex_unlock(window.surface_mutex);
+
+        if (image)
+        {
+            layer.contents = (id)image;
+            CFRelease(image);
+            [window windowDidDrawContent];
+
+            // If the window may be transparent, then we have to invalidate the
+            // shadow every time we draw.  Also, if this is the first time we've
+            // drawn since changing from transparent to opaque.
+            if (window.colorKeyed || window.usePerPixelAlpha || window.shapeChangedSinceLastDraw)
+            {
+                window.shapeChangedSinceLastDraw = FALSE;
+                [window invalidateShadow];
+            }
+        }
+    }
+
+    - (void) viewWillDraw
+    {
+        [super viewWillDraw];
 
         for (WineOpenGLContext* context in pendingGlContexts)
         {
@@ -479,83 +554,6 @@ static CVReturn WineDisplayLinkCallback(CVDisplayLinkRef displayLink, const CVTi
         }
         [glContexts addObjectsFromArray:pendingGlContexts];
         [pendingGlContexts removeAllObjects];
-
-        if ([window contentView] != self)
-            return;
-
-        if (window.drawnSinceShown && window.shapeChangedSinceLastDraw && window.shape && !window.colorKeyed && !window.usePerPixelAlpha)
-        {
-            [[NSColor clearColor] setFill];
-            NSRectFill(rect);
-
-            [window.shape addClip];
-
-            [[NSColor windowBackgroundColor] setFill];
-            NSRectFill(rect);
-        }
-
-        if (window.surface && window.surface_mutex &&
-            !pthread_mutex_lock(window.surface_mutex))
-        {
-            const CGRect* rects;
-            int count;
-
-            if (get_surface_blit_rects(window.surface, &rects, &count) && count)
-            {
-                CGRect dirtyRect = cgrect_win_from_mac(NSRectToCGRect(rect));
-                CGContextRef context;
-                int i;
-
-                [window.shape addClip];
-
-                context = (CGContextRef)[[NSGraphicsContext currentContext] graphicsPort];
-                CGContextSetBlendMode(context, kCGBlendModeCopy);
-                CGContextSetInterpolationQuality(context, retina_on ? kCGInterpolationHigh : kCGInterpolationNone);
-
-                for (i = 0; i < count; i++)
-                {
-                    CGRect imageRect;
-                    CGImageRef image;
-
-                    imageRect = CGRectIntersection(rects[i], dirtyRect);
-                    image = create_surface_image(window.surface, &imageRect, FALSE);
-
-                    if (image)
-                    {
-                        if (window.colorKeyed)
-                        {
-                            CGImageRef maskedImage;
-                            CGFloat components[] = { window.colorKeyRed - 0.5, window.colorKeyRed + 0.5,
-                                                     window.colorKeyGreen - 0.5, window.colorKeyGreen + 0.5,
-                                                     window.colorKeyBlue - 0.5, window.colorKeyBlue + 0.5 };
-                            maskedImage = CGImageCreateWithMaskingColors(image, components);
-                            if (maskedImage)
-                            {
-                                CGImageRelease(image);
-                                image = maskedImage;
-                            }
-                        }
-
-                        CGContextDrawImage(context, cgrect_mac_from_win(imageRect), image);
-
-                        CGImageRelease(image);
-                    }
-                }
-
-                [window windowDidDrawContent];
-            }
-
-            pthread_mutex_unlock(window.surface_mutex);
-        }
-
-        // If the window may be transparent, then we have to invalidate the
-        // shadow every time we draw.  Also, if this is the first time we've
-        // drawn since changing from transparent to opaque.
-        if (window.drawnSinceShown && (window.colorKeyed || window.usePerPixelAlpha || window.shapeChangedSinceLastDraw))
-        {
-            window.shapeChangedSinceLastDraw = FALSE;
-            [window invalidateShadow];
-        }
     }
 
     - (void) addGLContext:(WineOpenGLContext*)context
@@ -688,7 +686,16 @@ static CVReturn WineDisplayLinkCallback(CVDisplayLinkRef displayLink, const CVTi
         [self setWantsBestResolutionOpenGLSurface:mode];
         [self updateGLContexts];
 
+        _retinaMode = !!mode;
+        [self layer].contentsScale = mode ? 2.0 : 1.0;
+        [self layer].minificationFilter = mode ? kCAFilterLinear : kCAFilterNearest;
+        [self layer].magnificationFilter = mode ? kCAFilterLinear : kCAFilterNearest;
         [super setRetinaMode:mode];
+    }
+
+    - (BOOL) layer:(CALayer*)layer shouldInheritContentsScale:(CGFloat)newScale fromWindow:(NSWindow*)window
+    {
+        return (_retinaMode || newScale == 1.0);
     }
 
     - (void) viewDidHide
@@ -951,7 +958,7 @@ static CVReturn WineDisplayLinkCallback(CVDisplayLinkRef displayLink, const CVTi
     @synthesize disabled, noActivate, floating, fullscreen, fakingClose, latentParentWindow, hwnd, queue;
     @synthesize drawnSinceShown;
     @synthesize surface, surface_mutex;
-    @synthesize shape, shapeData, shapeChangedSinceLastDraw;
+    @synthesize shapeChangedSinceLastDraw;
     @synthesize colorKeyed, colorKeyRed, colorKeyGreen, colorKeyBlue;
     @synthesize usePerPixelAlpha;
     @synthesize imeData, commandDone;
@@ -1002,6 +1009,10 @@ static CVReturn WineDisplayLinkCallback(CVDisplayLinkRef displayLink, const CVTi
         contentView = [[[WineContentView alloc] initWithFrame:NSZeroRect] autorelease];
         if (!contentView)
             return nil;
+        [contentView setWantsLayer:YES];
+        [contentView layer].minificationFilter = retina_on ? kCAFilterLinear : kCAFilterNearest;
+        [contentView layer].magnificationFilter = retina_on ? kCAFilterLinear : kCAFilterNearest;
+        [contentView layer].contentsScale = retina_on ? 2.0 : 1.0;
         [contentView setAutoresizesSubviews:NO];
 
         /* We use tracking areas in addition to setAcceptsMouseMovedEvents:YES
@@ -1051,8 +1062,6 @@ static CVReturn WineDisplayLinkCallback(CVDisplayLinkRef displayLink, const CVTi
         [queue release];
         [latentChildWindows release];
         [latentParentWindow release];
-        [shape release];
-        [shapeData release];
         [super dealloc];
     }
 
@@ -1993,7 +2002,7 @@ static CVReturn WineDisplayLinkCallback(CVDisplayLinkRef displayLink, const CVTi
 
     - (BOOL) needsTransparency
     {
-        return self.shape || self.colorKeyed || self.usePerPixelAlpha ||
+        return self.contentView.layer.mask || self.colorKeyed || self.usePerPixelAlpha ||
                 (gl_surface_mode == GL_SURFACE_BEHIND && [(WineContentView*)self.contentView hasGLDescendant]);
     }
 
@@ -2015,22 +2024,27 @@ static CVReturn WineDisplayLinkCallback(CVDisplayLinkRef displayLink, const CVTi
         }
     }
 
-    - (void) setShape:(NSBezierPath*)newShape
+    - (void) setShape:(CGPathRef)newShape
     {
-        if (shape == newShape) return;
+        CALayer* layer = [[self contentView] layer];
+        CAShapeLayer* mask = (CAShapeLayer*)layer.mask;
+        if (CGPathEqualToPath(newShape, mask.path)) return;
 
-        if (shape)
-        {
-            [[self contentView] setNeedsDisplayInRect:[shape bounds]];
-            [shape release];
-        }
+        if (newShape && !layer.mask)
+            layer.mask = mask = [CAShapeLayer layer];
+        else if (!newShape)
+            layer.mask = mask = nil;
+
+        if (mask.path)
+            [[self contentView] setNeedsDisplayInRect:NSRectFromCGRect(CGPathGetBoundingBox(mask.path))];
         if (newShape)
-            [[self contentView] setNeedsDisplayInRect:[newShape bounds]];
+            [[self contentView] setNeedsDisplayInRect:NSRectFromCGRect(CGPathGetBoundingBox(newShape))];
 
-        shape = [newShape copy];
+        mask.path = newShape;
         self.shapeChangedSinceLastDraw = TRUE;
 
         [self checkTransparency];
+        [self checkEmptyShaped];
     }
 
     - (void) makeFocused:(BOOL)activate
@@ -2227,7 +2241,8 @@ static CVReturn WineDisplayLinkCallback(CVDisplayLinkRef displayLink, const CVTi
 
     - (BOOL) isEmptyShaped
     {
-        return (self.shapeData.length == sizeof(CGRectZero) && !memcmp(self.shapeData.bytes, &CGRectZero, sizeof(CGRectZero)));
+        CAShapeLayer* mask = (CAShapeLayer*)[[self contentView] layer].mask;
+        return ([mask isEmptyShaped]);
     }
 
     - (BOOL) canProvideSnapshot
@@ -2630,8 +2645,7 @@ static CVReturn WineDisplayLinkCallback(CVDisplayLinkRef displayLink, const CVTi
 
         [transform scaleBy:scale];
 
-        if (shape)
-            [shape transformUsingAffineTransform:transform];
+        [[self contentView] layer].mask.contentsScale = mode ? 2.0 : 1.0;
 
         for (WineBaseView* subview in [self.contentView subviews])
         {
@@ -3435,25 +3449,19 @@ void macdrv_set_window_shape(macdrv_window w, const CGRect *rects, int count)
     OnMainThread(^{
         if (!rects || !count)
         {
-            window.shape = nil;
-            window.shapeData = nil;
+            [window setShape:NULL];
             [window checkEmptyShaped];
         }
         else
         {
-            size_t length = sizeof(*rects) * count;
-            if (window.shapeData.length != length || memcmp(window.shapeData.bytes, rects, length))
-            {
-                NSBezierPath* path;
-                unsigned int i;
+            CGMutablePathRef path;
+            unsigned int i;
 
-                path = [NSBezierPath bezierPath];
-                for (i = 0; i < count; i++)
-                    [path appendBezierPathWithRect:NSRectFromCGRect(cgrect_mac_from_win(rects[i]))];
-                window.shape = path;
-                window.shapeData = [NSData dataWithBytes:rects length:length];
-                [window checkEmptyShaped];
-            }
+            path = CGPathCreateMutable();
+            for (i = 0; i < count; i++)
+                CGPathAddRect(path, NULL, cgrect_mac_from_win(rects[i]));
+            [window setShape:path];
+            CGPathRelease(path);
         }
     });
 
@@ -3573,6 +3581,10 @@ macdrv_view macdrv_create_view(CGRect rect)
         NSNotificationCenter* nc = [NSNotificationCenter defaultCenter];
 
         view = [[WineContentView alloc] initWithFrame:NSRectFromCGRect(cgrect_mac_from_win(rect))];
+        [view setWantsLayer:YES];
+        [view layer].minificationFilter = retina_on ? kCAFilterLinear : kCAFilterNearest;
+        [view layer].magnificationFilter = retina_on ? kCAFilterLinear : kCAFilterNearest;
+        [view layer].contentsScale = retina_on ? 2.0 : 1.0;
         [view setAutoresizesSubviews:NO];
         [view setAutoresizingMask:NSViewNotSizable];
         [view setHidden:YES];

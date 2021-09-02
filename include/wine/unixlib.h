@@ -29,5 +29,6 @@ extern NTSTATUS WINAPI __wine_unix_call( unixlib_handle_t handle, unsigned int c
 /* some useful helpers from ntdll */
 extern DWORD ntdll_umbstowcs( const char *src, DWORD srclen, WCHAR *dst, DWORD dstlen );
 extern int ntdll_wcstoumbs( const WCHAR *src, DWORD srclen, char *dst, DWORD dstlen, BOOL strict );
+extern NTSTATUS ntdll_init_syscalls( ULONG id, SYSTEM_SERVICE_TABLE *table, void **dispatcher );
 
 #endif  /* __WINE_WINE_UNIXLIB_H */

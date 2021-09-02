@@ -29,14 +29,8 @@
 #include "winbase.h"
 #include "wingdi.h"
 #include "winreg.h"
-#include "ddrawgdi.h"
 #include "wine/winbase16.h"
 #include "winuser.h"
-#include "winternl.h"
-#include "initguid.h"
-#include "devguid.h"
-#include "setupapi.h"
-#include "ddk/d3dkmthk.h"
 
 #include "ntgdi_private.h"
 #include "wine/list.h"
@@ -44,8 +38,6 @@
 #include "wine/heap.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(driver);
-
-DEFINE_DEVPROPKEY(DEVPROPKEY_GPU_LUID, 0x60b193cb, 0x5276, 0x4d0f, 0x96, 0xfc, 0xf1, 0x73, 0xab, 0xad, 0x3e, 0xc6, 2);
 
 struct graphics_driver
 {
@@ -161,20 +153,6 @@ BOOL is_display_device( LPCWSTR name )
     }
 
     return TRUE;
-}
-
-static HANDLE get_display_device_init_mutex( void )
-{
-    HANDLE mutex = CreateMutexW( NULL, FALSE, L"display_device_init" );
-
-    WaitForSingleObject( mutex, INFINITE );
-    return mutex;
-}
-
-static void release_display_device_init_mutex( HANDLE mutex )
-{
-    ReleaseMutex( mutex );
-    CloseHandle( mutex );
 }
 
 #ifdef __i386__
@@ -391,7 +369,8 @@ static UINT CDECL nulldrv_GetBoundsRect( PHYSDEV dev, RECT *rect, UINT flags )
     return DCB_RESET;
 }
 
-static BOOL CDECL nulldrv_GetCharABCWidths( PHYSDEV dev, UINT first, UINT last, LPABC abc )
+static BOOL CDECL nulldrv_GetCharABCWidths( PHYSDEV dev, UINT first, UINT count,
+                                            WCHAR *chars, ABC *abc )
 {
     return FALSE;
 }
@@ -401,7 +380,8 @@ static BOOL CDECL nulldrv_GetCharABCWidthsI( PHYSDEV dev, UINT first, UINT count
     return FALSE;
 }
 
-static BOOL CDECL nulldrv_GetCharWidth( PHYSDEV dev, UINT first, UINT last, INT *buffer )
+static BOOL CDECL nulldrv_GetCharWidth( PHYSDEV dev, UINT first, UINT count,
+                                        const WCHAR *chars, INT *buffer )
 {
     return FALSE;
 }
@@ -720,9 +700,9 @@ static BOOL CDECL nulldrv_Rectangle( PHYSDEV dev, INT left, INT top, INT right, 
     return TRUE;
 }
 
-static HDC CDECL nulldrv_ResetDC( PHYSDEV dev, const DEVMODEW *devmode )
+static BOOL CDECL nulldrv_ResetDC( PHYSDEV dev, const DEVMODEW *devmode )
 {
-    return 0;
+    return FALSE;
 }
 
 static BOOL CDECL nulldrv_RoundRect( PHYSDEV dev, INT left, INT top, INT right, INT bottom,
@@ -855,7 +835,6 @@ const struct gdi_dc_funcs null_driver =
     nulldrv_ExtTextOut,                 /* pExtTextOut */
     nulldrv_FillPath,                   /* pFillPath */
     nulldrv_FillRgn,                    /* pFillRgn */
-    nulldrv_FlattenPath,                /* pFlattenPath */
     nulldrv_FontIsLinked,               /* pFontIsLinked */
     nulldrv_FrameRgn,                   /* pFrameRgn */
     nulldrv_GetBoundsRect,              /* pGetBoundsRect */
@@ -903,7 +882,6 @@ const struct gdi_dc_funcs null_driver =
     nulldrv_RoundRect,                  /* pRoundRect */
     nulldrv_SelectBitmap,               /* pSelectBitmap */
     nulldrv_SelectBrush,                /* pSelectBrush */
-    nulldrv_SelectClipPath,             /* pSelectClipPath */
     nulldrv_SelectFont,                 /* pSelectFont */
     nulldrv_SelectPen,                  /* pSelectPen */
     nulldrv_SetBkColor,                 /* pSetBkColor */
@@ -922,7 +900,6 @@ const struct gdi_dc_funcs null_driver =
     nulldrv_StrokeAndFillPath,          /* pStrokeAndFillPath */
     nulldrv_StrokePath,                 /* pStrokePath */
     nulldrv_UnrealizePalette,           /* pUnrealizePalette */
-    nulldrv_WidenPath,                  /* pWidenPath */
     nulldrv_D3DKMTCheckVidPnExclusiveOwnership, /* pD3DKMTCheckVidPnExclusiveOwnership */
     nulldrv_D3DKMTSetVidPnSourceOwner,  /* pD3DKMTSetVidPnSourceOwner */
     nulldrv_wine_get_wgl_driver,        /* wine_get_wgl_driver */
@@ -1169,64 +1146,28 @@ INT WINAPI NtGdiExtEscape( HDC hdc, WCHAR *driver, int driver_id, INT escape, IN
 }
 
 
-/*******************************************************************
- *      DrawEscape [GDI32.@]
- *
- *
- */
-INT WINAPI DrawEscape(HDC hdc, INT nEscape, INT cbInput, LPCSTR lpszInData)
-{
-    FIXME("DrawEscape, stub\n");
-    return 0;
-}
-
-/*******************************************************************
- *      NamedEscape [GDI32.@]
- */
-INT WINAPI NamedEscape( HDC hdc, LPCWSTR pDriver, INT nEscape, INT cbInput, LPCSTR lpszInData,
-                        INT cbOutput, LPSTR lpszOutData )
-{
-    FIXME("(%p, %s, %d, %d, %p, %d, %p)\n",
-          hdc, wine_dbgstr_w(pDriver), nEscape, cbInput, lpszInData, cbOutput,
-          lpszOutData);
-    return 0;
-}
-
-/*******************************************************************
- *      DdQueryDisplaySettingsUniqueness [GDI32.@]
- *      GdiEntry13                       [GDI32.@]
- */
-ULONG WINAPI DdQueryDisplaySettingsUniqueness(VOID)
-{
-    static int warn_once;
-
-    if (!warn_once++)
-        FIXME("stub\n");
-    return 0;
-}
-
 /******************************************************************************
- *		D3DKMTOpenAdapterFromHdc [GDI32.@]
+ *           NtGdiDdDDIOpenAdapterFromHdc    (win32u.@)
  */
-NTSTATUS WINAPI D3DKMTOpenAdapterFromHdc( void *pData )
+NTSTATUS WINAPI NtGdiDdDDIOpenAdapterFromHdc( void *pData )
 {
     FIXME("(%p): stub\n", pData);
     return STATUS_NO_MEMORY;
 }
 
 /******************************************************************************
- *		D3DKMTEscape [GDI32.@]
+ *           NtGdiDdDDIEscape    (win32u.@)
  */
-NTSTATUS WINAPI D3DKMTEscape( const void *pData )
+NTSTATUS WINAPI NtGdiDdDDIEscape( const void *pData )
 {
     FIXME("(%p): stub\n", pData);
     return STATUS_NO_MEMORY;
 }
 
 /******************************************************************************
- *		D3DKMTCloseAdapter [GDI32.@]
+ *           NtGdiDdDDICloseAdapter    (win32u.@)
  */
-NTSTATUS WINAPI D3DKMTCloseAdapter( const D3DKMT_CLOSEADAPTER *desc )
+NTSTATUS WINAPI NtGdiDdDDICloseAdapter( const D3DKMT_CLOSEADAPTER *desc )
 {
     NTSTATUS status = STATUS_INVALID_PARAMETER;
     struct d3dkmt_adapter *adapter;
@@ -1253,91 +1194,26 @@ NTSTATUS WINAPI D3DKMTCloseAdapter( const D3DKMT_CLOSEADAPTER *desc )
 }
 
 /******************************************************************************
- *		D3DKMTOpenAdapterFromGdiDisplayName [GDI32.@]
+ *           NtGdiDdDDIOpenAdapterFromLuid    (win32u.@)
  */
-NTSTATUS WINAPI D3DKMTOpenAdapterFromGdiDisplayName( D3DKMT_OPENADAPTERFROMGDIDISPLAYNAME *desc )
+NTSTATUS WINAPI NtGdiDdDDIOpenAdapterFromLuid( D3DKMT_OPENADAPTERFROMLUID *desc )
 {
-    WCHAR *end, key_nameW[MAX_PATH], bufferW[MAX_PATH];
-    HDEVINFO devinfo = INVALID_HANDLE_VALUE;
-    NTSTATUS status = STATUS_UNSUCCESSFUL;
     static D3DKMT_HANDLE handle_start = 0;
     struct d3dkmt_adapter *adapter;
-    SP_DEVINFO_DATA device_data;
-    DWORD size, state_flags;
-    DEVPROPTYPE type;
-    HANDLE mutex;
-    LUID luid;
-    int index;
 
-    TRACE("(%p)\n", desc);
-
-    if (!desc)
-        return STATUS_UNSUCCESSFUL;
-
-    TRACE("DeviceName: %s\n", wine_dbgstr_w( desc->DeviceName ));
-    if (wcsnicmp( desc->DeviceName, L"\\\\.\\DISPLAY", lstrlenW(L"\\\\.\\DISPLAY") ))
-        return STATUS_UNSUCCESSFUL;
-
-    index = wcstol( desc->DeviceName + lstrlenW(L"\\\\.\\DISPLAY"), &end, 10 ) - 1;
-    if (*end)
-        return STATUS_UNSUCCESSFUL;
-
-    adapter = heap_alloc( sizeof( *adapter ) );
-    if (!adapter)
-        return STATUS_NO_MEMORY;
-
-    /* Get adapter LUID from SetupAPI */
-    mutex = get_display_device_init_mutex();
-
-    size = sizeof( bufferW );
-    swprintf( key_nameW, MAX_PATH, L"\\Device\\Video%d", index );
-    if (RegGetValueW( HKEY_LOCAL_MACHINE, L"HARDWARE\\DEVICEMAP\\VIDEO", key_nameW, RRF_RT_REG_SZ, NULL, bufferW, &size ))
-        goto done;
-
-    /* Strip \Registry\Machine\ prefix and retrieve Wine specific data set by the display driver */
-    lstrcpyW( key_nameW, bufferW + 18 );
-    size = sizeof( state_flags );
-    if (RegGetValueW( HKEY_CURRENT_CONFIG, key_nameW, L"StateFlags", RRF_RT_REG_DWORD, NULL,
-                      &state_flags, &size ))
-        goto done;
-
-    if (!(state_flags & DISPLAY_DEVICE_ATTACHED_TO_DESKTOP))
-        goto done;
-
-    size = sizeof( bufferW );
-    if (RegGetValueW( HKEY_CURRENT_CONFIG, key_nameW, L"GPUID", RRF_RT_REG_SZ, NULL, bufferW, &size ))
-        goto done;
-
-    devinfo = SetupDiCreateDeviceInfoList( &GUID_DEVCLASS_DISPLAY, NULL );
-    device_data.cbSize = sizeof( device_data );
-    SetupDiOpenDeviceInfoW( devinfo, bufferW, NULL, 0, &device_data );
-    if (!SetupDiGetDevicePropertyW( devinfo, &device_data, &DEVPROPKEY_GPU_LUID, &type,
-                                    (BYTE *)&luid, sizeof( luid ), NULL, 0))
-        goto done;
+    if (!(adapter = heap_alloc( sizeof( *adapter ) ))) return STATUS_NO_MEMORY;
 
     EnterCriticalSection( &driver_section );
-    /* D3DKMT_HANDLE is UINT, so we can't use pointer as handle */
-    adapter->handle = ++handle_start;
+    desc->hAdapter = adapter->handle = ++handle_start;
     list_add_tail( &d3dkmt_adapters, &adapter->entry );
     LeaveCriticalSection( &driver_section );
-
-    desc->hAdapter = handle_start;
-    desc->AdapterLuid = luid;
-    desc->VidPnSourceId = index;
-    status = STATUS_SUCCESS;
-
-done:
-    SetupDiDestroyDeviceInfoList( devinfo );
-    release_display_device_init_mutex( mutex );
-    if (status != STATUS_SUCCESS)
-        heap_free( adapter );
-    return status;
+    return STATUS_SUCCESS;
 }
 
 /******************************************************************************
- *		D3DKMTCreateDevice [GDI32.@]
+ *           NtGdiDdDDICreateDevice    (win32u.@)
  */
-NTSTATUS WINAPI D3DKMTCreateDevice( D3DKMT_CREATEDEVICE *desc )
+NTSTATUS WINAPI NtGdiDdDDICreateDevice( D3DKMT_CREATEDEVICE *desc )
 {
     static D3DKMT_HANDLE handle_start = 0;
     struct d3dkmt_adapter *adapter;
@@ -1380,9 +1256,9 @@ NTSTATUS WINAPI D3DKMTCreateDevice( D3DKMT_CREATEDEVICE *desc )
 }
 
 /******************************************************************************
- *		D3DKMTDestroyDevice [GDI32.@]
+ *           NtGdiDdDDIDestroyDevice    (win32u.@)
  */
-NTSTATUS WINAPI D3DKMTDestroyDevice( const D3DKMT_DESTROYDEVICE *desc )
+NTSTATUS WINAPI NtGdiDdDDIDestroyDevice( const D3DKMT_DESTROYDEVICE *desc )
 {
     NTSTATUS status = STATUS_INVALID_PARAMETER;
     D3DKMT_SETVIDPNSOURCEOWNER set_owner_desc;
@@ -1400,7 +1276,7 @@ NTSTATUS WINAPI D3DKMTDestroyDevice( const D3DKMT_DESTROYDEVICE *desc )
         {
             memset( &set_owner_desc, 0, sizeof(set_owner_desc) );
             set_owner_desc.hDevice = desc->hDevice;
-            D3DKMTSetVidPnSourceOwner( &set_owner_desc );
+            NtGdiDdDDISetVidPnSourceOwner( &set_owner_desc );
             list_remove( &device->entry );
             heap_free( device );
             status = STATUS_SUCCESS;
@@ -1413,27 +1289,27 @@ NTSTATUS WINAPI D3DKMTDestroyDevice( const D3DKMT_DESTROYDEVICE *desc )
 }
 
 /******************************************************************************
- *		D3DKMTQueryStatistics [GDI32.@]
+ *           NtGdiDdDDIQueryStatistics    (win32u.@)
  */
-NTSTATUS WINAPI D3DKMTQueryStatistics(D3DKMT_QUERYSTATISTICS *stats)
+NTSTATUS WINAPI NtGdiDdDDIQueryStatistics( D3DKMT_QUERYSTATISTICS *stats )
 {
     FIXME("(%p): stub\n", stats);
     return STATUS_SUCCESS;
 }
 
 /******************************************************************************
- *		D3DKMTSetQueuedLimit [GDI32.@]
+ *           NtGdiDdDDISetQueuedLimit    (win32u.@)
  */
-NTSTATUS WINAPI D3DKMTSetQueuedLimit( D3DKMT_SETQUEUEDLIMIT *desc )
+NTSTATUS WINAPI NtGdiDdDDISetQueuedLimit( D3DKMT_SETQUEUEDLIMIT *desc )
 {
     FIXME( "(%p): stub\n", desc );
     return STATUS_NOT_IMPLEMENTED;
 }
 
 /******************************************************************************
- *		D3DKMTSetVidPnSourceOwner [GDI32.@]
+ *           NtGdiDdDDISetVidPnSourceOwner    (win32u.@)
  */
-NTSTATUS WINAPI D3DKMTSetVidPnSourceOwner( const D3DKMT_SETVIDPNSOURCEOWNER *desc )
+NTSTATUS WINAPI NtGdiDdDDISetVidPnSourceOwner( const D3DKMT_SETVIDPNSOURCEOWNER *desc )
 {
     TRACE("(%p)\n", desc);
 
@@ -1451,9 +1327,9 @@ NTSTATUS WINAPI D3DKMTSetVidPnSourceOwner( const D3DKMT_SETVIDPNSOURCEOWNER *des
 }
 
 /******************************************************************************
- *		D3DKMTCheckVidPnExclusiveOwnership [GDI32.@]
+ *           NtGdiDdDDICheckVidPnExclusiveOwnership    (win32u.@)
  */
-NTSTATUS WINAPI D3DKMTCheckVidPnExclusiveOwnership( const D3DKMT_CHECKVIDPNEXCLUSIVEOWNERSHIP *desc )
+NTSTATUS WINAPI NtGdiDdDDICheckVidPnExclusiveOwnership( const D3DKMT_CHECKVIDPNEXCLUSIVEOWNERSHIP *desc )
 {
     TRACE("(%p)\n", desc);
 

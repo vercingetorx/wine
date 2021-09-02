@@ -99,7 +99,6 @@ typedef struct tagDC
 
     const struct font_gamma_ramp *font_gamma_ramp;
 
-    UINT          font_code_page;
     INT           breakExtra;        /* breakTotalExtra / breakCount */
     INT           breakRem;          /* breakTotalExtra % breakCount */
     ABORTPROC     pAbortProc;        /* AbortProc for Printing */
@@ -159,23 +158,6 @@ static inline BOOL is_bitmapobj_dib( const BITMAPOBJ *bmp )
     return bmp->dib.dsBmih.biSize != 0;
 }
 
-/* bidi.c */
-
-/* Wine_GCPW Flags */
-/* Directionality -
- * LOOSE means taking the directionality of the first strong character, if there is found one.
- * FORCE means the paragraph direction is forced. (RLE/LRE)
- */
-#define WINE_GCPW_FORCE_LTR 0
-#define WINE_GCPW_FORCE_RTL 1
-#define WINE_GCPW_LOOSE_LTR 2
-#define WINE_GCPW_LOOSE_RTL 3
-#define WINE_GCPW_DIR_MASK 3
-#define WINE_GCPW_LOOSE_MASK 2
-
-extern BOOL BIDI_Reorder( HDC hDC, LPCWSTR lpString, INT uCount, DWORD dwFlags, DWORD dwWineGCP_Flags,
-                          LPWSTR lpOutString, INT uCountOut, UINT *lpOrder, WORD **lpGlyphs, INT* cGlyphs ) DECLSPEC_HIDDEN;
-
 /* bitblt.c */
 extern DWORD convert_bits( const BITMAPINFO *src_info, struct bitblt_coords *src,
                            BITMAPINFO *dst_info, struct gdi_image_bits *bits ) DECLSPEC_HIDDEN;
@@ -186,6 +168,7 @@ extern DWORD stretch_bits( const BITMAPINFO *src_info, struct bitblt_coords *src
 extern void get_mono_dc_colors( DC *dc, int color_table_size, BITMAPINFO *info, int count ) DECLSPEC_HIDDEN;
 
 /* brush.c */
+extern HBRUSH create_brush( const LOGBRUSH *brush );
 extern BOOL store_brush_pattern( LOGBRUSH *brush, struct brush_pattern *pattern ) DECLSPEC_HIDDEN;
 extern void free_brush_pattern( struct brush_pattern *pattern ) DECLSPEC_HIDDEN;
 extern BOOL get_brush_bitmap_info( HBRUSH handle, BITMAPINFO *info, void **bits, UINT *usage ) DECLSPEC_HIDDEN;
@@ -266,26 +249,6 @@ struct font_gamma_ramp
     DWORD gamma;
     BYTE  encode[256];
     BYTE  decode[256];
-};
-
-/* Undocumented structure filled in by GetFontRealizationInfo */
-struct font_realization_info
-{
-    DWORD size;        /* could be 16 or 24 */
-    DWORD flags;       /* 1 for bitmap fonts, 3 for scalable fonts */
-    DWORD cache_num;   /* keeps incrementing - num of fonts that have been created allowing for caching?? */
-    DWORD instance_id; /* identifies a realized font instance */
-    DWORD file_count;  /* number of files that make up this font */
-    WORD  face_index;  /* face index in case of font collections */
-    WORD  simulations; /* 0 bit - bold simulation, 1 bit - oblique simulation */
-};
-
-/* Undocumented structure filled in by GetCharWidthInfo */
-struct char_width_info
-{
-    INT lsb;   /* minimum left side bearing */
-    INT rsb;   /* minimum right side bearing */
-    INT unk;   /* unknown */
 };
 
 typedef struct { FLOAT eM11, eM12, eM21, eM22; } FMAT2;
@@ -425,6 +388,7 @@ extern BOOL opentype_enum_full_names( const struct tt_name_v0 *tt_name_v0,
 
 extern BOOL opentype_get_properties( const void *data, size_t size, const struct ttc_sfnt_v1 *ttc_sfnt_v1,
                                      DWORD *version, FONTSIGNATURE *fs, DWORD *ntm_flags ) DECLSPEC_HIDDEN;
+extern BOOL translate_charset_info( DWORD *src, CHARSETINFO *cs, DWORD flags ) DECLSPEC_HIDDEN;
 
 /* gdiobj.c */
 extern HGDIOBJ alloc_gdi_handle( struct gdi_obj_header *obj, WORD type,
@@ -445,6 +409,8 @@ extern DWORD get_system_dpi(void) DECLSPEC_HIDDEN;
 extern BOOL dp_to_lp( DC *dc, POINT *points, INT count ) DECLSPEC_HIDDEN;
 extern void lp_to_dp( DC *dc, POINT *points, INT count ) DECLSPEC_HIDDEN;
 extern BOOL set_map_mode( DC *dc, int mode ) DECLSPEC_HIDDEN;
+extern void combine_transform( XFORM *result, const XFORM *xform1,
+                               const XFORM *xform2 ) DECLSPEC_HIDDEN;
 
 /* metafile.c */
 extern HMETAFILE MF_Create_HMETAFILE(METAHEADER *mh) DECLSPEC_HIDDEN;
@@ -564,7 +530,6 @@ extern BOOL CDECL nulldrv_ExtTextOut( PHYSDEV dev, INT x, INT y, UINT flags, con
                                       LPCWSTR str, UINT count, const INT *dx ) DECLSPEC_HIDDEN;
 extern BOOL CDECL nulldrv_FillPath( PHYSDEV dev ) DECLSPEC_HIDDEN;
 extern BOOL CDECL nulldrv_FillRgn( PHYSDEV dev, HRGN rgn, HBRUSH brush ) DECLSPEC_HIDDEN;
-extern BOOL CDECL nulldrv_FlattenPath( PHYSDEV dev ) DECLSPEC_HIDDEN;
 extern BOOL CDECL nulldrv_FrameRgn( PHYSDEV dev, HRGN rgn, HBRUSH brush, INT width, INT height ) DECLSPEC_HIDDEN;
 extern LONG CDECL nulldrv_GetBitmapBits( HBITMAP bitmap, void *bits, LONG size ) DECLSPEC_HIDDEN;
 extern COLORREF CDECL nulldrv_GetNearestColor( PHYSDEV dev, COLORREF color ) DECLSPEC_HIDDEN;
@@ -577,7 +542,6 @@ extern BOOL CDECL nulldrv_PolyBezier( PHYSDEV dev, const POINT *points, DWORD co
 extern BOOL CDECL nulldrv_PolyBezierTo( PHYSDEV dev, const POINT *points, DWORD count ) DECLSPEC_HIDDEN;
 extern BOOL CDECL nulldrv_PolyDraw( PHYSDEV dev, const POINT *points, const BYTE *types, DWORD count ) DECLSPEC_HIDDEN;
 extern BOOL CDECL nulldrv_PolylineTo( PHYSDEV dev, const POINT *points, INT count ) DECLSPEC_HIDDEN;
-extern BOOL CDECL nulldrv_SelectClipPath( PHYSDEV dev, INT mode ) DECLSPEC_HIDDEN;
 extern INT CDECL nulldrv_SetDIBitsToDevice( PHYSDEV dev, INT x_dst, INT y_dst, DWORD width, DWORD height,
                                             INT x_src, INT y_src, UINT start, UINT lines,
                                             const void *bits, BITMAPINFO *info, UINT coloruse ) DECLSPEC_HIDDEN;
@@ -588,7 +552,6 @@ extern INT  CDECL nulldrv_StretchDIBits( PHYSDEV dev, INT xDst, INT yDst, INT wi
                                          BITMAPINFO *info, UINT coloruse, DWORD rop ) DECLSPEC_HIDDEN;
 extern BOOL CDECL nulldrv_StrokeAndFillPath( PHYSDEV dev ) DECLSPEC_HIDDEN;
 extern BOOL CDECL nulldrv_StrokePath( PHYSDEV dev ) DECLSPEC_HIDDEN;
-extern BOOL CDECL nulldrv_WidenPath( PHYSDEV dev ) DECLSPEC_HIDDEN;
 
 static inline DC *get_nulldrv_dc( PHYSDEV dev )
 {

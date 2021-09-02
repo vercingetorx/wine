@@ -407,7 +407,7 @@ static const struct DefaultFontInfo default_fonts[] =
 
 
 /*************************************************************************
- * __wine_make_gdi_object_system    (GDI32.@)
+ * __wine_make_gdi_object_system    (win32u.@)
  *
  * USER has to tell GDI that its system brushes and pens are non-deletable.
  * For a description of the GDI object magics and their flags,
@@ -452,7 +452,7 @@ static UINT get_default_charset( void )
 
     uACP = GetACP();
     csi.ciCharset = ANSI_CHARSET;
-    if ( !TranslateCharsetInfo( ULongToPtr(uACP), &csi, TCI_SRCCODEPAGE ) )
+    if ( !translate_charset_info( ULongToPtr(uACP), &csi, TCI_SRCCODEPAGE ) )
     {
         FIXME( "unhandled codepage %u - use ANSI_CHARSET for default stock objects\n", uACP );
         return ANSI_CHARSET;
@@ -641,12 +641,12 @@ BOOL WINAPI DllMain( HINSTANCE inst, DWORD reason, LPVOID reserved )
     font_init();
 
     /* create stock objects */
-    stock_objects[WHITE_BRUSH]  = CreateBrushIndirect( &WhiteBrush );
-    stock_objects[LTGRAY_BRUSH] = CreateBrushIndirect( &LtGrayBrush );
-    stock_objects[GRAY_BRUSH]   = CreateBrushIndirect( &GrayBrush );
-    stock_objects[DKGRAY_BRUSH] = CreateBrushIndirect( &DkGrayBrush );
-    stock_objects[BLACK_BRUSH]  = CreateBrushIndirect( &BlackBrush );
-    stock_objects[NULL_BRUSH]   = CreateBrushIndirect( &NullBrush );
+    stock_objects[WHITE_BRUSH]  = create_brush( &WhiteBrush );
+    stock_objects[LTGRAY_BRUSH] = create_brush( &LtGrayBrush );
+    stock_objects[GRAY_BRUSH]   = create_brush( &GrayBrush );
+    stock_objects[DKGRAY_BRUSH] = create_brush( &DkGrayBrush );
+    stock_objects[BLACK_BRUSH]  = create_brush( &BlackBrush );
+    stock_objects[NULL_BRUSH]   = create_brush( &NullBrush );
 
     stock_objects[WHITE_PEN]    = CreatePenIndirect( &WhitePen );
     stock_objects[BLACK_PEN]    = CreatePenIndirect( &BlackPen );
@@ -672,7 +672,7 @@ BOOL WINAPI DllMain( HINSTANCE inst, DWORD reason, LPVOID reserved )
     scaled_stock_objects[SYSTEM_FIXED_FONT] = create_scaled_font( &deffonts->SystemFixedFont );
     scaled_stock_objects[DEFAULT_GUI_FONT]  = create_scaled_font( &deffonts->DefaultGuiFont );
 
-    stock_objects[DC_BRUSH]     = CreateBrushIndirect( &DCBrush );
+    stock_objects[DC_BRUSH]     = create_brush( &DCBrush );
     stock_objects[DC_PEN]       = CreatePenIndirect( &DCPen );
 
     /* clear the NOSYSTEM bit on all stock objects*/
@@ -1065,9 +1065,9 @@ HGDIOBJ WINAPI GetCurrentObject(HDC hdc,UINT type)
 
 
 /***********************************************************************
- *           UnrealizeObject    (GDI32.@)
+ *           NtGdiUnrealizeObject    (win32u.@)
  */
-BOOL WINAPI UnrealizeObject( HGDIOBJ obj )
+BOOL WINAPI NtGdiUnrealizeObject( HGDIOBJ obj )
 {
     const struct gdi_obj_funcs *funcs = NULL;
     GDI_HANDLE_ENTRY *entry;
@@ -1085,145 +1085,29 @@ BOOL WINAPI UnrealizeObject( HGDIOBJ obj )
 }
 
 
-/* Solid colors to enumerate */
-static const COLORREF solid_colors[] =
-{ RGB(0x00,0x00,0x00), RGB(0xff,0xff,0xff),
-RGB(0xff,0x00,0x00), RGB(0x00,0xff,0x00),
-RGB(0x00,0x00,0xff), RGB(0xff,0xff,0x00),
-RGB(0xff,0x00,0xff), RGB(0x00,0xff,0xff),
-RGB(0x80,0x00,0x00), RGB(0x00,0x80,0x00),
-RGB(0x80,0x80,0x00), RGB(0x00,0x00,0x80),
-RGB(0x80,0x00,0x80), RGB(0x00,0x80,0x80),
-RGB(0x80,0x80,0x80), RGB(0xc0,0xc0,0xc0)
-};
-
-
 /***********************************************************************
- *           EnumObjects    (GDI32.@)
+ *           NtGdiFlush    (win32u.@)
  */
-INT WINAPI EnumObjects( HDC hdc, INT nObjType,
-                            GOBJENUMPROC lpEnumFunc, LPARAM lParam )
-{
-    UINT i;
-    INT retval = 0;
-    LOGPEN pen;
-    LOGBRUSH brush;
-
-    TRACE("%p %d %p %08lx\n", hdc, nObjType, lpEnumFunc, lParam );
-    switch(nObjType)
-    {
-    case OBJ_PEN:
-        /* Enumerate solid pens */
-        for (i = 0; i < ARRAY_SIZE( solid_colors ); i++)
-        {
-            pen.lopnStyle   = PS_SOLID;
-            pen.lopnWidth.x = 1;
-            pen.lopnWidth.y = 0;
-            pen.lopnColor   = solid_colors[i];
-            retval = lpEnumFunc( &pen, lParam );
-            TRACE("solid pen %08x, ret=%d\n",
-                         solid_colors[i], retval);
-            if (!retval) break;
-        }
-        break;
-
-    case OBJ_BRUSH:
-        /* Enumerate solid brushes */
-        for (i = 0; i < ARRAY_SIZE( solid_colors ); i++)
-        {
-            brush.lbStyle = BS_SOLID;
-            brush.lbColor = solid_colors[i];
-            brush.lbHatch = 0;
-            retval = lpEnumFunc( &brush, lParam );
-            TRACE("solid brush %08x, ret=%d\n",
-                         solid_colors[i], retval);
-            if (!retval) break;
-        }
-
-        /* Now enumerate hatched brushes */
-        if (retval) for (i = HS_HORIZONTAL; i <= HS_DIAGCROSS; i++)
-        {
-            brush.lbStyle = BS_HATCHED;
-            brush.lbColor = RGB(0,0,0);
-            brush.lbHatch = i;
-            retval = lpEnumFunc( &brush, lParam );
-            TRACE("hatched brush %d, ret=%d\n",
-                         i, retval);
-            if (!retval) break;
-        }
-        break;
-
-    default:
-        /* FIXME: implement Win32 types */
-        WARN("(%d): Invalid type\n", nObjType );
-        break;
-    }
-    return retval;
-}
-
-
-/***********************************************************************
- *           SetObjectOwner    (GDI32.@)
- */
-void WINAPI SetObjectOwner( HGDIOBJ handle, HANDLE owner )
-{
-    /* Nothing to do */
-}
-
-/***********************************************************************
- *           GdiInitializeLanguagePack    (GDI32.@)
- */
-DWORD WINAPI GdiInitializeLanguagePack( DWORD arg )
-{
-    FIXME("stub\n");
-    return 0;
-}
-
-/***********************************************************************
- *           GdiFlush    (GDI32.@)
- */
-BOOL WINAPI GdiFlush(void)
+BOOL WINAPI NtGdiFlush(void)
 {
     return TRUE;  /* FIXME */
 }
 
 
-/***********************************************************************
- *           GdiGetBatchLimit    (GDI32.@)
- */
-DWORD WINAPI GdiGetBatchLimit(void)
-{
-    return 1;  /* FIXME */
-}
-
-
-/***********************************************************************
- *           GdiSetBatchLimit    (GDI32.@)
- */
-DWORD WINAPI GdiSetBatchLimit( DWORD limit )
-{
-    return 1; /* FIXME */
-}
-
-
 /*******************************************************************
- *      GetColorAdjustment [GDI32.@]
- *
- *
+ *           NtGdiGetColorAdjustment    (win32u.@)
  */
-BOOL WINAPI GetColorAdjustment(HDC hdc, LPCOLORADJUSTMENT lpca)
+BOOL WINAPI NtGdiGetColorAdjustment( HDC hdc, COLORADJUSTMENT *ca )
 {
-    FIXME("stub\n");
+    FIXME( "stub\n" );
     return FALSE;
 }
 
 /*******************************************************************
- *      SetColorAdjustment [GDI32.@]
- *
- *
+ *           NtGdiSetColorAdjustment    (win32u.@)
  */
-BOOL WINAPI SetColorAdjustment(HDC hdc, const COLORADJUSTMENT* lpca)
+BOOL WINAPI NtGdiSetColorAdjustment( HDC hdc, const COLORADJUSTMENT *ca )
 {
-    FIXME("stub\n");
+    FIXME( "stub\n" );
     return FALSE;
 }

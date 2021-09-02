@@ -248,6 +248,16 @@ PUXINI_FILE MSSTYLES_GetThemeIni(PTHEME_FILE tf)
 }
 
 /***********************************************************************
+ *      MSSTYLES_GetThemeDPI
+ *
+ * Retrieves the DPI from a theme handle when it was opened
+ */
+UINT MSSTYLES_GetThemeDPI(PTHEME_CLASS tc)
+{
+    return tc->dpi;
+}
+
+/***********************************************************************
  *      MSSTYLES_GetActiveThemeIni
  *
  * Retrieve the ini file for the selected color/style
@@ -971,8 +981,9 @@ static void MSSTYLES_ParseThemeIni(PTHEME_FILE tf, BOOL setMetrics)
  *     pszAppName          Application name, for theme styles specific
  *                         to a particular application
  *     pszClassList        List of requested classes, semicolon delimited
+ *     dpi                 DPI for theme parts
  */
-PTHEME_CLASS MSSTYLES_OpenThemeClass(LPCWSTR pszAppName, LPCWSTR pszClassList)
+PTHEME_CLASS MSSTYLES_OpenThemeClass(LPCWSTR pszAppName, LPCWSTR pszClassList, UINT dpi)
 {
     PTHEME_CLASS cls = NULL;
     WCHAR szClassName[MAX_THEME_CLASS_NAME];
@@ -1004,6 +1015,7 @@ PTHEME_CLASS MSSTYLES_OpenThemeClass(LPCWSTR pszAppName, LPCWSTR pszClassList)
         TRACE("Opened app %s, class %s from list %s\n", debugstr_w(cls->szAppName), debugstr_w(cls->szClassName), debugstr_w(pszClassList));
 	cls->tf = tfActiveTheme;
 	cls->tf->dwRefCount++;
+        cls->dpi = dpi;
     }
     return cls;
 }
@@ -1072,11 +1084,18 @@ static BOOL prepare_alpha (HBITMAP bmp, BOOL* hasAlpha)
     if (!bmp || GetObjectW( bmp, sizeof(dib), &dib ) != sizeof(dib))
         return FALSE;
 
-    if(dib.dsBm.bmBitsPixel != 32)
+    if (dib.dsBm.bmBitsPixel != 32 || dib.dsBmih.biCompression != BI_RGB)
         /* nothing to do */
         return TRUE;
 
-    *hasAlpha = TRUE;
+    /* If all alpha values are 0xff, don't use alpha blending */
+    for (n = 0, p = dib.dsBm.bmBits; n < dib.dsBmih.biWidth * dib.dsBmih.biHeight; n++, p += 4)
+        if ((*hasAlpha = (p[3] != 0xff)))
+            break;
+
+    if (!*hasAlpha)
+        return TRUE;
+
     p = dib.dsBm.bmBits;
     n = dib.dsBmih.biHeight * dib.dsBmih.biWidth;
     /* AlphaBlend() wants premultiplied alpha, so do that now */
