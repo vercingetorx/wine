@@ -19,6 +19,10 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
+#if 0
+#pragma makedep unix
+#endif
+
 #include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
@@ -58,12 +62,13 @@ HBITMAP WINAPI NtGdiCreateCompatibleBitmap( HDC hdc, INT width, INT height )
 
     if (!width || !height) return 0;
 
-    if (GetObjectType( hdc ) != OBJ_MEMDC)
+    if (get_gdi_object_type( hdc ) != NTGDI_OBJ_MEMDC)
         return NtGdiCreateBitmap( width, height,
                                   NtGdiGetDeviceCaps( hdc, PLANES ),
                                   NtGdiGetDeviceCaps( hdc, BITSPIXEL ), NULL );
 
-    switch (NtGdiExtGetObjectW( GetCurrentObject( hdc, OBJ_BITMAP ), sizeof(dib), &dib ))
+    switch (NtGdiExtGetObjectW( NtGdiGetDCObject( hdc, NTGDI_OBJ_SURF ),
+                                sizeof(dib), &dib ))
     {
     case sizeof(BITMAP): /* A device-dependent bitmap is selected in the DC */
         return NtGdiCreateBitmap( width, height, dib.dsBm.bmPlanes, dib.dsBm.bmBitsPixel, NULL );
@@ -302,7 +307,7 @@ LONG WINAPI NtGdiSetBitmapBits(
         last_row = NtGdiCreateRectRgn( src.visrect.left, src.visrect.bottom - 1,
                                        src.visrect.left + extra_pixels, src.visrect.bottom );
         NtGdiCombineRgn( clip, clip, last_row, RGN_OR );
-        DeleteObject( last_row );
+        NtGdiDeleteObjectApp( last_row );
     }
 
     TRACE("(%p, %d, %p) %dx%d %d bpp fetched height: %d\n",
@@ -353,7 +358,7 @@ LONG WINAPI NtGdiSetBitmapBits(
     }
     if (err) count = 0;
 
-    if (clip) DeleteObject( clip );
+    if (clip) NtGdiDeleteObjectApp( clip );
     if (src_bits.free) src_bits.free( &src_bits );
     GDI_ReleaseObj( hbitmap );
     return count;
@@ -372,7 +377,7 @@ HGDIOBJ WINAPI NtGdiSelectBitmap( HDC hdc, HGDIOBJ handle )
 
     if (!(dc = get_dc_ptr( hdc ))) return 0;
 
-    if (GetObjectType( hdc ) != OBJ_MEMDC)
+    if (get_gdi_object_type( hdc ) != NTGDI_OBJ_MEMDC)
     {
         ret = 0;
         goto done;
@@ -386,7 +391,7 @@ HGDIOBJ WINAPI NtGdiSelectBitmap( HDC hdc, HGDIOBJ handle )
         goto done;
     }
 
-    if (handle != GetStockObject(DEFAULT_BITMAP) && GDI_get_ref_count( handle ))
+    if (handle != get_stock_object( DEFAULT_BITMAP ) && GDI_get_ref_count( handle ))
     {
         WARN( "Bitmap already selected in another DC\n" );
         GDI_ReleaseObj( handle );
@@ -396,7 +401,7 @@ HGDIOBJ WINAPI NtGdiSelectBitmap( HDC hdc, HGDIOBJ handle )
 
     if (!is_bitmapobj_dib( bitmap ) &&
         bitmap->dib.dsBm.bmBitsPixel != 1 &&
-        bitmap->dib.dsBm.bmBitsPixel != GetDeviceCaps( hdc, BITSPIXEL ))
+        bitmap->dib.dsBm.bmBitsPixel != NtGdiGetDeviceCaps( hdc, BITSPIXEL ))
     {
         WARN( "Wrong format bitmap %u bpp\n", bitmap->dib.dsBm.bmBitsPixel );
         GDI_ReleaseObj( handle );

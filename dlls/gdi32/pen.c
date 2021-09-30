@@ -18,6 +18,10 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
+#if 0
+#pragma makedep unix
+#endif
+
 #include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
@@ -50,17 +54,12 @@ static const struct gdi_obj_funcs pen_funcs =
     PEN_DeleteObject   /* pDeleteObject */
 };
 
-
-/***********************************************************************
- *           NtGdiCreatePen    (win32u.@)
- */
-HPEN WINAPI NtGdiCreatePen( INT style, INT width, COLORREF color, HBRUSH brush )
+HPEN create_pen( INT style, INT width, COLORREF color )
 {
     PENOBJ *penPtr;
     HPEN hpen;
 
     TRACE( "%d %d %06x\n", style, width, color );
-    if (brush) FIXME( "brush not supported\n" );
 
     switch (style)
     {
@@ -72,7 +71,6 @@ HPEN WINAPI NtGdiCreatePen( INT style, INT width, COLORREF color, HBRUSH brush )
     case PS_INSIDEFRAME:
         break;
     case PS_NULL:
-        if ((hpen = GetStockObject( NULL_PEN ))) return hpen;
         width = 1;
         color = 0;
         break;
@@ -90,6 +88,16 @@ HPEN WINAPI NtGdiCreatePen( INT style, INT width, COLORREF color, HBRUSH brush )
     if (!(hpen = alloc_gdi_handle( &penPtr->obj, NTGDI_OBJ_PEN, &pen_funcs )))
         HeapFree( GetProcessHeap(), 0, penPtr );
     return hpen;
+}
+
+/***********************************************************************
+ *           NtGdiCreatePen    (win32u.@)
+ */
+HPEN WINAPI NtGdiCreatePen( INT style, INT width, COLORREF color, HBRUSH brush )
+{
+    if (brush) FIXME( "brush not supported\n" );
+    if (style == PS_NULL) return get_stock_object( NULL_PEN );
+    return create_pen( style, width, color );
 }
 
 /***********************************************************************
@@ -199,7 +207,7 @@ HGDIOBJ WINAPI NtGdiSelectPen( HDC hdc, HGDIOBJ handle )
 {
     PENOBJ *pen;
     HGDIOBJ ret = 0;
-    WORD type;
+    DWORD type;
     DC *dc;
 
     if (!(dc = get_dc_ptr( hdc ))) return 0;
@@ -262,7 +270,7 @@ static BOOL PEN_DeleteObject( HGDIOBJ handle )
  */
 static INT PEN_GetObject( HGDIOBJ handle, INT count, LPVOID buffer )
 {
-    WORD type;
+    DWORD type;
     PENOBJ *pen = get_any_obj_ptr( handle, &type );
     INT ret = 0;
 

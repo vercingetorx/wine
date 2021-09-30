@@ -35,13 +35,14 @@
 # include <getopt.h>
 #endif
 
+#include "../tools.h"
 #include "wrc.h"
 #include "utils.h"
 #include "dumpres.h"
 #include "genres.h"
 #include "newstruc.h"
 #include "parser.h"
-#include "wine/wpp.h"
+#include "wpp_private.h"
 
 #ifdef WORDS_BIGENDIAN
 #define ENDIAN	"big"
@@ -162,8 +163,6 @@ const char *nlsdirs[3] = { NULL, NLSDIR, NULL };
 int line_number = 1;		/* The current line */
 int char_number = 1;		/* The current char pos within the line */
 
-char *cmdline;			/* The entire commandline */
-
 int parser_debug, yy_flex_debug;
 
 resource_t *resource_top;	/* The top of the parsed resources */
@@ -282,12 +281,7 @@ static int load_file( const char *input_name, const char *output_name )
             exit(0);
         }
 
-        if (output_name && output_name[0]) name = strmake( "%s.XXXXXX", output_name );
-        else name = xstrdup( "wrc.XXXXXX" );
-
-        if ((fd = mkstemps( name, 0 )) == -1)
-            error("Could not generate a temp name from %s\n", name);
-
+        fd = make_temp_file( output_name, "", &name );
         temp_name = name;
         if (!(output = fdopen(fd, "wt")))
             error("Could not open fd %s for writing\n", name);
@@ -339,7 +333,7 @@ static void set_target( const char *target )
 static void init_argv0_dir( const char *argv0 )
 {
 #ifndef _WIN32
-    char *p, *dir;
+    char *dir;
 
 #if defined(__linux__) || defined(__FreeBSD_kernel__) || defined(__NetBSD__)
     dir = realpath( "/proc/self/exe", NULL );
@@ -349,13 +343,10 @@ static void init_argv0_dir( const char *argv0 )
     dir = realpath( argv0, NULL );
 #endif
     if (!dir) return;
-    if (!(p = strrchr( dir, '/' ))) return;
-    if (p == dir) p++;
-    *p = 0;
+    dir = get_dirname( dir );
     includedir = strmake( "%s/%s", dir, BIN_TO_INCLUDEDIR );
     if (strendswith( dir, "/tools/wrc" )) nlsdirs[0] = strmake( "%s/../../nls", dir );
     else nlsdirs[0] = strmake( "%s/%s", dir, BIN_TO_NLSDIR );
-    free( dir );
 #endif
 }
 
@@ -367,7 +358,6 @@ int main(int argc,char *argv[])
 	int lose = 0;
 	int nb_files = 0;
 	int i;
-	int cmdlen;
         int po_mode = 0;
         char *po_dir = NULL;
         const char *sysroot = "";
@@ -386,20 +376,6 @@ int main(int argc,char *argv[])
 	wpp_add_cmdline_define("RC_INVOKED=1");
 	/* Microsoft RC always searches current directory */
 	wpp_add_include_path(".");
-
-	/* First rebuild the commandline to put in destination */
-	/* Could be done through env[], but not all OS-es support it */
-	cmdlen = 4; /* for "wrc " */
-	for(i = 1; i < argc; i++)
-		cmdlen += strlen(argv[i]) + 1;
-	cmdline = xmalloc(cmdlen);
-	strcpy(cmdline, "wrc ");
-	for(i = 1; i < argc; i++)
-	{
-		strcat(cmdline, argv[i]);
-		if(i < argc-1)
-			strcat(cmdline, " ");
-	}
 
 	while((optc = getopt_long(argc, argv, short_options, long_options, &opti)) != EOF)
 	{
@@ -456,7 +432,6 @@ int main(int argc,char *argv[])
 			break;
 		case LONG_OPT_PEDANTIC:
 			pedantic = 1;
-			wpp_set_pedantic(1);
 			break;
 		case LONG_OPT_VERIFY_TRANSL:
 			verify_translations_mode = 1;
@@ -610,8 +585,8 @@ int main(int argc,char *argv[])
             {
                 if (!output_name)
                 {
-                    output_name = dup_basename( nb_files ? files[0] : NULL, ".rc" );
-                    strcat( output_name, ".pot" );
+                    const char *name = nb_files ? get_basename(files[0]) : "wrc.tab";
+                    output_name = replace_extension( name, ".rc", ".pot" );
                 }
                 write_pot_file( output_name );
             }
@@ -627,8 +602,8 @@ int main(int argc,char *argv[])
 	chat("Writing .res-file\n");
         if (!output_name)
         {
-            output_name = dup_basename( nb_files ? files[0] : NULL, ".rc" );
-            strcat(output_name, ".res");
+            const char *name = nb_files ? get_basename(files[0]) : "wrc.tab";
+            output_name = replace_extension( name, ".rc", ".res" );
         }
 	write_resfile(output_name, resource_top);
 	output_name = NULL;

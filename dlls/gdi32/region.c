@@ -94,6 +94,10 @@ SOFTWARE.
  * the y-x-banding that's so nice to have...
  */
 
+#if 0
+#pragma makedep unix
+#endif
+
 #include <assert.h>
 #include <stdarg.h>
 #include <stdlib.h>
@@ -927,9 +931,9 @@ HRGN WINAPI NtGdiExtCreateRegion( const XFORM *xform, DWORD count, const RGNDATA
             pt[3].y = pCurRect->bottom;
 
             translate( pt, 4, xform );
-            poly_hrgn = CreatePolyPolygonRgn( pt, &count, 1, WINDING );
+            poly_hrgn = create_polypolygon_region( pt, &count, 1, WINDING, NULL );
             NtGdiCombineRgn( hrgn, hrgn, poly_hrgn, RGN_OR );
-            DeleteObject( poly_hrgn );
+            NtGdiDeleteObjectApp( poly_hrgn );
         }
         return hrgn;
     }
@@ -1375,17 +1379,10 @@ INT mirror_region( HRGN dst, HRGN src, INT width )
  */
 BOOL WINAPI MirrorRgn( HWND hwnd, HRGN hrgn )
 {
-    static BOOL (WINAPI *pGetWindowRect)( HWND hwnd, LPRECT rect );
     RECT rect;
 
-    /* yes, a HWND in gdi32, don't ask */
-    if (!pGetWindowRect)
-    {
-        HMODULE user32 = GetModuleHandleW(L"user32.dll");
-        if (!user32) return FALSE;
-        if (!(pGetWindowRect = (void *)GetProcAddress( user32, "GetWindowRect" ))) return FALSE;
-    }
-    pGetWindowRect( hwnd, &rect );
+    if (!user_callbacks) return FALSE;
+    user_callbacks->pGetWindowRect( hwnd, &rect );
     return mirror_region( hrgn, hrgn, rect.right - rect.left ) != ERROR;
 }
 

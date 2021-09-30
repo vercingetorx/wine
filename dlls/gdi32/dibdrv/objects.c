@@ -18,6 +18,10 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
+#if 0
+#pragma makedep unix
+#endif
+
 #include <assert.h>
 #include <stdlib.h>
 
@@ -1272,6 +1276,11 @@ static void add_cap( dibdrv_physdev *pdev, HRGN region, HRGN round_cap, const PO
 
 #define round( f ) (((f) > 0) ? (f) + 0.5 : (f) - 0.5)
 
+static HRGN create_polygon_region( const POINT *points, INT count, INT mode )
+{
+    return create_polypolygon_region( points, &count, 1, mode, NULL );
+}
+
 /*******************************************************************************
  *                 create_miter_region
  *
@@ -1326,7 +1335,7 @@ static HRGN create_miter_region( dibdrv_physdev *pdev, const POINT *pt,
     pts[3] = face_2->end;
     pts[4] = face_1->end;
 
-    return CreatePolygonRgn( pts, 5, ALTERNATE );
+    return create_polygon_region( pts, 5, ALTERNATE );
 }
 
 static void add_join( dibdrv_physdev *pdev, HRGN region, HRGN round_cap, const POINT *pt,
@@ -1360,14 +1369,14 @@ static void add_join( dibdrv_physdev *pdev, HRGN region, HRGN round_cap, const P
         pts[1] = face_2->end;
         pts[2] = face_1->end;
         pts[3] = face_2->start;
-        join = CreatePolygonRgn( pts, 4, ALTERNATE );
+        join = create_polygon_region( pts, 4, ALTERNATE );
         break;
     }
 
     NtGdiGetRgnBox( join, &rect );
     if (clip_rect_to_dib( &pdev->dib, &rect ))
         NtGdiCombineRgn( region, region, join, RGN_OR );
-    DeleteObject( join );
+    NtGdiDeleteObjectApp( join );
     return;
 }
 
@@ -1497,9 +1506,9 @@ static BOOL wide_line_segment( dibdrv_physdev *pdev, HRGN total,
             set_rect( &clip_rect, seg_pts[2].x, seg_pts[3].y, seg_pts[0].x, seg_pts[1].y );
         if (clip_rect_to_dib( &pdev->dib, &clip_rect ))
         {
-            segment = CreatePolygonRgn( seg_pts, 4, ALTERNATE );
+            segment = create_polygon_region( seg_pts, 4, ALTERNATE );
             NtGdiCombineRgn( total, total, segment, RGN_OR );
-            DeleteObject( segment );
+            NtGdiDeleteObjectApp( segment );
         }
 
         face_1->start = seg_pts[0];
@@ -1583,7 +1592,7 @@ static BOOL wide_pen_lines(dibdrv_physdev *pdev, int num, POINT *pts, BOOL close
     else
         wide_line_segments( pdev, num, pts, FALSE, 0, num - 1, &pts[0], &pts[num - 1], round_cap, total );
 
-    if (round_cap) DeleteObject( round_cap );
+    if (round_cap) NtGdiDeleteObjectApp( round_cap );
     return TRUE;
 }
 
@@ -1702,7 +1711,7 @@ static BOOL dashed_wide_pen_lines(dibdrv_physdev *pdev, int num, POINT *pts, BOO
                             &pts[0], &initial_point, round_cap, total );
     }
 
-    if (round_cap) DeleteObject( round_cap );
+    if (round_cap) NtGdiDeleteObjectApp( round_cap );
     return TRUE;
 }
 
@@ -1770,7 +1779,7 @@ COLORREF CDECL dibdrv_SetDCPenColor( PHYSDEV dev, COLORREF color )
     dibdrv_physdev *pdev = get_dibdrv_pdev(dev);
     DC *dc = get_physdev_dc( dev );
 
-    if (dc->hPen == GetStockObject( DC_PEN ))
+    if (dc->hPen == get_stock_object( DC_PEN ))
         pdev->pen_brush.colorref = color;
 
     return color;
@@ -2134,9 +2143,9 @@ HBRUSH CDECL dibdrv_SelectBrush( PHYSDEV dev, HBRUSH hbrush, const struct brush_
 
     TRACE("(%p, %p)\n", dev, hbrush);
 
-    GetObjectW( hbrush, sizeof(logbrush), &logbrush );
+    NtGdiExtGetObjectW( hbrush, sizeof(logbrush), &logbrush );
 
-    if (hbrush == GetStockObject( DC_BRUSH ))
+    if (hbrush == get_stock_object( DC_BRUSH ))
         logbrush.lbColor = dc->attr->brush_color;
 
     select_brush( pdev, &pdev->brush, &logbrush, pattern, TRUE );
@@ -2157,16 +2166,16 @@ HPEN CDECL dibdrv_SelectPen( PHYSDEV dev, HPEN hpen, const struct brush_pattern 
 
     TRACE("(%p, %p)\n", dev, hpen);
 
-    if (!GetObjectW( hpen, sizeof(logpen), &logpen ))
+    if (!NtGdiExtGetObjectW( hpen, sizeof(logpen), &logpen ))
     {
         /* must be an extended pen */
-        INT size = GetObjectW( hpen, 0, NULL );
+        INT size = NtGdiExtGetObjectW( hpen, 0, NULL );
 
         if (!size) return 0;
 
         elp = HeapAlloc( GetProcessHeap(), 0, size );
 
-        GetObjectW( hpen, size, elp );
+        NtGdiExtGetObjectW( hpen, size, elp );
         logpen.lopnStyle = elp->elpPenStyle;
         logpen.lopnWidth.x = elp->elpWidth;
         /* cosmetic ext pens are always 1-pixel wide */
@@ -2188,7 +2197,7 @@ HPEN CDECL dibdrv_SelectPen( PHYSDEV dev, HPEN hpen, const struct brush_pattern 
     pdev->pen_endcap = logpen.lopnStyle & PS_ENDCAP_MASK;
     pdev->pen_width  = get_pen_device_width( dc, logpen.lopnWidth.x );
 
-    if (hpen == GetStockObject( DC_PEN ))
+    if (hpen == get_stock_object( DC_PEN ))
         logbrush.lbColor = dc->attr->pen_color;
 
     set_dash_pattern( &pdev->pen_pattern, 0, NULL );
@@ -2256,7 +2265,7 @@ COLORREF CDECL dibdrv_SetDCBrushColor( PHYSDEV dev, COLORREF color )
     dibdrv_physdev *pdev = get_dibdrv_pdev(dev);
     DC *dc = get_physdev_dc( dev );
 
-    if (dc->hBrush == GetStockObject( DC_BRUSH ))
+    if (dc->hBrush == get_stock_object( DC_BRUSH ))
     {
         LOGBRUSH logbrush = { BS_SOLID, color, 0 };
         select_brush( pdev, &pdev->brush, &logbrush, NULL, TRUE );

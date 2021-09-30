@@ -62,9 +62,9 @@ static const char* symt_get_tag_str(DWORD tag)
     case SymTagBaseClass:               return "SymTagBaseClass";
     case SymTagFriend:                  return "SymTagFriend";
     case SymTagFunctionArgType:         return "SymTagFunctionArgType,";
-    case SymTagFuncDebugStart:          return "SymTagFuncDebugStart,";
+    case SymTagFuncDebugStart:          return "SymTagFuncDebugStart";
     case SymTagFuncDebugEnd:            return "SymTagFuncDebugEnd";
-    case SymTagUsingNamespace:          return "SymTagUsingNamespace,";
+    case SymTagUsingNamespace:          return "SymTagUsingNamespace";
     case SymTagVTableShape:             return "SymTagVTableShape";
     case SymTagVTable:                  return "SymTagVTable";
     case SymTagCustom:                  return "SymTagCustom";
@@ -72,6 +72,17 @@ static const char* symt_get_tag_str(DWORD tag)
     case SymTagCustomType:              return "SymTagCustomType";
     case SymTagManagedType:             return "SymTagManagedType";
     case SymTagDimension:               return "SymTagDimension";
+    case SymTagCallSite:                return "SymTagCallSite";
+    case SymTagInlineSite:              return "SymTagInlineSite";
+    case SymTagBaseInterface:           return "SymTagBaseInterface";
+    case SymTagVectorType:              return "SymTagVectorType";
+    case SymTagMatrixType:              return "SymTagMatrixType";
+    case SymTagHLSLType:                return "SymTagHLSLType";
+    case SymTagCaller:                  return "SymTagCaller";
+    case SymTagCallee:                  return "SymTagCallee";
+    case SymTagExport:                  return "SymTagExport";
+    case SymTagHeapAllocationSite:      return "SymTagHeapAllocationSite";
+    case SymTagCoffGroup:               return "SymTagCoffGroup";
     default:                            return "---";
     }
 }
@@ -222,7 +233,7 @@ struct symt_udt* symt_new_udt(struct module* module, const char* typename,
     struct symt_udt*            sym;
 
     TRACE_(dbghelp_symt)("Adding udt %s:%s\n",
-                         debugstr_w(module->module.ModuleName), typename);
+                         debugstr_w(module->modulename), typename);
     if ((sym = pool_alloc(&module->pool, sizeof(*sym))))
     {
         sym->symt.tag = SymTagUDT;
@@ -308,7 +319,7 @@ struct symt_enum* symt_new_enum(struct module* module, const char* typename,
     struct symt_enum*   sym;
 
     TRACE_(dbghelp_symt)("Adding enum %s:%s\n",
-                         debugstr_w(module->module.ModuleName), typename);
+                         debugstr_w(module->modulename), typename);
     if ((sym = pool_alloc(&module->pool, sizeof(*sym))))
     {
         sym->symt.tag            = SymTagEnum;
@@ -487,13 +498,13 @@ struct enum_types_AtoW
     PSYM_ENUMERATESYMBOLS_CALLBACKW     callback;
 };
 
-static BOOL CALLBACK enum_types_AtoW(PSYMBOL_INFO si, ULONG addr, PVOID _et)
+static BOOL CALLBACK enum_types_AtoW(PSYMBOL_INFO si, ULONG size, PVOID _et)
 {
     struct enum_types_AtoW*     et = _et;
     SYMBOL_INFOW*               siW = (SYMBOL_INFOW*)et->buffer;
 
     copy_symbolW(siW, si);
-    return et->callback(siW, addr, et->user);
+    return et->callback(siW, size, et->user);
 }
 
 /******************************************************************

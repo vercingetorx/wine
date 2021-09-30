@@ -18,6 +18,10 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
+#if 0
+#pragma makedep unix
+#endif
+
 #include <assert.h>
 #include "ntgdi_private.h"
 #include "dibdrv.h"
@@ -375,7 +379,7 @@ static BOOL draw_arc( PHYSDEV dev, INT left, INT top, INT right, INT bottom,
         !(interior = create_polypolygon_region( points, &count, 1, WINDING, &rc )))
     {
         HeapFree( GetProcessHeap(), 0, points );
-        if (outline) DeleteObject( outline );
+        if (outline) NtGdiDeleteObjectApp( outline );
         return FALSE;
     }
 
@@ -383,7 +387,7 @@ static BOOL draw_arc( PHYSDEV dev, INT left, INT top, INT right, INT bottom,
     if (interior && !outline)
     {
         ret = brush_region( pdev, interior );
-        DeleteObject( interior );
+        NtGdiDeleteObjectApp( interior );
         interior = 0;
     }
 
@@ -395,12 +399,12 @@ static BOOL draw_arc( PHYSDEV dev, INT left, INT top, INT right, INT bottom,
     {
         NtGdiCombineRgn( interior, interior, outline, RGN_DIFF );
         ret = brush_region( pdev, interior );
-        DeleteObject( interior );
+        NtGdiDeleteObjectApp( interior );
     }
     if (outline)
     {
         if (ret) ret = pen_region( pdev, outline );
-        DeleteObject( outline );
+        NtGdiDeleteObjectApp( outline );
     }
     HeapFree( GetProcessHeap(), 0, points );
     return ret;
@@ -428,7 +432,7 @@ static BOOL stroke_and_fill_path( dibdrv_physdev *dev, BOOL stroke, BOOL fill )
     if (interior && !outline)
     {
         ret = brush_region( dev, interior );
-        DeleteObject( interior );
+        NtGdiDeleteObjectApp( interior );
         interior = 0;
     }
 
@@ -460,12 +464,12 @@ static BOOL stroke_and_fill_path( dibdrv_physdev *dev, BOOL stroke, BOOL fill )
     {
         NtGdiCombineRgn( interior, interior, outline, RGN_DIFF );
         ret = brush_region( dev, interior );
-        DeleteObject( interior );
+        NtGdiDeleteObjectApp( interior );
     }
     if (outline)
     {
         if (ret) ret = pen_region( dev, outline );
-        DeleteObject( outline );
+        NtGdiDeleteObjectApp( outline );
     }
 
 done:
@@ -558,7 +562,7 @@ static struct cached_font *add_cached_font( DC *dc, HFONT hfont, UINT aa_flags )
     struct cached_font font, *ptr, *last_unused = NULL;
     UINT i = 0, j, k;
 
-    GetObjectW( hfont, sizeof(font.lf), &font.lf );
+    NtGdiExtGetObjectW( hfont, sizeof(font.lf), &font.lf );
     font.xform = dc->xformWorld2Vport;
     font.xform.eDx = font.xform.eDy = 0;  /* unused, would break hashing */
     if (dc->attr->graphics_mode == GM_COMPATIBLE)
@@ -761,7 +765,8 @@ static struct cached_glyph *cache_glyph_bitmap( DC *dc, struct cached_font *font
     for (i = 0; i < ARRAY_SIZE( indices ); i++)
     {
         index = indices[i];
-        ret = GetGlyphOutlineW( dc->hSelf, index, ggo_flags, &metrics, 0, NULL, &identity );
+        ret = NtGdiGetGlyphOutline( dc->hSelf, index, ggo_flags, &metrics, 0, NULL,
+                                    &identity, FALSE );
         if (ret != GDI_ERROR) break;
     }
     if (ret == GDI_ERROR) return NULL;
@@ -776,7 +781,8 @@ static struct cached_glyph *cache_glyph_bitmap( DC *dc, struct cached_font *font
 
     if (bit_count == 8) pad = padding[ metrics.gmBlackBoxX % 4 ];
 
-    ret = GetGlyphOutlineW( dc->hSelf, index, ggo_flags, &metrics, size, glyph->bits, &identity );
+    ret = NtGdiGetGlyphOutline( dc->hSelf, index, ggo_flags, &metrics, size, glyph->bits,
+                                &identity, FALSE );
     if (ret == GDI_ERROR)
     {
         HeapFree( GetProcessHeap(), 0, glyph );
@@ -1074,7 +1080,7 @@ BOOL CDECL dibdrv_ExtFloodFill( PHYSDEV dev, INT x, INT y, COLORREF color, UINT 
     add_clipped_bounds( pdev, NULL, rgn );
     brush_region( pdev, rgn );
 
-    DeleteObject( rgn );
+    NtGdiDeleteObjectApp( rgn );
     return TRUE;
 }
 
@@ -1156,7 +1162,7 @@ BOOL CDECL dibdrv_LineTo( PHYSDEV dev, INT x, INT y )
     if (region)
     {
         ret = pen_region( pdev, region );
-        DeleteObject( region );
+        NtGdiDeleteObjectApp( region );
     }
     return ret;
 }
@@ -1284,7 +1290,7 @@ BOOL CDECL dibdrv_PolyPolygon( PHYSDEV dev, const POINT *pt, const INT *counts, 
     if (interior && !outline)
     {
         ret = brush_region( pdev, interior );
-        DeleteObject( interior );
+        NtGdiDeleteObjectApp( interior );
         interior = 0;
     }
 
@@ -1300,12 +1306,12 @@ BOOL CDECL dibdrv_PolyPolygon( PHYSDEV dev, const POINT *pt, const INT *counts, 
     {
         NtGdiCombineRgn( interior, interior, outline, RGN_DIFF );
         ret = brush_region( pdev, interior );
-        DeleteObject( interior );
+        NtGdiDeleteObjectApp( interior );
     }
     if (outline)
     {
         if (ret) ret = pen_region( pdev, outline );
-        DeleteObject( outline );
+        NtGdiDeleteObjectApp( outline );
     }
 
 done:
@@ -1357,7 +1363,7 @@ BOOL CDECL dibdrv_PolyPolyline( PHYSDEV dev, const POINT* pt, const DWORD* count
     if (outline)
     {
         ret = pen_region( pdev, outline );
-        DeleteObject( outline );
+        NtGdiDeleteObjectApp( outline );
     }
 
 done:
@@ -1421,14 +1427,14 @@ BOOL CDECL dibdrv_Rectangle( PHYSDEV dev, INT left, INT top, INT right, INT bott
     {
         if (pdev->brush.style != BS_NULL)
         {
-            HRGN interior = CreateRectRgnIndirect( &rect );
+            HRGN interior = NtGdiCreateRectRgn( rect.left, rect.top, rect.right, rect.bottom );
 
             NtGdiCombineRgn( interior, interior, outline, RGN_DIFF );
             brush_region( pdev, interior );
-            DeleteObject( interior );
+            NtGdiDeleteObjectApp( interior );
         }
         ret = pen_region( pdev, outline );
-        DeleteObject( outline );
+        NtGdiDeleteObjectApp( outline );
     }
     else
     {
@@ -1480,7 +1486,7 @@ BOOL CDECL dibdrv_RoundRect( PHYSDEV dev, INT left, INT top, INT right, INT bott
                                               ellipse_width, ellipse_height )))
     {
         HeapFree( GetProcessHeap(), 0, points );
-        if (outline) DeleteObject( outline );
+        if (outline) NtGdiDeleteObjectApp( outline );
         return FALSE;
     }
 
@@ -1488,7 +1494,7 @@ BOOL CDECL dibdrv_RoundRect( PHYSDEV dev, INT left, INT top, INT right, INT bott
     if (interior && !outline)
     {
         ret = brush_region( pdev, interior );
-        DeleteObject( interior );
+        NtGdiDeleteObjectApp( interior );
         interior = 0;
     }
 
@@ -1543,12 +1549,12 @@ BOOL CDECL dibdrv_RoundRect( PHYSDEV dev, INT left, INT top, INT right, INT bott
     {
         NtGdiCombineRgn( interior, interior, outline, RGN_DIFF );
         ret = brush_region( pdev, interior );
-        DeleteObject( interior );
+        NtGdiDeleteObjectApp( interior );
     }
     if (outline)
     {
         if (ret) ret = pen_region( pdev, outline );
-        DeleteObject( outline );
+        NtGdiDeleteObjectApp( outline );
     }
     HeapFree( GetProcessHeap(), 0, points );
     return ret;

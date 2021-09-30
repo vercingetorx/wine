@@ -1,7 +1,5 @@
 /*
- * Exported functions of the Wine preprocessor
- *
- * Copyright 2002 Alexandre Julliard
+ * Copyright 2021 Zebediah Figura for CodeWeavers
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -18,19 +16,18 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#ifndef __WINE_WPP_H
-#define __WINE_WPP_H
+#include "wine/unixlib.h"
 
-#include <stdio.h>
-#include <stdarg.h>
+#define CAP_DESC_MAX 32
 
-extern void wpp_del_define( const char *name );
-extern void wpp_add_cmdline_define( const char *value );
-extern void wpp_set_debug( int lex_debug, int parser_debug, int msg_debug );
-extern void wpp_set_pedantic( int on );
-extern void wpp_add_include_path( const char *path );
-extern char *wpp_find_include( const char *name, const char *parent_name );
-/* Return value == 0 means successful execution */
-extern int wpp_parse( const char *input, FILE *output );
+struct get_device_desc_params
+{
+    WORD index;
+    WCHAR name[CAP_DESC_MAX];
+    WCHAR version[CAP_DESC_MAX];
+};
 
-#endif  /* __WINE_WPP_H */
+enum unix_funcs
+{
+    unix_get_device_desc,
+};

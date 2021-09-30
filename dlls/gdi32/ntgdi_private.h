@@ -28,22 +28,7 @@
 #include "windef.h"
 #include "winbase.h"
 #include "ntgdi.h"
-#include "wine/gdi_driver.h"
-
-/* Metafile defines */
-#define META_EOF 0x0000
-/* values of mtType in METAHEADER.  Note however that the disk image of a disk
-   based metafile has mtType == 1 */
-#define METAFILE_MEMORY 1
-#define METAFILE_DISK   2
-#define MFHEADERSIZE (sizeof(METAHEADER))
-#define MFVERSION 0x300
-
-typedef struct {
-    EMR   emr;
-    INT   nBreakExtra;
-    INT   nBreakCount;
-} EMRSETTEXTJUSTIFICATION, *PEMRSETTEXTJUSTIFICATION;
+#include "win32u_private.h"
 
 /* extra stock object: default 1x1 bitmap for memory DCs */
 #define DEFAULT_BITMAP (STOCK_LAST+1)
@@ -101,7 +86,6 @@ typedef struct tagDC
 
     INT           breakExtra;        /* breakTotalExtra / breakCount */
     INT           breakRem;          /* breakTotalExtra % breakCount */
-    ABORTPROC     pAbortProc;        /* AbortProc for Printing */
     XFORM         xformWorld2Wnd;    /* World-to-window transformation */
     XFORM         xformWorld2Vport;  /* World-to-viewport transformation */
     XFORM         xformVport2World;  /* Inverse of the above transformation */
@@ -171,7 +155,6 @@ extern void get_mono_dc_colors( DC *dc, int color_table_size, BITMAPINFO *info, 
 extern HBRUSH create_brush( const LOGBRUSH *brush );
 extern BOOL store_brush_pattern( LOGBRUSH *brush, struct brush_pattern *pattern ) DECLSPEC_HIDDEN;
 extern void free_brush_pattern( struct brush_pattern *pattern ) DECLSPEC_HIDDEN;
-extern BOOL get_brush_bitmap_info( HBRUSH handle, BITMAPINFO *info, void **bits, UINT *usage ) DECLSPEC_HIDDEN;
 
 /* clipping.c */
 extern BOOL clip_device_rect( DC *dc, RECT *dst, const RECT *src ) DECLSPEC_HIDDEN;
@@ -188,7 +171,7 @@ static inline HRGN get_dc_region( DC *dc )
 }
 
 /* dc.c */
-extern DC *alloc_dc_ptr( WORD magic ) DECLSPEC_HIDDEN;
+extern DC *alloc_dc_ptr( DWORD magic ) DECLSPEC_HIDDEN;
 extern void free_dc_ptr( DC *dc ) DECLSPEC_HIDDEN;
 extern DC *get_dc_ptr( HDC hdc ) DECLSPEC_HIDDEN;
 extern void release_dc_ptr( DC *dc ) DECLSPEC_HIDDEN;
@@ -197,7 +180,6 @@ extern void DC_InitDC( DC * dc ) DECLSPEC_HIDDEN;
 extern void DC_UpdateXforms( DC * dc ) DECLSPEC_HIDDEN;
 
 /* dib.c */
-extern int bitmap_info_size( const BITMAPINFO * info, WORD coloruse ) DECLSPEC_HIDDEN;
 extern BOOL fill_color_table_from_pal_colors( BITMAPINFO *info, HDC hdc ) DECLSPEC_HIDDEN;
 extern const RGBQUAD *get_default_color_table( int bpp ) DECLSPEC_HIDDEN;
 extern void fill_default_color_table( BITMAPINFO *info ) DECLSPEC_HIDDEN;
@@ -229,18 +211,13 @@ extern UINT set_dib_dc_color_table( HDC hdc, UINT startpos, UINT entries,
                                     const RGBQUAD *colors ) DECLSPEC_HIDDEN;
 extern void dibdrv_set_window_surface( DC *dc, struct window_surface *surface ) DECLSPEC_HIDDEN;
 
-extern NTSTATUS init_opengl_lib( HMODULE module, DWORD reason, const void *ptr_in, void *ptr_out ) DECLSPEC_HIDDEN;
-
 /* driver.c */
 extern const struct gdi_dc_funcs null_driver DECLSPEC_HIDDEN;
 extern const struct gdi_dc_funcs dib_driver DECLSPEC_HIDDEN;
 extern const struct gdi_dc_funcs path_driver DECLSPEC_HIDDEN;
 extern const struct gdi_dc_funcs font_driver DECLSPEC_HIDDEN;
-extern const struct gdi_dc_funcs *DRIVER_load_driver( LPCWSTR name ) DECLSPEC_HIDDEN;
-extern BOOL DRIVER_GetDriverName( LPCWSTR device, LPWSTR driver, DWORD size ) DECLSPEC_HIDDEN;
-
-/* enhmetafile.c */
-extern HENHMETAFILE EMF_Create_HENHMETAFILE(ENHMETAHEADER *emh, DWORD filesize, BOOL on_disk ) DECLSPEC_HIDDEN;
+extern const struct gdi_dc_funcs *get_display_driver(void) DECLSPEC_HIDDEN;
+extern void CDECL set_display_driver( void *proc ) DECLSPEC_HIDDEN;
 
 /* font.c */
 
@@ -350,16 +327,15 @@ struct font_backend_funcs
     void  (CDECL *destroy_font)( struct gdi_font *font );
 };
 
-struct font_callback_funcs
-{
-    int (CDECL *add_gdi_face)( const WCHAR *family_name, const WCHAR *second_name,
-                               const WCHAR *style, const WCHAR *fullname, const WCHAR *file,
-                               void *data_ptr, SIZE_T data_size, UINT index, FONTSIGNATURE fs,
-                               DWORD ntmflags, DWORD version, DWORD flags,
-                               const struct bitmap_font_size *size );
-};
-
-extern void font_init(void) DECLSPEC_HIDDEN;
+extern int add_gdi_face( const WCHAR *family_name, const WCHAR *second_name,
+                         const WCHAR *style, const WCHAR *fullname, const WCHAR *file,
+                         void *data_ptr, SIZE_T data_size, UINT index, FONTSIGNATURE fs,
+                         DWORD ntmflags, DWORD version, DWORD flags,
+                         const struct bitmap_font_size *size ) DECLSPEC_HIDDEN;
+extern UINT font_init(void) DECLSPEC_HIDDEN;
+extern UINT get_acp(void) DECLSPEC_HIDDEN;
+extern CPTABLEINFO *get_cptable( WORD cp ) DECLSPEC_HIDDEN;
+extern const struct font_backend_funcs *init_freetype_lib(void) DECLSPEC_HIDDEN;
 
 /* opentype.c */
 
@@ -391,19 +367,19 @@ extern BOOL opentype_get_properties( const void *data, size_t size, const struct
 extern BOOL translate_charset_info( DWORD *src, CHARSETINFO *cs, DWORD flags ) DECLSPEC_HIDDEN;
 
 /* gdiobj.c */
-extern HGDIOBJ alloc_gdi_handle( struct gdi_obj_header *obj, WORD type,
+extern HGDIOBJ alloc_gdi_handle( struct gdi_obj_header *obj, DWORD type,
                                  const struct gdi_obj_funcs *funcs ) DECLSPEC_HIDDEN;
 extern void *free_gdi_handle( HGDIOBJ handle ) DECLSPEC_HIDDEN;
-extern HGDIOBJ get_full_gdi_handle( HGDIOBJ handle ) DECLSPEC_HIDDEN;
-extern void *GDI_GetObjPtr( HGDIOBJ, WORD ) DECLSPEC_HIDDEN;
-extern void *get_any_obj_ptr( HGDIOBJ, WORD * ) DECLSPEC_HIDDEN;
+extern void *GDI_GetObjPtr( HGDIOBJ, DWORD ) DECLSPEC_HIDDEN;
+extern void *get_any_obj_ptr( HGDIOBJ, DWORD * ) DECLSPEC_HIDDEN;
 extern void GDI_ReleaseObj( HGDIOBJ ) DECLSPEC_HIDDEN;
 extern void GDI_CheckNotLock(void) DECLSPEC_HIDDEN;
 extern UINT GDI_get_ref_count( HGDIOBJ handle ) DECLSPEC_HIDDEN;
 extern HGDIOBJ GDI_inc_ref_count( HGDIOBJ handle ) DECLSPEC_HIDDEN;
 extern BOOL GDI_dec_ref_count( HGDIOBJ handle ) DECLSPEC_HIDDEN;
-extern DWORD get_dpi(void) DECLSPEC_HIDDEN;
 extern DWORD get_system_dpi(void) DECLSPEC_HIDDEN;
+extern HGDIOBJ get_stock_object( INT obj ) DECLSPEC_HIDDEN;
+extern DWORD get_gdi_object_type( HGDIOBJ obj ) DECLSPEC_HIDDEN;
 
 /* mapping.c */
 extern BOOL dp_to_lp( DC *dc, POINT *points, INT count ) DECLSPEC_HIDDEN;
@@ -411,28 +387,7 @@ extern void lp_to_dp( DC *dc, POINT *points, INT count ) DECLSPEC_HIDDEN;
 extern BOOL set_map_mode( DC *dc, int mode ) DECLSPEC_HIDDEN;
 extern void combine_transform( XFORM *result, const XFORM *xform1,
                                const XFORM *xform2 ) DECLSPEC_HIDDEN;
-
-/* metafile.c */
-extern HMETAFILE MF_Create_HMETAFILE(METAHEADER *mh) DECLSPEC_HIDDEN;
-
-/* Format of comment record added by GetWinMetaFileBits */
-#include <pshpack2.h>
-typedef struct
-{
-    DWORD comment_id;   /* WMFC */
-    DWORD comment_type; /* Always 0x00000001 */
-    DWORD version;      /* Always 0x00010000 */
-    WORD checksum;
-    DWORD flags;        /* Always 0 */
-    DWORD num_chunks;
-    DWORD chunk_size;
-    DWORD remaining_size;
-    DWORD emf_size;
-    BYTE emf_data[1];
-} emf_in_wmf_comment;
-#include <poppack.h>
-
-#define WMFC_MAGIC 0x43464d57
+extern int muldiv( int a, int b, int c ) DECLSPEC_HIDDEN;
 
 /* driver.c */
 extern BOOL is_display_device( LPCWSTR name ) DECLSPEC_HIDDEN;
@@ -453,6 +408,9 @@ extern HPALETTE WINAPI GDISelectPalette( HDC hdc, HPALETTE hpal, WORD wBkg) DECL
 extern HPALETTE PALETTE_Init(void) DECLSPEC_HIDDEN;
 extern UINT get_palette_entries( HPALETTE hpalette, UINT start, UINT count,
                                  PALETTEENTRY *entries ) DECLSPEC_HIDDEN;
+
+/* pen.c */
+extern HPEN create_pen( INT style, INT width, COLORREF color ) DECLSPEC_HIDDEN;
 
 /* region.c */
 extern BOOL add_rect_to_region( HRGN rgn, const RECT *rect ) DECLSPEC_HIDDEN;
@@ -564,9 +522,6 @@ static inline DC *get_physdev_dc( PHYSDEV dev )
         dev = dev->next;
     return get_nulldrv_dc( dev );
 }
-
-/* Undocumented value for DIB's iUsage: Indicates a mono DIB w/o pal entries */
-#define DIB_PAL_MONO 2
 
 BOOL WINAPI FontIsLinked(HDC);
 
@@ -687,6 +642,9 @@ static inline void copy_bitmapinfo( BITMAPINFO *dst, const BITMAPINFO *src )
 
 extern void CDECL free_heap_bits( struct gdi_image_bits *bits ) DECLSPEC_HIDDEN;
 
-extern HMODULE gdi32_module DECLSPEC_HIDDEN;
+void set_gdi_client_ptr( HGDIOBJ handle, void *ptr ) DECLSPEC_HIDDEN;
+
+extern SYSTEM_BASIC_INFORMATION system_info DECLSPEC_HIDDEN;
+extern const struct user_callbacks *user_callbacks DECLSPEC_HIDDEN;
 
 #endif /* __WINE_NTGDI_PRIVATE_H */

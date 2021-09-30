@@ -18,6 +18,10 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
+#if 0
+#pragma makedep unix
+#endif
+
 #include <assert.h>
 
 #include "ntgdi_private.h"
@@ -29,8 +33,6 @@
 #include "wine/debug.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(dib);
-
-extern BOOL WINAPI GdiSetPixelFormat( HDC hdc, INT fmt, const PIXELFORMATDESCRIPTOR *pfd );
 
 static const struct osmesa_funcs *osmesa_funcs;
 
@@ -323,8 +325,8 @@ void add_clipped_bounds( dibdrv_physdev *dev, const RECT *rect, HRGN clip )
 /**********************************************************************
  *	     dibdrv_CreateDC
  */
-static BOOL CDECL dibdrv_CreateDC( PHYSDEV *dev, LPCWSTR driver, LPCWSTR device,
-                                   LPCWSTR output, const DEVMODEW *data )
+static BOOL CDECL dibdrv_CreateDC( PHYSDEV *dev, LPCWSTR device, LPCWSTR output,
+                                   const DEVMODEW *data )
 {
     dibdrv_physdev *pdev = HeapAlloc( GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*pdev) );
 
@@ -472,21 +474,6 @@ static BOOL WINAPI dibdrv_wglCopyContext( struct wgl_context *src, struct wgl_co
 }
 
 /***********************************************************************
- *		dibdrv_wglCreateContext
- */
-static struct wgl_context * WINAPI dibdrv_wglCreateContext( HDC hdc )
-{
-    PIXELFORMATDESCRIPTOR descr;
-    int format = GetPixelFormat( hdc );
-
-    if (!format) format = 1;
-    if (!DescribePixelFormat( hdc, format, sizeof(descr), &descr )) return NULL;
-
-    if (!osmesa_funcs) return NULL;
-    return osmesa_funcs->create_context( hdc, &descr );
-}
-
-/***********************************************************************
  *		dibdrv_wglDeleteContext
  */
 static BOOL WINAPI dibdrv_wglDeleteContext( struct wgl_context *context )
@@ -512,6 +499,21 @@ static int WINAPI dibdrv_wglGetPixelFormat( HDC hdc )
 }
 
 /***********************************************************************
+ *		dibdrv_wglCreateContext
+ */
+static struct wgl_context * WINAPI dibdrv_wglCreateContext( HDC hdc )
+{
+    PIXELFORMATDESCRIPTOR descr;
+    int format = dibdrv_wglGetPixelFormat( hdc );
+
+    if (!format) format = 1;
+    if (!dibdrv_wglDescribePixelFormat( hdc, format, sizeof(descr), &descr )) return NULL;
+
+    if (!osmesa_funcs) return NULL;
+    return osmesa_funcs->create_context( hdc, &descr );
+}
+
+/***********************************************************************
  *		dibdrv_wglGetProcAddress
  */
 static PROC WINAPI dibdrv_wglGetProcAddress( const char *proc )
@@ -534,7 +536,7 @@ static BOOL WINAPI dibdrv_wglMakeCurrent( HDC hdc, struct wgl_context *context )
     if (!osmesa_funcs) return FALSE;
     if (!context) return osmesa_funcs->make_current( NULL, NULL, 0, 0, 0, 0 );
 
-    bitmap = GetCurrentObject( hdc, OBJ_BITMAP );
+    bitmap = NtGdiGetDCObject( hdc, NTGDI_OBJ_SURF );
     bmp = GDI_GetObjPtr( bitmap, NTGDI_OBJ_BITMAP );
     if (!bmp) return FALSE;
 
@@ -564,7 +566,7 @@ static BOOL WINAPI dibdrv_wglMakeCurrent( HDC hdc, struct wgl_context *context )
 static BOOL WINAPI dibdrv_wglSetPixelFormat( HDC hdc, int fmt, const PIXELFORMATDESCRIPTOR *descr )
 {
     if (fmt <= 0 || fmt > ARRAY_SIZE( pixel_formats )) return FALSE;
-    return GdiSetPixelFormat( hdc, fmt, descr );
+    return NtGdiSetPixelFormat( hdc, fmt );
 }
 
 /***********************************************************************
@@ -610,7 +612,7 @@ static struct opengl_funcs * CDECL dibdrv_wine_get_wgl_driver( PHYSDEV dev, UINT
         ERR( "version mismatch, opengl32 wants %u but dibdrv has %u\n", version, WINE_WGL_DRIVER_VERSION );
         return NULL;
     }
-    if (!osmesa_funcs && __wine_init_unix_lib( gdi32_module, DLL_PROCESS_ATTACH, NULL, &osmesa_funcs ))
+    if (!osmesa_funcs && !(osmesa_funcs = init_opengl_lib()))
     {
         static int warned;
         if (!warned++) ERR( "OSMesa not available, no OpenGL bitmap support\n" );
@@ -636,14 +638,11 @@ const struct gdi_dc_funcs dib_driver =
     dibdrv_CreateDC,                    /* pCreateDC */
     dibdrv_DeleteDC,                    /* pDeleteDC */
     NULL,                               /* pDeleteObject */
-    NULL,                               /* pDeviceCapabilities */
     dibdrv_Ellipse,                     /* pEllipse */
     NULL,                               /* pEndDoc */
     NULL,                               /* pEndPage */
     NULL,                               /* pEndPath */
     NULL,                               /* pEnumFonts */
-    NULL,                               /* pEnumICMProfiles */
-    NULL,                               /* pExtDeviceMode */
     NULL,                               /* pExtEscape */
     dibdrv_ExtFloodFill,                /* pExtFloodFill */
     dibdrv_ExtTextOut,                  /* pExtTextOut */
@@ -750,13 +749,13 @@ static inline void lock_surface( struct windrv_physdev *dev )
 {
     GDI_CheckNotLock();
     dev->surface->funcs->lock( dev->surface );
-    if (is_rect_empty( dev->dibdrv->bounds )) dev->start_ticks = GetTickCount();
+    if (is_rect_empty( dev->dibdrv->bounds )) dev->start_ticks = NtGetTickCount();
 }
 
 static inline void unlock_surface( struct windrv_physdev *dev )
 {
     dev->surface->funcs->unlock( dev->surface );
-    if (GetTickCount() - dev->start_ticks > FLUSH_PERIOD) dev->surface->funcs->flush( dev->surface );
+    if (NtGetTickCount() - dev->start_ticks > FLUSH_PERIOD) dev->surface->funcs->flush( dev->surface );
 }
 
 static void CDECL unlock_bits_surface( struct gdi_image_bits *bits )
@@ -783,7 +782,7 @@ void dibdrv_set_window_surface( DC *dc, struct window_surface *surface )
         if (windev) push_dc_driver( &dc->physDev, windev, windev->funcs );
         else
         {
-            if (!window_driver.pCreateDC( &dc->physDev, NULL, NULL, NULL, NULL )) return;
+            if (!window_driver.pCreateDC( &dc->physDev, NULL, NULL, NULL )) return;
             windev = find_dc_driver( dc, &window_driver );
         }
 
@@ -873,14 +872,14 @@ static BOOL CDECL windrv_Chord( PHYSDEV dev, INT left, INT top, INT right, INT b
     return ret;
 }
 
-static BOOL CDECL windrv_CreateDC( PHYSDEV *dev, LPCWSTR driver, LPCWSTR device,
-                                   LPCWSTR output, const DEVMODEW *devmode )
+static BOOL CDECL windrv_CreateDC( PHYSDEV *dev, LPCWSTR device, LPCWSTR output,
+                                   const DEVMODEW *devmode )
 {
     struct windrv_physdev *physdev = HeapAlloc( GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*physdev) );
 
     if (!physdev) return FALSE;
 
-    if (!dib_driver.pCreateDC( dev, NULL, NULL, NULL, NULL ))
+    if (!dib_driver.pCreateDC( dev, NULL, NULL, NULL ))
     {
         HeapFree( GetProcessHeap(), 0, physdev );
         return FALSE;
@@ -1202,14 +1201,11 @@ static const struct gdi_dc_funcs window_driver =
     windrv_CreateDC,                    /* pCreateDC */
     windrv_DeleteDC,                    /* pDeleteDC */
     NULL,                               /* pDeleteObject */
-    NULL,                               /* pDeviceCapabilities */
     windrv_Ellipse,                     /* pEllipse */
     NULL,                               /* pEndDoc */
     NULL,                               /* pEndPage */
     NULL,                               /* pEndPath */
     NULL,                               /* pEnumFonts */
-    NULL,                               /* pEnumICMProfiles */
-    NULL,                               /* pExtDeviceMode */
     NULL,                               /* pExtEscape */
     windrv_ExtFloodFill,                /* pExtFloodFill */
     windrv_ExtTextOut,                  /* pExtTextOut */

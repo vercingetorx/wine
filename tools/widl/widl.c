@@ -40,7 +40,7 @@
 #include "widl.h"
 #include "utils.h"
 #include "parser.h"
-#include "wine/wpp.h"
+#include "wpp_private.h"
 #include "header.h"
 
 static const char usage[] =
@@ -248,16 +248,9 @@ enum stub_mode get_stub_mode(void)
 static char *make_token(const char *name)
 {
   char *token;
-  char *slash;
   int i;
 
-  slash = strrchr(name, '/');
-  if(!slash)
-    slash = strrchr(name, '\\');
-
-  if (slash) name = slash + 1;
-
-  token = xstrdup(name);
+  token = get_basename( name );
   for (i=0; token[i]; i++) {
     if (!isalnum(token[i])) token[i] = '_';
     else token[i] = tolower(token[i]);
@@ -268,7 +261,7 @@ static char *make_token(const char *name)
 /* duplicate a basename into a valid C token */
 static char *dup_basename_token(const char *name, const char *ext)
 {
-    char *p, *ret = dup_basename( name, ext );
+    char *p, *ret = replace_extension( get_basename(name), ext, "" );
     /* map invalid characters to '_' */
     for (p = ret; *p; p++) if (!isalnum(*p)) *p = '_';
     return ret;
@@ -318,14 +311,8 @@ static void set_cpu( const char *cpu, int error_out )
  * If not found, or not matching a known CPU name, just proceed silently. */
 static void init_argv0_target( const char *argv0 )
 {
-    char *p, *name;
+    char *p, *name = get_basename( argv0 );
 
-    if ((p = strrchr(argv0, '/')) != NULL)
-        argv0 = p + 1;
-    if ((p = strrchr(argv0, '\\')) != NULL)
-        argv0 = p + 1;
-
-    name = xstrdup( argv0 );
     if (!(p = strchr(name, '-')))
     {
         free( name );
@@ -381,33 +368,10 @@ void end_cplusplus_guard(FILE *fp)
   fprintf(fp, "#endif\n\n");
 }
 
-typedef struct
-{
-  char *filename;
-  struct list link;
-} filename_node_t;
-
-static void add_filename_node(struct list *list, const char *name)
-{
-  filename_node_t *node = xmalloc(sizeof *node);
-  node->filename = dup_basename( name, ".idl" );
-  list_add_tail(list, &node->link);
-}
-
-static void free_filename_nodes(struct list *list)
-{
-  filename_node_t *node, *next;
-  LIST_FOR_EACH_ENTRY_SAFE(node, next, list, filename_node_t, link) {
-    list_remove(&node->link);
-    free(node->filename);
-    free(node);
-  }
-}
-
-static void write_dlldata_list(struct list *filenames, int define_proxy_delegation)
+static void write_dlldata_list( struct strarray filenames, int define_proxy_delegation)
 {
   FILE *dlldata;
-  filename_node_t *node;
+  unsigned int i;
 
   dlldata = fopen(dlldata_name, "w");
   if (!dlldata)
@@ -421,13 +385,13 @@ static void write_dlldata_list(struct list *filenames, int define_proxy_delegati
   fprintf(dlldata, "#include <rpcproxy.h>\n\n");
   start_cplusplus_guard(dlldata);
 
-  LIST_FOR_EACH_ENTRY(node, filenames, filename_node_t, link)
-    fprintf(dlldata, "EXTERN_PROXY_FILE(%s)\n", node->filename);
+  for (i = 0; i < filenames.count; i++)
+    fprintf(dlldata, "EXTERN_PROXY_FILE(%s)\n", filenames.str[i]);
 
   fprintf(dlldata, "\nPROXYFILE_LIST_START\n");
   fprintf(dlldata, "/* Start of list */\n");
-  LIST_FOR_EACH_ENTRY(node, filenames, filename_node_t, link)
-    fprintf(dlldata, "  REFERENCE_PROXY_FILE(%s),\n", node->filename);
+  for (i = 0; i < filenames.count; i++)
+    fprintf(dlldata, "  REFERENCE_PROXY_FILE(%s),\n", filenames.str[i]);
   fprintf(dlldata, "/* End of list */\n");
   fprintf(dlldata, "PROXYFILE_LIST_END\n\n");
 
@@ -445,9 +409,8 @@ static char *eat_space(char *s)
 
 void write_dlldata(const statement_list_t *stmts)
 {
-  struct list filenames = LIST_INIT(filenames);
+  struct strarray filenames = empty_strarray;
   int define_proxy_delegation = 0;
-  filename_node_t *node;
   FILE *dlldata;
 
   if (!do_dlldata || !need_proxy_file(stmts))
@@ -478,7 +441,7 @@ void write_dlldata(const statement_list_t *stmts)
           --end;
         *end = '\0';
         if (start < end)
-          add_filename_node(&filenames, start);
+          strarray_add(&filenames, replace_extension( get_basename( start ), ".idl", "" ));
       }else if (!define_proxy_delegation && strncmp(start, delegation_define, sizeof(delegation_define)-1)) {
           define_proxy_delegation = 1;
       }
@@ -491,16 +454,12 @@ void write_dlldata(const statement_list_t *stmts)
     fclose(dlldata);
   }
 
-  LIST_FOR_EACH_ENTRY(node, &filenames, filename_node_t, link)
-    if (strcmp(proxy_token, node->filename) == 0) {
+  if (strarray_exists( &filenames, proxy_token ))
       /* We're already in the list, no need to regenerate this file.  */
-      free_filename_nodes(&filenames);
       return;
-    }
 
-  add_filename_node(&filenames, proxy_token);
-  write_dlldata_list(&filenames, define_proxy_delegation);
-  free_filename_nodes(&filenames);
+  strarray_add(&filenames, proxy_token);
+  write_dlldata_list(filenames, define_proxy_delegation);
 }
 
 static void write_id_guid(FILE *f, const char *type, const char *guid_prefix, const char *name, const UUID *uuid)
@@ -603,7 +562,7 @@ void write_id_data(const statement_list_t *stmts)
 static void init_argv0_dir( const char *argv0 )
 {
 #ifndef _WIN32
-    char *p, *dir;
+    char *dir;
 
 #if defined(__linux__) || defined(__FreeBSD_kernel__) || defined(__NetBSD__)
     dir = realpath( "/proc/self/exe", NULL );
@@ -613,11 +572,7 @@ static void init_argv0_dir( const char *argv0 )
     dir = realpath( argv0, NULL );
 #endif
     if (!dir) return;
-    if (!(p = strrchr( dir, '/' ))) return;
-    if (p == dir) p++;
-    *p = 0;
-    includedir = strmake( "%s/%s", dir, BIN_TO_INCLUDEDIR );
-    free( dir );
+    includedir = strmake( "%s/%s", get_dirname( dir ), BIN_TO_INCLUDEDIR );
 #endif
 }
 
@@ -882,12 +837,11 @@ int main(int argc,char *argv[])
 
   if(optind < argc) {
     if (do_dlldata && !do_everything) {
-      struct list filenames = LIST_INIT(filenames);
+      struct strarray filenames = empty_strarray;
       for ( ; optind < argc; ++optind)
-        add_filename_node(&filenames, argv[optind]);
+          strarray_add(&filenames, replace_extension( get_basename( argv[optind] ), ".idl", "" ));
 
-      write_dlldata_list(&filenames, 0 /* FIXME */ );
-      free_filename_nodes(&filenames);
+      write_dlldata_list(filenames, 0 /* FIXME */ );
       return 0;
     }
     else if (optind != argc - 1) {
@@ -915,40 +869,26 @@ int main(int argc,char *argv[])
                  (debuglevel & DEBUGLEVEL_PPTRACE) != 0,
                  (debuglevel & DEBUGLEVEL_PPMSG) != 0 );
 
-  if (!header_name) {
-    header_name = dup_basename(input_name, ".idl");
-    strcat(header_name, ".h");
-  }
+  if (!header_name)
+      header_name = replace_extension( get_basename(input_name), ".idl", ".h" );
 
-  if (!typelib_name && do_typelib) {
-    typelib_name = dup_basename(input_name, ".idl");
-    strcat(typelib_name, ".tlb");
-  }
+  if (!typelib_name && do_typelib)
+      typelib_name = replace_extension( get_basename(input_name), ".idl", ".tlb" );
 
-  if (!proxy_name && do_proxies) {
-    proxy_name = dup_basename(input_name, ".idl");
-    strcat(proxy_name, "_p.c");
-  }
+  if (!proxy_name && do_proxies)
+      proxy_name = replace_extension( get_basename(input_name), ".idl", "_p.c" );
 
-  if (!client_name && do_client) {
-    client_name = dup_basename(input_name, ".idl");
-    strcat(client_name, "_c.c");
-  }
+  if (!client_name && do_client)
+      client_name = replace_extension( get_basename(input_name), ".idl", "_c.c" );
 
-  if (!server_name && do_server) {
-    server_name = dup_basename(input_name, ".idl");
-    strcat(server_name, "_s.c");
-  }
+  if (!server_name && do_server)
+      server_name = replace_extension( get_basename(input_name), ".idl", "_s.c" );
 
-  if (!regscript_name && do_regscript) {
-    regscript_name = dup_basename(input_name, ".idl");
-    strcat(regscript_name, "_r.rgs");
-  }
+  if (!regscript_name && do_regscript)
+      regscript_name = replace_extension( get_basename(input_name), ".idl", "_r.rgs" );
 
-  if (!idfile_name && do_idfile) {
-    idfile_name = dup_basename(input_name, ".idl");
-    strcat(idfile_name, "_i.c");
-  }
+  if (!idfile_name && do_idfile)
+      idfile_name = replace_extension( get_basename(input_name), ".idl", "_i.c" );
 
   if (do_proxies) proxy_token = dup_basename_token(proxy_name,"_p.c");
   if (do_client) client_token = dup_basename_token(client_name,"_c.c");
@@ -967,14 +907,9 @@ int main(int argc,char *argv[])
     {
         FILE *output;
         int fd;
-        char *name = xmalloc( strlen(header_name) + 8 );
+        char *name;
 
-        strcpy( name, header_name );
-        strcat( name, ".XXXXXX" );
-
-        if ((fd = mkstemps( name, 0 )) == -1)
-            error("Could not generate a temp name from %s\n", name);
-
+        fd = make_temp_file( header_name, NULL, &name );
         temp_name = name;
         if (!(output = fdopen(fd, "wt")))
             error("Could not open fd %s for writing\n", name);

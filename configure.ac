@@ -243,15 +243,6 @@ then
 --enable-win64 should be used in the 64-bit build tree, --with-wine64 in the 32-bit Wow64 build tree.])
 fi
 
-dnl Normalize CPU architecture
-case $host_cpu in
-  *i[[3456789]]86*) AC_SUBST(ARCH,"i386") ;;
-  *x86_64*)         AC_SUBST(ARCH,"x86_64") ;;
-  *aarch64*)        AC_SUBST(ARCH,"aarch64") ;;
-  *arm*)            AC_SUBST(ARCH,"arm") ;;
-  *)                AC_SUBST(ARCH,"") ;;
-esac
-
 AC_CACHE_CHECK([for the directory containing the Wine tools], wine_cv_toolsdir,
   [wine_cv_toolsdir="$with_wine_tools"
    if test -z "$with_wine_tools"; then
@@ -467,7 +458,6 @@ AC_CHECK_HEADERS(\
 	gsm.h \
 	gsm/gsm.h \
 	ieeefp.h \
-	inet/mib2.h \
 	libproc.h \
 	link.h \
 	linux/cdrom.h \
@@ -504,7 +494,6 @@ AC_CHECK_HEADERS(\
 	scsi/scsi_ioctl.h \
 	scsi/sg.h \
 	stdint.h \
-	stropts.h \
 	sys/attr.h \
 	sys/auxv.h \
 	sys/cdio.h \
@@ -516,7 +505,6 @@ AC_CHECK_HEADERS(\
 	sys/link.h \
 	sys/mman.h \
 	sys/modem.h \
-	sys/msg.h \
 	sys/mtio.h \
 	sys/param.h \
 	sys/poll.h \
@@ -536,7 +524,6 @@ AC_CHECK_HEADERS(\
 	sys/strtio.h \
 	sys/syscall.h \
 	sys/sysinfo.h \
-	sys/tihdr.h \
 	sys/time.h \
 	sys/timeout.h \
 	sys/times.h \
@@ -711,15 +698,16 @@ AC_CHECK_HEADERS([libprocstat.h],,,
 
 dnl **** Check for working dll ****
 
-AC_SUBST(DLLFLAGS,"-D_REENTRANT")
+AC_SUBST(DLLFLAGS,"")
 AC_SUBST(LDDLLFLAGS,"")
 AC_SUBST(LDEXECFLAGS,"")
+AC_SUBST(UNIXDLLFLAGS,"-fPIC")
+AC_SUBST(UNIXLDFLAGS,["-shared -Wl,-Bsymbolic -Wl,-soname,\$(UNIXLIB)"])
 AC_SUBST(TOP_INSTALL_LIB,"")
 AC_SUBST(TOP_INSTALL_DEV,"")
 AC_SUBST(WINELOADER_LDFLAGS,"")
 AC_SUBST(WINEPRELOADER_LDFLAGS,"")
 LIBEXT="so"
-DLLEXT=".so"
 WINE_PATH_SONAME_TOOLS
 WINE_CONFIG_HELPERS
 
@@ -732,7 +720,6 @@ case $host_os in
   cygwin*|mingw32*)
     AC_CHECK_TOOL(DLLTOOL,dlltool,false)
     LIBEXT="dll"
-    DLLEXT=""
     dnl Disable stdcall fixups to catch prototype mismatches
     case $host_cpu in
       *i[[3456]]86*) WINE_TRY_CFLAGS([-Wl,--disable-stdcall-fixup],
@@ -741,7 +728,6 @@ case $host_os in
     dnl Disable modules that can't be used on Windows
     enable_iphlpapi=${enable_iphlpapi:-no}
     enable_nsiproxy_sys=${enable_nsiproxy_sys:-no}
-    enable_ws2_32=${enable_ws2_32:-no}
     enable_loader=${enable_loader:-no}
     enable_server=${enable_server:-no}
     dnl Disable dependencies that are not useful on Windows
@@ -797,11 +783,6 @@ case $host_os in
     if test "$ac_cv_header_Security_Security_h" = "yes"
     then
         AC_SUBST(SECURITY_LIBS,"-framework Security -framework CoreFoundation")
-        dnl Check for the SSLCopyPeerCertificates function
-        ac_save_LIBS="$LIBS"
-        LIBS="$LIBS $SECURITY_LIBS"
-        AC_CHECK_FUNCS(SSLCopyPeerCertificates)
-        LIBS="$ac_save_LIBS"
     fi
     if test "$ac_cv_header_CoreAudio_CoreAudio_h" = "yes"
     then
@@ -878,6 +859,7 @@ case $host_os in
         LIBS="$ac_save_LIBS"
     fi
 
+    UNIXLDFLAGS="-dynamiclib -install_name @loader_path/\$(UNIXLIB)"
     AC_SUBST(LIBWINE_SHAREDLIB,"libwine.$libwine_version.dylib")
     AC_SUBST(LIBWINE_LDFLAGS,["-dynamiclib -install_name @rpath/libwine.$libwine_soversion.dylib -Wl,-rpath,@loader_path/ -compatibility_version $libwine_soversion -current_version $libwine_version"])
     AC_SUBST(WINELOADER_DEPENDS,"wine_info.plist")
@@ -889,8 +871,8 @@ case $host_os in
     LDDLLFLAGS="-fPIC"
     LDEXECFLAGS="-Wl,-pie"
     enable_wineandroid_drv=${enable_wineandroid_drv:-yes}
-    WINE_TRY_CFLAGS([-fPIC -Wl,--export-dynamic],
-                    [WINELOADER_LDFLAGS="-Wl,--export-dynamic"])
+    WINE_TRY_CFLAGS([-Wl,-z,defs],[UNIXLDFLAGS="$UNIXLDFLAGS -Wl,-z,defs"])
+    WINE_TRY_CFLAGS([-fPIC -Wl,--export-dynamic],[WINELOADER_LDFLAGS="-Wl,--export-dynamic"])
     WINEPRELOADER_LDFLAGS="-static -nostartfiles -nodefaultlibs -Wl,-Ttext=0x7d400000"
 
     WINE_CHECK_SONAME(EGL,eglGetProcAddress)
@@ -918,57 +900,38 @@ case $host_os in
         DLLFLAGS="$DLLFLAGS -fPIC"
         LDDLLFLAGS="-fPIC" ;;
     esac
-    AC_CACHE_CHECK([whether we can build a GNU style ELF dll], ac_cv_c_dll_gnuelf,
-        [WINE_TRY_SHLIB_FLAGS([-fPIC -shared -Wl,-Bsymbolic],
-                              ac_cv_c_dll_gnuelf="yes",ac_cv_c_dll_gnuelf="no")])
-    if test "$ac_cv_c_dll_gnuelf" = "yes"
-    then
-      LIBWINE_LDFLAGS="-shared"
-      WINE_TRY_CFLAGS([-shared -Wl,-soname,confest.so.1],
-                      [LIBWINE_LDFLAGS="-shared -Wl,-soname,libwine.so.$libwine_soversion"],
-                      [WINE_TRY_CFLAGS([-shared -Wl,-h,confest.so.1],
-                                       [LIBWINE_LDFLAGS="-shared -Wl,-h,libwine.so.$libwine_soversion"])])
+    LIBWINE_LDFLAGS="-shared -Wl,-soname,libwine.so.$libwine_soversion"
 
-      echo '{ global: *; };' >conftest.map
-      WINE_TRY_CFLAGS([-shared -Wl,--version-script=conftest.map],
-                      [LIBWINE_LDFLAGS="$LIBWINE_LDFLAGS -Wl,--version-script=\$(srcdir)/wine.map"])
-      rm -f conftest.map
+    echo '{ global: *; };' >conftest.map
+    WINE_TRY_CFLAGS([-shared -Wl,--version-script=conftest.map],
+                    [LIBWINE_LDFLAGS="$LIBWINE_LDFLAGS -Wl,--version-script=\$(srcdir)/wine.map"])
+    rm -f conftest.map
 
-      WINE_TRY_CFLAGS([-Wl,--export-dynamic],
-                      [WINELOADER_LDFLAGS="-Wl,--export-dynamic"])
-      WINEPRELOADER_LDFLAGS="-static -nostartfiles -nodefaultlibs -Wl,-Ttext=0x7d400000"
+    WINE_TRY_CFLAGS([-Wl,-z,defs],[UNIXLDFLAGS="$UNIXLDFLAGS -Wl,-z,defs"])
+    WINE_TRY_CFLAGS([-Wl,--export-dynamic],[WINELOADER_LDFLAGS="-Wl,--export-dynamic"])
+    WINEPRELOADER_LDFLAGS="-static -nostartfiles -nodefaultlibs -Wl,-Ttext=0x7d400000"
 
-      case $host_cpu in
-        *i[[3456789]]86* | x86_64 | *aarch64* | arm*)
-          WINE_TRY_CFLAGS([-Wl,-Ttext-segment=0x7bc00000],
-                          [case $host_os in
-                           freebsd* | kfreebsd*-gnu) WINELOADER_LDFLAGS="$WINELOADER_LDFLAGS -Wl,-Ttext-segment=0x60000000" ;;
-                           *) WINELOADER_LDFLAGS="$WINELOADER_LDFLAGS -Wl,-Ttext-segment=0x7d000000" ;;
-                           esac],
-                          [WINE_TRY_CFLAGS([-Wl,--section-start,.interp=0x7d000400],
-                                           [case $host_os in
-                                              freebsd* | kfreebsd*-gnu) WINELOADER_LDFLAGS="$WINELOADER_LDFLAGS -Wl,--section-start,.interp=0x60000400" ;;
-                                              *) WINELOADER_LDFLAGS="$WINELOADER_LDFLAGS -Wl,--section-start,.interp=0x7d000400" ;;
-                                           esac])
-                           AC_PATH_PROG(PRELINK, prelink, false, [/sbin /usr/sbin $PATH])
-                           if test "x$PRELINK" = xfalse
-                           then
-                               WINE_WARNING([prelink not found and linker does not support relocation, base address of core dlls won't be set correctly.])
-                           fi])
-          WINE_TRY_CFLAGS([-Wl,-z,max-page-size=0x1000],
-                          [WINELOADER_LDFLAGS="$WINELOADER_LDFLAGS -Wl,-z,max-page-size=0x1000"])
-          ;;
-      esac
-
-    else
-      AC_CACHE_CHECK(whether we can build a UnixWare (Solaris) dll, ac_cv_c_dll_unixware,
-          [WINE_TRY_SHLIB_FLAGS([-fPIC -Wl,-G,-h,conftest.so.1.0,-B,symbolic],
-                                ac_cv_c_dll_unixware="yes",ac_cv_c_dll_unixware="no")])
-      if test "$ac_cv_c_dll_unixware" = "yes"
-      then
-        LIBWINE_LDFLAGS="-Wl,-G,-h,libwine.so.$libwine_soversion"
-      fi
-    fi
+    case $host_cpu in
+      *i[[3456789]]86* | x86_64 | *aarch64* | arm*)
+        WINE_TRY_CFLAGS([-Wl,-Ttext-segment=0x7bc00000],
+                        [case $host_os in
+                         freebsd* | kfreebsd*-gnu) WINELOADER_LDFLAGS="$WINELOADER_LDFLAGS -Wl,-Ttext-segment=0x60000000" ;;
+                         *) WINELOADER_LDFLAGS="$WINELOADER_LDFLAGS -Wl,-Ttext-segment=0x7d000000" ;;
+                         esac],
+                        [WINE_TRY_CFLAGS([-Wl,--section-start,.interp=0x7d000400],
+                                         [case $host_os in
+                                            freebsd* | kfreebsd*-gnu) WINELOADER_LDFLAGS="$WINELOADER_LDFLAGS -Wl,--section-start,.interp=0x60000400" ;;
+                                            *) WINELOADER_LDFLAGS="$WINELOADER_LDFLAGS -Wl,--section-start,.interp=0x7d000400" ;;
+                                         esac])
+                         AC_PATH_PROG(PRELINK, prelink, false, [/sbin /usr/sbin $PATH])
+                         if test "x$PRELINK" = xfalse
+                         then
+                             WINE_WARNING([prelink not found and linker does not support relocation, base address of core dlls won't be set correctly.])
+                         fi])
+        WINE_TRY_CFLAGS([-Wl,-z,max-page-size=0x1000],
+                        [WINELOADER_LDFLAGS="$WINELOADER_LDFLAGS -Wl,-z,max-page-size=0x1000"])
+        ;;
+    esac
     AC_SUBST(LIBWINE_SHAREDLIB,"libwine.so.$libwine_version")
     AC_SUBST(LIBWINE_DEPENDS,"wine.map")
     TOP_INSTALL_LIB="$TOP_INSTALL_LIB libs/wine/libwine.so.$libwine_version libs/wine/libwine.so.$libwine_soversion"
@@ -2136,6 +2099,7 @@ if test "$ac_cv_c_cfi_support" = "yes"
 then
    DLLFLAGS="$DLLFLAGS -fasynchronous-unwind-tables"
    LDDLLFLAGS="$LDDLLFLAGS -fasynchronous-unwind-tables"
+   UNIXDLLFLAGS="$UNIXDLLFLAGS -fasynchronous-unwind-tables"
 else
    if test "x$enable_win64" = "xyes"
    then
@@ -2187,10 +2151,9 @@ AC_CHECK_FUNCS(\
 	poll \
 	port_create \
 	posix_fadvise \
+	posix_fallocate \
 	prctl \
-	pread \
 	proc_pidinfo \
-	pwrite \
 	readlink \
 	sched_yield \
 	setproctitle \
@@ -2223,11 +2186,7 @@ dnl Check for -lresolv for Solaris
 AC_SEARCH_LIBS(inet_aton, resolv)
 
 dnl **** Check for functions which may rely on -lsocket on Solaris.
-AC_CHECK_FUNCS(\
-	getaddrinfo \
-	getnameinfo \
-	getservbyport \
-)
+AC_CHECK_FUNCS(getaddrinfo)
 
 dnl Check for clock_gettime which may be in -lrt
 case $host_os in
@@ -2282,15 +2241,6 @@ AC_CACHE_CHECK([for sched_setaffinity],wine_cv_have_sched_setaffinity,
 if test "$wine_cv_have_sched_setaffinity" = "yes"
 then
   AC_DEFINE(HAVE_SCHED_SETAFFINITY, 1, [Define to 1 if you have the `sched_setaffinity' function.])
-fi
-
-AC_CACHE_CHECK([for fallocate],wine_cv_have_fallocate,
-                AC_LINK_IFELSE([AC_LANG_PROGRAM(
-[[#define _GNU_SOURCE
-#include <fcntl.h>]], [[fallocate(-1, 0, 0, 0);]])],[wine_cv_have_fallocate=yes],[wine_cv_have_fallocate=no]))
-if test "$wine_cv_have_fallocate" = "yes"
-then
-  AC_DEFINE(HAVE_FALLOCATE, 1, [Define to 1 if you have the `fallocate' function.])
 fi
 
 dnl **** Check for types ****
@@ -3073,6 +3023,7 @@ WINE_CONFIG_MAKEFILE(dlls/d3dcompiler_42)
 WINE_CONFIG_MAKEFILE(dlls/d3dcompiler_43)
 WINE_CONFIG_MAKEFILE(dlls/d3dcompiler_43/tests)
 WINE_CONFIG_MAKEFILE(dlls/d3dcompiler_46)
+WINE_CONFIG_MAKEFILE(dlls/d3dcompiler_46/tests)
 WINE_CONFIG_MAKEFILE(dlls/d3dcompiler_47)
 WINE_CONFIG_MAKEFILE(dlls/d3dcompiler_47/tests)
 WINE_CONFIG_MAKEFILE(dlls/d3dim)
@@ -3081,10 +3032,15 @@ WINE_CONFIG_MAKEFILE(dlls/d3drm)
 WINE_CONFIG_MAKEFILE(dlls/d3drm/tests)
 WINE_CONFIG_MAKEFILE(dlls/d3dx10_33)
 WINE_CONFIG_MAKEFILE(dlls/d3dx10_34)
+WINE_CONFIG_MAKEFILE(dlls/d3dx10_34/tests)
 WINE_CONFIG_MAKEFILE(dlls/d3dx10_35)
+WINE_CONFIG_MAKEFILE(dlls/d3dx10_35/tests)
 WINE_CONFIG_MAKEFILE(dlls/d3dx10_36)
+WINE_CONFIG_MAKEFILE(dlls/d3dx10_36/tests)
 WINE_CONFIG_MAKEFILE(dlls/d3dx10_37)
+WINE_CONFIG_MAKEFILE(dlls/d3dx10_37/tests)
 WINE_CONFIG_MAKEFILE(dlls/d3dx10_38)
+WINE_CONFIG_MAKEFILE(dlls/d3dx10_38/tests)
 WINE_CONFIG_MAKEFILE(dlls/d3dx10_39)
 WINE_CONFIG_MAKEFILE(dlls/d3dx10_39/tests)
 WINE_CONFIG_MAKEFILE(dlls/d3dx10_40)
@@ -3800,6 +3756,7 @@ WINE_CONFIG_MAKEFILE(dlls/wineqtdecoder)
 WINE_CONFIG_MAKEFILE(dlls/wineusb.sys)
 WINE_CONFIG_MAKEFILE(dlls/winevulkan)
 WINE_CONFIG_MAKEFILE(dlls/winex11.drv)
+WINE_CONFIG_MAKEFILE(dlls/winexinput.sys)
 WINE_CONFIG_MAKEFILE(dlls/wing.dll16,enable_win16)
 WINE_CONFIG_MAKEFILE(dlls/wing32)
 WINE_CONFIG_MAKEFILE(dlls/winhttp)
@@ -3909,7 +3866,6 @@ WINE_CONFIG_MAKEFILE(fonts)
 WINE_CONFIG_MAKEFILE(include)
 WINE_CONFIG_MAKEFILE(libs/port)
 WINE_CONFIG_MAKEFILE(libs/wine)
-WINE_CONFIG_MAKEFILE(libs/wpp)
 WINE_CONFIG_MAKEFILE(loader)
 WINE_CONFIG_MAKEFILE(nls)
 WINE_CONFIG_MAKEFILE(po)
@@ -4057,7 +4013,7 @@ then
 [wine_fn_output_makedep ()
 {
     AS_MKDIR_P(tools)
-    $CC -Iinclude -I$srcdir/include -D__WINESRC__ $EXTRACFLAGS $CPPFLAGS $CFLAGS -o tools/makedep$ac_exeext $srcdir/tools/makedep.c $LDFLAGS
+    $CC -I$srcdir/tools -Iinclude -I$srcdir/include -D__WINESRC__ $EXTRACFLAGS $CPPFLAGS $CFLAGS -o tools/makedep$ac_exeext $srcdir/tools/makedep.c $LDFLAGS
 }])
 fi
 

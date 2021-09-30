@@ -33,45 +33,20 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(hid);
 
-IRP *pop_irp_from_queue(BASE_DEVICE_EXTENSION *ext)
-{
-    LIST_ENTRY *entry;
-    KIRQL old_irql;
-    IRP *irp = NULL;
-
-    KeAcquireSpinLock(&ext->u.pdo.irp_queue_lock, &old_irql);
-
-    while (!irp && (entry = RemoveHeadList(&ext->u.pdo.irp_queue)) != &ext->u.pdo.irp_queue)
-    {
-        irp = CONTAINING_RECORD(entry, IRP, Tail.Overlay.ListEntry);
-        if (!IoSetCancelRoutine(irp, NULL))
-        {
-            /* cancel routine is already cleared, meaning that it was called. let it handle completion. */
-            InitializeListHead(&irp->Tail.Overlay.ListEntry);
-            irp = NULL;
-        }
-    }
-
-    KeReleaseSpinLock(&ext->u.pdo.irp_queue_lock, old_irql);
-    return irp;
-}
-
 static void WINAPI read_cancel_routine(DEVICE_OBJECT *device, IRP *irp)
 {
-    BASE_DEVICE_EXTENSION *ext;
-    KIRQL old_irql;
+    struct hid_queue *queue = irp->Tail.Overlay.OriginalFileObject->FsContext;
+    KIRQL irql;
 
     TRACE("cancel %p IRP on device %p\n", irp, device);
 
-    ext = device->DeviceExtension;
-
     IoReleaseCancelSpinLock(irp->CancelIrql);
 
-    KeAcquireSpinLock(&ext->u.pdo.irp_queue_lock, &old_irql);
+    KeAcquireSpinLock( &queue->lock, &irql );
 
     RemoveEntryList(&irp->Tail.Overlay.ListEntry);
 
-    KeReleaseSpinLock(&ext->u.pdo.irp_queue_lock, old_irql);
+    KeReleaseSpinLock( &queue->lock, irql );
 
     irp->IoStatus.Status = STATUS_CANCELLED;
     irp->IoStatus.Information = 0;
@@ -102,11 +77,12 @@ static void hid_report_decref( struct hid_report *report )
     if (InterlockedDecrement( &report->ref ) == 0) free( report );
 }
 
-static struct hid_report_queue *hid_report_queue_create( void )
+static struct hid_queue *hid_queue_create( void )
 {
-    struct hid_report_queue *queue;
+    struct hid_queue *queue;
 
-    if (!(queue = calloc( 1, sizeof(struct hid_report_queue) ))) return NULL;
+    if (!(queue = calloc( 1, sizeof(struct hid_queue) ))) return NULL;
+    InitializeListHead( &queue->irp_queue );
     KeInitializeSpinLock( &queue->lock );
     list_init( &queue->entry );
     queue->length = 32;
@@ -116,13 +92,49 @@ static struct hid_report_queue *hid_report_queue_create( void )
     return queue;
 }
 
-static void hid_report_queue_destroy( struct hid_report_queue *queue )
+static IRP *hid_queue_pop_irp( struct hid_queue *queue )
 {
+    LIST_ENTRY *entry;
+    IRP *irp = NULL;
+    KIRQL irql;
+
+    KeAcquireSpinLock( &queue->lock, &irql );
+
+    while (!irp && (entry = RemoveHeadList( &queue->irp_queue )) != &queue->irp_queue)
+    {
+        irp = CONTAINING_RECORD( entry, IRP, Tail.Overlay.ListEntry );
+        if (!IoSetCancelRoutine( irp, NULL ))
+        {
+            /* cancel routine is already cleared, meaning that it was called. let it handle completion. */
+            InitializeListHead( &irp->Tail.Overlay.ListEntry );
+            irp = NULL;
+        }
+    }
+
+    KeReleaseSpinLock( &queue->lock, irql );
+    return irp;
+}
+
+void hid_queue_remove_pending_irps( struct hid_queue *queue )
+{
+    IRP *irp;
+
+    while ((irp = hid_queue_pop_irp( queue )))
+    {
+        irp->IoStatus.Status = STATUS_DELETE_PENDING;
+        IoCompleteRequest( irp, IO_NO_INCREMENT );
+    }
+}
+
+void hid_queue_destroy( struct hid_queue *queue )
+{
+    hid_queue_remove_pending_irps( queue );
     while (queue->length--) hid_report_decref( queue->reports[queue->length] );
+    list_remove( &queue->entry );
     free( queue );
 }
 
-static NTSTATUS hid_report_queue_resize( struct hid_report_queue *queue, ULONG length )
+static NTSTATUS hid_queue_resize( struct hid_queue *queue, ULONG length )
 {
     struct hid_report *old_reports[512];
     LONG old_length = queue->length;
@@ -143,7 +155,30 @@ static NTSTATUS hid_report_queue_resize( struct hid_report_queue *queue, ULONG l
     return STATUS_SUCCESS;
 }
 
-static void hid_report_queue_push( struct hid_report_queue *queue, struct hid_report *report )
+static NTSTATUS hid_queue_push_irp( struct hid_queue *queue, IRP *irp )
+{
+    KIRQL irql;
+
+    KeAcquireSpinLock( &queue->lock, &irql );
+
+    IoSetCancelRoutine( irp, read_cancel_routine );
+    if (irp->Cancel && !IoSetCancelRoutine( irp, NULL ))
+    {
+        /* IRP was canceled before we set cancel routine */
+        InitializeListHead( &irp->Tail.Overlay.ListEntry );
+        KeReleaseSpinLock( &queue->lock, irql );
+        return STATUS_CANCELLED;
+    }
+
+    InsertTailList( &queue->irp_queue, &irp->Tail.Overlay.ListEntry );
+    irp->IoStatus.Status = STATUS_PENDING;
+    IoMarkIrpPending( irp );
+
+    KeReleaseSpinLock( &queue->lock, irql );
+    return STATUS_PENDING;
+}
+
+static void hid_queue_push_report( struct hid_queue *queue, struct hid_report *report )
 {
     ULONG i = queue->write_idx, next = i + 1;
     struct hid_report *prev;
@@ -161,7 +196,7 @@ static void hid_report_queue_push( struct hid_report_queue *queue, struct hid_re
     hid_report_decref( prev );
 }
 
-static struct hid_report *hid_report_queue_pop( struct hid_report_queue *queue )
+static struct hid_report *hid_queue_pop_report( struct hid_queue *queue )
 {
     ULONG i = queue->read_idx, next = i + 1;
     struct hid_report *report;
@@ -182,34 +217,39 @@ static void hid_device_queue_input( DEVICE_OBJECT *device, HID_XFER_PACKET *pack
 {
     BASE_DEVICE_EXTENSION *ext = device->DeviceExtension;
     HIDP_COLLECTION_DESC *desc = ext->u.pdo.device_desc.CollectionDesc;
+    const BOOL polled = ext->u.pdo.information.Polled;
     struct hid_report *last_report, *report;
-    struct hid_report_queue *queue;
+    struct hid_queue *queue;
+    LIST_ENTRY completed, *entry;
     RAWINPUT *rawinput;
     ULONG size;
     KIRQL irql;
     IRP *irp;
 
-    size = offsetof( RAWINPUT, data.hid.bRawData[packet->reportBufferLen] );
-    if (!(rawinput = malloc( size ))) ERR( "Failed to allocate rawinput data!\n" );
-    else
+    if (IsEqualGUID( ext->class_guid, &GUID_DEVINTERFACE_HID ))
     {
-        INPUT input;
+        size = offsetof( RAWINPUT, data.hid.bRawData[packet->reportBufferLen] );
+        if (!(rawinput = malloc( size ))) ERR( "Failed to allocate rawinput data!\n" );
+        else
+        {
+            INPUT input;
 
-        rawinput->header.dwType = RIM_TYPEHID;
-        rawinput->header.dwSize = size;
-        rawinput->header.hDevice = ULongToHandle( ext->u.pdo.rawinput_handle );
-        rawinput->header.wParam = RIM_INPUT;
-        rawinput->data.hid.dwCount = 1;
-        rawinput->data.hid.dwSizeHid = packet->reportBufferLen;
-        memcpy( rawinput->data.hid.bRawData, packet->reportBuffer, packet->reportBufferLen );
+            rawinput->header.dwType = RIM_TYPEHID;
+            rawinput->header.dwSize = size;
+            rawinput->header.hDevice = ULongToHandle( ext->u.pdo.rawinput_handle );
+            rawinput->header.wParam = RIM_INPUT;
+            rawinput->data.hid.dwCount = 1;
+            rawinput->data.hid.dwSizeHid = packet->reportBufferLen;
+            memcpy( rawinput->data.hid.bRawData, packet->reportBuffer, packet->reportBufferLen );
 
-        input.type = INPUT_HARDWARE;
-        input.hi.uMsg = WM_INPUT;
-        input.hi.wParamH = 0;
-        input.hi.wParamL = 0;
-        __wine_send_input( 0, &input, rawinput );
+            input.type = INPUT_HARDWARE;
+            input.hi.uMsg = WM_INPUT;
+            input.hi.wParamH = 0;
+            input.hi.wParamL = 0;
+            __wine_send_input( 0, &input, rawinput );
 
-        free( rawinput );
+            free( rawinput );
+        }
     }
 
     if (!(last_report = hid_report_create( packet )))
@@ -218,21 +258,32 @@ static void hid_device_queue_input( DEVICE_OBJECT *device, HID_XFER_PACKET *pack
         return;
     }
 
-    KeAcquireSpinLock( &ext->u.pdo.report_queues_lock, &irql );
-    LIST_FOR_EACH_ENTRY( queue, &ext->u.pdo.report_queues, struct hid_report_queue, entry )
-    hid_report_queue_push( queue, last_report );
-    KeReleaseSpinLock( &ext->u.pdo.report_queues_lock, irql );
+    InitializeListHead( &completed );
 
-    while ((irp = pop_irp_from_queue( ext )))
+    KeAcquireSpinLock( &ext->u.pdo.queues_lock, &irql );
+    LIST_FOR_EACH_ENTRY( queue, &ext->u.pdo.queues, struct hid_queue, entry )
     {
-        queue = irp->Tail.Overlay.OriginalFileObject->FsContext;
+        hid_queue_push_report( queue, last_report );
 
-        if (!(report = hid_report_queue_pop( queue ))) hid_report_incref( (report = last_report) );
-        memcpy( irp->AssociatedIrp.SystemBuffer, report->buffer, desc->InputLength );
-        irp->IoStatus.Information = report->length;
-        irp->IoStatus.Status = STATUS_SUCCESS;
-        hid_report_decref( report );
+        do
+        {
+            if (!(irp = hid_queue_pop_irp( queue ))) break;
+            if (!(report = hid_queue_pop_report( queue ))) hid_report_incref( (report = last_report) );
 
+            memcpy( irp->AssociatedIrp.SystemBuffer, report->buffer, desc->InputLength );
+            irp->IoStatus.Information = report->length;
+            irp->IoStatus.Status = STATUS_SUCCESS;
+            hid_report_decref( report );
+
+            InsertTailList( &completed, &irp->Tail.Overlay.ListEntry );
+        }
+        while (polled);
+    }
+    KeReleaseSpinLock( &ext->u.pdo.queues_lock, irql );
+
+    while ((entry = RemoveHeadList( &completed )) != &completed)
+    {
+        irp = CONTAINING_RECORD( entry, IRP, Tail.Overlay.ListEntry );
         IoCompleteRequest( irp, IO_NO_INCREMENT );
     }
 
@@ -246,7 +297,8 @@ static DWORD CALLBACK hid_device_thread(void *args)
     HIDP_COLLECTION_DESC *desc = ext->u.pdo.device_desc.CollectionDesc;
     HIDP_REPORT_IDS *reports = ext->u.pdo.device_desc.ReportIDs;
     ULONG report_count = ext->u.pdo.device_desc.ReportIDsLength;
-    ULONG i, report_id = 0, poll_interval = 0;
+    BOOL polled = ext->u.pdo.information.Polled;
+    ULONG i, report_id = 0, timeout = 0;
     HID_XFER_PACKET *packet;
     IO_STATUS_BLOCK io;
     BYTE *buffer;
@@ -256,7 +308,7 @@ static DWORD CALLBACK hid_device_thread(void *args)
     buffer = (BYTE *)(packet + 1);
     packet->reportBuffer = buffer;
 
-    if (ext->u.pdo.information.Polled) poll_interval = ext->u.pdo.poll_interval;
+    if (polled) timeout = ext->u.pdo.poll_interval;
 
     for (i = 0; i < report_count; ++i)
     {
@@ -278,12 +330,8 @@ static DWORD CALLBACK hid_device_thread(void *args)
             packet->reportBufferLen--;
         }
 
-        if (!poll_interval)
-            call_minidriver( IOCTL_HID_READ_REPORT, ext->u.pdo.parent_fdo, NULL, 0,
-                             packet->reportBuffer, packet->reportBufferLen, &io );
-        else
-            call_minidriver( IOCTL_HID_GET_INPUT_REPORT, ext->u.pdo.parent_fdo, NULL, 0,
-                             packet, sizeof(*packet), &io );
+        call_minidriver( IOCTL_HID_READ_REPORT, ext->u.pdo.parent_fdo, NULL, 0,
+                         packet->reportBuffer, packet->reportBufferLen, &io );
 
         if (io.Status == STATUS_SUCCESS)
         {
@@ -292,10 +340,11 @@ static DWORD CALLBACK hid_device_thread(void *args)
             packet->reportBuffer = buffer;
             packet->reportBufferLen = io.Information;
 
-            hid_device_queue_input( device, packet );
+            if (polled || io.Information == desc->InputLength)
+                hid_device_queue_input( device, packet );
         }
 
-        res = WaitForSingleObject(ext->u.pdo.halt_event, poll_interval);
+        res = WaitForSingleObject(ext->u.pdo.halt_event, timeout);
     } while (res == WAIT_TIMEOUT);
 
     TRACE("device thread exiting, res %#x\n", res);
@@ -369,7 +418,7 @@ static void hid_device_xfer_report( BASE_DEVICE_EXTENSION *ext, ULONG code, IRP 
     HIDP_REPORT_IDS *reports = ext->u.pdo.device_desc.ReportIDs;
     ULONG report_count = ext->u.pdo.device_desc.ReportIDsLength;
     IO_STACK_LOCATION *stack = IoGetCurrentIrpStackLocation( irp );
-    ULONG i, report_len = 0, buffer_len = 0;
+    ULONG i, offset = 0, report_len = 0, buffer_len = 0;
     HID_XFER_PACKET packet;
     BYTE *buffer = NULL;
 
@@ -406,6 +455,7 @@ static void hid_device_xfer_report( BASE_DEVICE_EXTENSION *ext, ULONG code, IRP 
         irp->IoStatus.Status = STATUS_INVALID_PARAMETER;
         return;
     }
+    if (!reports[i].ReportID) offset = 1;
 
     switch (code)
     {
@@ -427,26 +477,20 @@ static void hid_device_xfer_report( BASE_DEVICE_EXTENSION *ext, ULONG code, IRP 
         return;
     }
 
-    packet.reportId = buffer[0];
-    packet.reportBuffer = buffer;
-    packet.reportBufferLen = buffer_len;
-
-    if (!reports[i].ReportID)
-    {
-        packet.reportId = 0;
-        packet.reportBuffer++;
-        packet.reportBufferLen--;
-    }
+    packet.reportId = reports[i].ReportID;
+    packet.reportBuffer = buffer + offset;
 
     switch (code)
     {
     case IOCTL_HID_GET_FEATURE:
     case IOCTL_HID_GET_INPUT_REPORT:
+        packet.reportBufferLen = buffer_len - offset;
         call_minidriver( code, ext->u.pdo.parent_fdo, NULL, 0, &packet, sizeof(packet), &irp->IoStatus );
         break;
     case IOCTL_HID_SET_FEATURE:
     case IOCTL_HID_SET_OUTPUT_REPORT:
     case IOCTL_HID_WRITE_REPORT:
+        packet.reportBufferLen = report_len - offset;
         call_minidriver( code, ext->u.pdo.parent_fdo, NULL, sizeof(packet), &packet, 0, &irp->IoStatus );
         if (code == IOCTL_HID_WRITE_REPORT && packet.reportId) irp->IoStatus.Information--;
         break;
@@ -455,7 +499,7 @@ static void hid_device_xfer_report( BASE_DEVICE_EXTENSION *ext, ULONG code, IRP 
 
 NTSTATUS WINAPI pdo_ioctl(DEVICE_OBJECT *device, IRP *irp)
 {
-    struct hid_report_queue *queue = irp->Tail.Overlay.OriginalFileObject->FsContext;
+    struct hid_queue *queue = irp->Tail.Overlay.OriginalFileObject->FsContext;
     IO_STACK_LOCATION *irpsp = IoGetCurrentIrpStackLocation( irp );
     BASE_DEVICE_EXTENSION *ext = device->DeviceExtension;
     NTSTATUS status;
@@ -538,7 +582,7 @@ NTSTATUS WINAPI pdo_ioctl(DEVICE_OBJECT *device, IRP *irp)
             if (irpsp->Parameters.DeviceIoControl.InputBufferLength != sizeof(ULONG))
                 irp->IoStatus.Status = STATUS_BUFFER_OVERFLOW;
             else
-                irp->IoStatus.Status = hid_report_queue_resize( queue, *(ULONG *)irp->AssociatedIrp.SystemBuffer );
+                irp->IoStatus.Status = hid_queue_resize( queue, *(ULONG *)irp->AssociatedIrp.SystemBuffer );
             break;
         }
         case IOCTL_GET_NUM_DEVICE_INPUT_BUFFERS:
@@ -579,12 +623,11 @@ NTSTATUS WINAPI pdo_ioctl(DEVICE_OBJECT *device, IRP *irp)
 
 NTSTATUS WINAPI pdo_read(DEVICE_OBJECT *device, IRP *irp)
 {
-    struct hid_report_queue *queue = irp->Tail.Overlay.OriginalFileObject->FsContext;
+    struct hid_queue *queue = irp->Tail.Overlay.OriginalFileObject->FsContext;
     BASE_DEVICE_EXTENSION *ext = device->DeviceExtension;
     HIDP_COLLECTION_DESC *desc = ext->u.pdo.device_desc.CollectionDesc;
     IO_STACK_LOCATION *irpsp = IoGetCurrentIrpStackLocation(irp);
     struct hid_report *report;
-    NTSTATUS status;
     BOOL removed;
     KIRQL irql;
 
@@ -607,36 +650,19 @@ NTSTATUS WINAPI pdo_read(DEVICE_OBJECT *device, IRP *irp)
     }
 
     irp->IoStatus.Information = 0;
-    if ((report = hid_report_queue_pop( queue )))
+    if ((report = hid_queue_pop_report( queue )))
     {
         memcpy( irp->AssociatedIrp.SystemBuffer, report->buffer, desc->InputLength );
         irp->IoStatus.Information = report->length;
         irp->IoStatus.Status = STATUS_SUCCESS;
         hid_report_decref( report );
-    }
-    else
-    {
-        KeAcquireSpinLock(&ext->u.pdo.irp_queue_lock, &irql);
 
-        IoSetCancelRoutine(irp, read_cancel_routine);
-        if (irp->Cancel && !IoSetCancelRoutine(irp, NULL))
-        {
-            /* IRP was canceled before we set cancel routine */
-            InitializeListHead(&irp->Tail.Overlay.ListEntry);
-            KeReleaseSpinLock(&ext->u.pdo.irp_queue_lock, irql);
-            return STATUS_CANCELLED;
-        }
-
-        InsertTailList(&ext->u.pdo.irp_queue, &irp->Tail.Overlay.ListEntry);
-        irp->IoStatus.Status = STATUS_PENDING;
-        IoMarkIrpPending(irp);
-
-        KeReleaseSpinLock(&ext->u.pdo.irp_queue_lock, irql);
+        IoCompleteRequest( irp, IO_NO_INCREMENT );
+        return STATUS_SUCCESS;
     }
 
-    status = irp->IoStatus.Status;
-    if (status != STATUS_PENDING) IoCompleteRequest( irp, IO_NO_INCREMENT );
-    return status;
+    return hid_queue_push_irp( queue, irp );
+
 }
 
 NTSTATUS WINAPI pdo_write(DEVICE_OBJECT *device, IRP *irp)
@@ -654,17 +680,29 @@ NTSTATUS WINAPI pdo_write(DEVICE_OBJECT *device, IRP *irp)
 NTSTATUS WINAPI pdo_create(DEVICE_OBJECT *device, IRP *irp)
 {
     BASE_DEVICE_EXTENSION *ext = device->DeviceExtension;
-    struct hid_report_queue *queue;
+    struct hid_queue *queue;
+    BOOL removed;
     KIRQL irql;
 
     TRACE("Open handle on device %p\n", device);
 
-    if (!(queue = hid_report_queue_create())) irp->IoStatus.Status = STATUS_NO_MEMORY;
+    KeAcquireSpinLock( &ext->u.pdo.lock, &irql );
+    removed = ext->u.pdo.removed;
+    KeReleaseSpinLock( &ext->u.pdo.lock, irql );
+
+    if (removed)
+    {
+        irp->IoStatus.Status = STATUS_DELETE_PENDING;
+        IoCompleteRequest( irp, IO_NO_INCREMENT );
+        return STATUS_DELETE_PENDING;
+    }
+
+    if (!(queue = hid_queue_create())) irp->IoStatus.Status = STATUS_NO_MEMORY;
     else
     {
-        KeAcquireSpinLock( &ext->u.pdo.report_queues_lock, &irql );
-        list_add_tail( &ext->u.pdo.report_queues, &queue->entry );
-        KeReleaseSpinLock( &ext->u.pdo.report_queues_lock, irql );
+        KeAcquireSpinLock( &ext->u.pdo.queues_lock, &irql );
+        list_add_tail( &ext->u.pdo.queues, &queue->entry );
+        KeReleaseSpinLock( &ext->u.pdo.queues_lock, irql );
 
         irp->Tail.Overlay.OriginalFileObject->FsContext = queue;
         irp->IoStatus.Status = STATUS_SUCCESS;
@@ -676,18 +714,30 @@ NTSTATUS WINAPI pdo_create(DEVICE_OBJECT *device, IRP *irp)
 
 NTSTATUS WINAPI pdo_close(DEVICE_OBJECT *device, IRP *irp)
 {
-    struct hid_report_queue *queue = irp->Tail.Overlay.OriginalFileObject->FsContext;
+    struct hid_queue *queue = irp->Tail.Overlay.OriginalFileObject->FsContext;
     BASE_DEVICE_EXTENSION *ext = device->DeviceExtension;
+    BOOL removed;
     KIRQL irql;
 
     TRACE("Close handle on device %p\n", device);
 
+    KeAcquireSpinLock( &ext->u.pdo.lock, &irql );
+    removed = ext->u.pdo.removed;
+    KeReleaseSpinLock( &ext->u.pdo.lock, irql );
+
+    if (removed)
+    {
+        irp->IoStatus.Status = STATUS_DELETE_PENDING;
+        IoCompleteRequest( irp, IO_NO_INCREMENT );
+        return STATUS_DELETE_PENDING;
+    }
+
     if (queue)
     {
-        KeAcquireSpinLock( &ext->u.pdo.report_queues_lock, &irql );
+        KeAcquireSpinLock( &ext->u.pdo.queues_lock, &irql );
         list_remove( &queue->entry );
-        KeReleaseSpinLock( &ext->u.pdo.report_queues_lock, irql );
-        hid_report_queue_destroy( queue );
+        KeReleaseSpinLock( &ext->u.pdo.queues_lock, irql );
+        hid_queue_destroy( queue );
     }
 
     irp->IoStatus.Status = STATUS_SUCCESS;

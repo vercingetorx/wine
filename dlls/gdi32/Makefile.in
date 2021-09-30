@@ -6,8 +6,6 @@ EXTRAINCL = $(FREETYPE_CFLAGS) $(FONTCONFIG_CFLAGS)
 EXTRALIBS = $(CARBON_LIBS) $(APPKIT_LIBS)
 DELAYIMPORTS = setupapi
 
-EXTRADLLFLAGS = -mno-cygwin
-
 C_SRCS = \
 	bitblt.c \
 	bitmap.c \
@@ -56,7 +54,8 @@ C_SRCS = \
 	uniscribe/shaping.c \
 	uniscribe/usp10.c \
 	vertical.c \
-	vulkan.c
+	vulkan.c \
+	wrappers.c
 
 RC_SRCS = gdi32.rc
 

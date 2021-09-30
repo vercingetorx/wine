@@ -2263,32 +2263,23 @@ static void test_font(void)
     hr = ID3DX10Font_PreloadTextA(font, NULL, 1);
     ok(hr == D3DERR_INVALIDCALL, "Unexpected hr %#x.\n", hr);
     hr = ID3DX10Font_PreloadTextA(font, "test", -1);
-todo_wine
     ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
     hr = ID3DX10Font_PreloadTextA(font, "", 0);
-todo_wine
     ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
     hr = ID3DX10Font_PreloadTextA(font, "", -1);
-todo_wine
     ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
 
     hr = ID3DX10Font_PreloadTextW(font, NULL, -1);
-todo_wine
     ok(hr == D3DERR_INVALIDCALL, "Unexpected hr %#x.\n", hr);
     hr = ID3DX10Font_PreloadTextW(font, NULL, 0);
-todo_wine
     ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
     hr = ID3DX10Font_PreloadTextW(font, NULL, 1);
-todo_wine
     ok(hr == D3DERR_INVALIDCALL, "Unexpected hr %#x.\n", hr);
     hr = ID3DX10Font_PreloadTextW(font, testW, -1);
-todo_wine
     ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
     hr = ID3DX10Font_PreloadTextW(font, L"", 0);
-todo_wine
     ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
     hr = ID3DX10Font_PreloadTextW(font, L"", -1);
-todo_wine
     ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
 
     ID3DX10Font_Release(font);
@@ -2316,14 +2307,12 @@ todo_wine
         ID3D10ShaderResourceView_Release(srv);
 
     hr = ID3DX10Font_PreloadCharacters(font, 'b', 'a');
-todo_wine
     ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
     hr = ID3DX10Font_PreloadGlyphs(font, 1, 0);
 todo_wine
     ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
 
     hr = ID3DX10Font_PreloadCharacters(font, 'a', 'a');
-todo_wine
     ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
 
     for (c = 'b'; c <= 'z'; ++c)
@@ -2385,7 +2374,6 @@ todo_wine
     }
 
     hr = ID3DX10Font_PreloadCharacters(font, 'a', 'z');
-todo_wine
     ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
 
     /* Test multiple textures */
@@ -2980,6 +2968,13 @@ static void test_sprite(void)
     D3DXMATRIX mat, mat2;
     ULONG refcount;
     HRESULT hr;
+    static const D3DXMATRIX identity =
+    {
+        ._11 = 1.0f,
+        ._22 = 1.0f,
+        ._33 = 1.0f,
+        ._44 = 1.0f,
+    };
 
     if (!(device = create_device()))
     {
@@ -3032,11 +3027,10 @@ static void test_sprite(void)
 
     /* Projection transform */
     hr = ID3DX10Sprite_GetProjectionTransform(sprite, NULL);
-todo_wine
     ok(hr == E_FAIL, "Unexpected hr %#x.\n", hr);
     hr = ID3DX10Sprite_GetProjectionTransform(sprite, &mat);
-todo_wine
     ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+    ok(!memcmp(&mat, &identity, sizeof(mat)), "Unexpected projection transform.\n");
 
     /* Set a transform and test if it gets returned correctly */
     mat.m[0][0] = 2.1f; mat.m[0][1] = 6.5f; mat.m[0][2] =-9.6f; mat.m[0][3] = 1.7f;
@@ -3045,18 +3039,14 @@ todo_wine
     mat.m[3][0] = 6.7f; mat.m[3][1] =-5.1f; mat.m[3][2] = 6.1f; mat.m[3][3] = 2.2f;
 
     hr = ID3DX10Sprite_SetProjectionTransform(sprite, NULL);
-todo_wine
     ok(hr == E_FAIL, "Unexpected hr %#x.\n", hr);
 
     hr = ID3DX10Sprite_SetProjectionTransform(sprite, &mat);
-todo_wine
     ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
 
     hr = ID3DX10Sprite_GetProjectionTransform(sprite, &mat2);
-todo_wine {
     ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
     ok(!memcmp(&mat, &mat2, sizeof(mat)), "Unexpected matrix.\n");
-}
 
     /* View transform */
     hr = ID3DX10Sprite_SetViewTransform(sprite, NULL);
@@ -3163,6 +3153,27 @@ todo_wine
     ok(!refcount, "Unexpected refcount.\n");
 }
 
+static void test_create_effect_from_resource(void)
+{
+    ID3D10Device *device;
+    ID3D10Effect *effect;
+    ULONG refcount;
+    HRESULT hr;
+
+    if (!(device = create_device()))
+    {
+        skip("Failed to create device, skipping tests.\n");
+        return;
+    }
+
+    hr = D3DX10CreateEffectFromResourceA(GetModuleHandleA(NULL), "resource", NULL, NULL, NULL,
+            "fx_4_0", 0, 0, device, NULL, NULL, &effect, NULL, NULL);
+    ok(hr == D3DX10_ERR_INVALID_DATA, "Unexpected hr %#x.\n", hr);
+
+    refcount = ID3D10Device_Release(device);
+    ok(!refcount, "Unexpected refcount.\n");
+}
+
 START_TEST(d3dx10)
 {
     test_D3DX10UnsetAllDeviceObjects();
@@ -3173,4 +3184,5 @@ START_TEST(d3dx10)
     test_create_texture();
     test_font();
     test_sprite();
+    test_create_effect_from_resource();
 }

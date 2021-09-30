@@ -415,6 +415,7 @@ static bool wined3d_context_vk_create_slab_bo(struct wined3d_context_vk *context
     bo->size = size;
     list_init(&bo->users);
     bo->command_buffer_id = 0;
+    bo->host_synced = false;
 
     TRACE("Using buffer 0x%s, memory 0x%s, offset 0x%s for bo %p.\n",
             wine_dbgstr_longlong(bo->vk_buffer), wine_dbgstr_longlong(bo->vk_memory),
@@ -494,6 +495,7 @@ BOOL wined3d_context_vk_create_bo(struct wined3d_context_vk *context_vk, VkDevic
     list_init(&bo->users);
     bo->command_buffer_id = 0;
     bo->slab = NULL;
+    bo->host_synced = false;
 
     TRACE("Created buffer 0x%s, memory 0x%s for bo %p.\n",
             wine_dbgstr_longlong(bo->vk_buffer), wine_dbgstr_longlong(bo->vk_memory), bo);
@@ -2675,6 +2677,10 @@ static bool wined3d_shader_resource_bindings_add_null_srv_binding(struct wined3d
         case WINED3D_SHADER_RESOURCE_TEXTURE_2DMSARRAY:
             return wined3d_shader_descriptor_writes_vk_add_write(writes, vk_descriptor_set,
                     binding_idx, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, NULL, &v->vk_info_2dms_array, NULL);
+
+        case WINED3D_SHADER_RESOURCE_TEXTURE_CUBEARRAY:
+            return wined3d_shader_descriptor_writes_vk_add_write(writes, vk_descriptor_set,
+                    binding_idx, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, NULL, &v->vk_info_cube_array, NULL);
 
         default:
             FIXME("Unhandled resource type %#x.\n", type);

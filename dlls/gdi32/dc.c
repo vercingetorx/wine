@@ -18,6 +18,10 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
+#if 0
+#pragma makedep unix
+#endif
+
 #include <assert.h>
 #include <stdarg.h>
 #include <stdlib.h>
@@ -30,10 +34,16 @@
 #include "winternl.h"
 #include "winerror.h"
 #include "ntgdi_private.h"
-#include "gdi_private.h"
+
 #include "wine/debug.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(dc);
+
+static inline const char *debugstr_us( const UNICODE_STRING *us )
+{
+    if (!us) return "<null>";
+    return debugstr_wn( us->Buffer, us->Length / sizeof(WCHAR) );
+}
 
 static BOOL DC_DeleteObject( HGDIOBJ handle );
 
@@ -47,7 +57,7 @@ static const struct gdi_obj_funcs dc_funcs =
 
 static inline DC *get_dc_obj( HDC hdc )
 {
-    WORD type;
+    DWORD type;
     DC *dc = get_any_obj_ptr( hdc, &type );
     if (!dc) return NULL;
 
@@ -118,14 +128,14 @@ static void set_initial_dc_state( DC *dc )
 /***********************************************************************
  *           alloc_dc_ptr
  */
-DC *alloc_dc_ptr( WORD magic )
+DC *alloc_dc_ptr( DWORD magic )
 {
     DC *dc;
 
     if (!(dc = HeapAlloc( GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*dc) ))) return NULL;
     if (!(dc->attr = HeapAlloc( GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*dc->attr))))
     {
-        HeapFree( GetProcessHeap(), 0, dc->attr );
+        HeapFree( GetProcessHeap(), 0, dc );
         return NULL;
     }
 
@@ -133,10 +143,10 @@ DC *alloc_dc_ptr( WORD magic )
     dc->physDev             = &dc->nulldrv;
     dc->thread              = GetCurrentThreadId();
     dc->refcount            = 1;
-    dc->hPen                = GDI_inc_ref_count( GetStockObject( BLACK_PEN ));
-    dc->hBrush              = GDI_inc_ref_count( GetStockObject( WHITE_BRUSH ));
-    dc->hFont               = GDI_inc_ref_count( GetStockObject( SYSTEM_FONT ));
-    dc->hPalette            = GetStockObject( DEFAULT_PALETTE );
+    dc->hPen                = GDI_inc_ref_count( get_stock_object( BLACK_PEN ));
+    dc->hBrush              = GDI_inc_ref_count( get_stock_object( WHITE_BRUSH ));
+    dc->hFont               = GDI_inc_ref_count( get_stock_object( SYSTEM_FONT ));
+    dc->hPalette            = get_stock_object( DEFAULT_PALETTE );
 
     set_initial_dc_state( dc );
 
@@ -149,7 +159,7 @@ DC *alloc_dc_ptr( WORD magic )
     dc->attr->hdc = dc->nulldrv.hdc = dc->hSelf;
     set_gdi_client_ptr( dc->hSelf, dc->attr );
 
-    if (!font_driver.pCreateDC( &dc->physDev, NULL, NULL, NULL, NULL ))
+    if (!font_driver.pCreateDC( &dc->physDev, NULL, NULL, NULL ))
     {
         free_dc_ptr( dc );
         return NULL;
@@ -164,10 +174,10 @@ DC *alloc_dc_ptr( WORD magic )
  */
 static void free_dc_state( DC *dc )
 {
-    if (dc->hClipRgn) DeleteObject( dc->hClipRgn );
-    if (dc->hMetaRgn) DeleteObject( dc->hMetaRgn );
-    if (dc->hVisRgn) DeleteObject( dc->hVisRgn );
-    if (dc->region) DeleteObject( dc->region );
+    if (dc->hClipRgn) NtGdiDeleteObjectApp( dc->hClipRgn );
+    if (dc->hMetaRgn) NtGdiDeleteObjectApp( dc->hMetaRgn );
+    if (dc->hVisRgn) NtGdiDeleteObjectApp( dc->hVisRgn );
+    if (dc->region) NtGdiDeleteObjectApp( dc->region );
     if (dc->path) free_gdi_path( dc->path );
     HeapFree( GetProcessHeap(), 0, dc->attr );
     HeapFree( GetProcessHeap(), 0, dc );
@@ -375,7 +385,7 @@ void DC_UpdateXforms( DC *dc )
     /* Reselect the font and pen back into the dc so that the size
        gets updated. */
     if (linear_xform_cmp( &oldworld2vport, &dc->xformWorld2Vport ) &&
-        GetObjectType( dc->hSelf ) != OBJ_METADC)
+        get_gdi_object_type( dc->hSelf ) != NTGDI_OBJ_METADC)
     {
         NtGdiSelectFont(dc->hSelf, dc->hFont);
         NtGdiSelectPen(dc->hSelf, dc->hPen);
@@ -395,16 +405,16 @@ static BOOL reset_dc_state( HDC hdc )
     set_initial_dc_state( dc );
     set_bk_color( dc, RGB( 255, 255, 255 ));
     set_text_color( dc, RGB( 0, 0, 0 ));
-    NtGdiSelectBrush( hdc, GetStockObject( WHITE_BRUSH ));
-    NtGdiSelectFont( hdc, GetStockObject( SYSTEM_FONT ));
-    NtGdiSelectPen( hdc, GetStockObject( BLACK_PEN ));
+    NtGdiSelectBrush( hdc, get_stock_object( WHITE_BRUSH ));
+    NtGdiSelectFont( hdc, get_stock_object( SYSTEM_FONT ));
+    NtGdiSelectPen( hdc, get_stock_object( BLACK_PEN ));
     NtGdiSetVirtualResolution( hdc, 0, 0, 0, 0 );
-    GDISelectPalette( hdc, GetStockObject( DEFAULT_PALETTE ), FALSE );
+    GDISelectPalette( hdc, get_stock_object( DEFAULT_PALETTE ), FALSE );
     NtGdiSetBoundsRect( hdc, NULL, DCB_DISABLE );
     NtGdiAbortPath( hdc );
 
-    if (dc->hClipRgn) DeleteObject( dc->hClipRgn );
-    if (dc->hMetaRgn) DeleteObject( dc->hMetaRgn );
+    if (dc->hClipRgn) NtGdiDeleteObjectApp( dc->hClipRgn );
+    if (dc->hMetaRgn) NtGdiDeleteObjectApp( dc->hMetaRgn );
     dc->hClipRgn = 0;
     dc->hMetaRgn = 0;
     update_dc_clipping( dc );
@@ -628,45 +638,43 @@ BOOL WINAPI NtGdiRestoreDC( HDC hdc, INT level )
 
 
 /***********************************************************************
- *           CreateDCW    (GDI32.@)
+ *           NtGdiOpenDCW    (win32u.@)
  */
-HDC WINAPI CreateDCW( LPCWSTR driver, LPCWSTR device, LPCWSTR output,
-                      const DEVMODEW *initData )
+HDC WINAPI NtGdiOpenDCW( UNICODE_STRING *device, const DEVMODEW *devmode, UNICODE_STRING *output,
+                         ULONG type, BOOL is_display, HANDLE hspool, DRIVER_INFO_2W *driver_info,
+                         void *pdev )
 {
-    const WCHAR *display, *p;
+    const struct gdi_dc_funcs *funcs = NULL;
     HDC hdc;
     DC * dc;
-    const struct gdi_dc_funcs *funcs;
-    WCHAR buf[300];
 
     GDI_CheckNotLock();
 
-    if (!device || !DRIVER_GetDriverName( device, buf, 300 ))
+    if (is_display)
+        funcs = get_display_driver();
+    else if (hspool)
     {
-        if (!driver)
-        {
-            ERR( "no device found for %s\n", debugstr_w(device) );
-            return 0;
-        }
-        lstrcpyW(buf, driver);
+        const struct gdi_dc_funcs * (CDECL *wine_get_gdi_driver)( unsigned int ) = hspool;
+        funcs = wine_get_gdi_driver( WINE_GDI_DRIVER_VERSION );
     }
-
-    if (!(funcs = DRIVER_load_driver( buf )))
+    if (!funcs)
     {
-        ERR( "no driver found for %s\n", debugstr_w(buf) );
+        ERR( "no driver found\n" );
         return 0;
     }
+
     if (!(dc = alloc_dc_ptr( NTGDI_OBJ_DC ))) return 0;
     hdc = dc->hSelf;
 
-    dc->hBitmap = GDI_inc_ref_count( GetStockObject( DEFAULT_BITMAP ));
+    dc->hBitmap = GDI_inc_ref_count( get_stock_object( DEFAULT_BITMAP ));
 
-    TRACE("(driver=%s, device=%s, output=%s): returning %p\n",
-          debugstr_w(driver), debugstr_w(device), debugstr_w(output), dc->hSelf );
+    TRACE("(device=%s, output=%s): returning %p\n",
+          debugstr_us(device), debugstr_us(output), dc->hSelf );
 
     if (funcs->pCreateDC)
     {
-        if (!funcs->pCreateDC( &dc->physDev, buf, device, output, initData ))
+        if (!funcs->pCreateDC( &dc->physDev, device ? device->Buffer : NULL,
+                               output ? output->Buffer : NULL, devmode ))
         {
             WARN("creation aborted by device\n" );
             free_dc_ptr( dc );
@@ -674,27 +682,17 @@ HDC WINAPI CreateDCW( LPCWSTR driver, LPCWSTR device, LPCWSTR output,
         }
     }
 
-    if (is_display_device( driver ))
-        display = driver;
-    else if (is_display_device( device ))
-        display = device;
-    else
-        display = NULL;
-
-    if (display)
+    if (is_display && device)
     {
-        /* Copy only the display name. For example, \\.\DISPLAY1 in \\.\DISPLAY1\Monitor0 */
-        p = display + 12;
-        while (iswdigit( *p ))
-            ++p;
-        lstrcpynW( dc->display, display, p - display + 1 );
-        dc->display[p - display] = '\0';
+        memcpy( dc->display, device->Buffer, device->Length );
+        dc->display[device->Length / sizeof(WCHAR)] = 0;
+
     }
 
     dc->attr->vis_rect.left   = 0;
     dc->attr->vis_rect.top    = 0;
-    dc->attr->vis_rect.right  = GetDeviceCaps( hdc, DESKTOPHORZRES );
-    dc->attr->vis_rect.bottom = GetDeviceCaps( hdc, DESKTOPVERTRES );
+    dc->attr->vis_rect.right  = NtGdiGetDeviceCaps( hdc, DESKTOPHORZRES );
+    dc->attr->vis_rect.bottom = NtGdiGetDeviceCaps( hdc, DESKTOPVERTRES );
 
     DC_InitDC( dc );
     release_dc_ptr( dc );
@@ -721,13 +719,13 @@ HDC WINAPI NtGdiCreateCompatibleDC( HDC hdc )
         funcs = physDev->funcs;
         release_dc_ptr( origDC );
     }
-    else funcs = DRIVER_load_driver( L"display" );
+    else funcs = get_display_driver();
 
     if (!(dc = alloc_dc_ptr( NTGDI_OBJ_MEMDC ))) return 0;
 
     TRACE("(%p): returning %p\n", hdc, dc->hSelf );
 
-    dc->hBitmap = GDI_inc_ref_count( GetStockObject( DEFAULT_BITMAP ));
+    dc->hBitmap = GDI_inc_ref_count( get_stock_object( DEFAULT_BITMAP ));
     dc->attr->vis_rect.left   = 0;
     dc->attr->vis_rect.top    = 0;
     dc->attr->vis_rect.right  = 1;
@@ -743,7 +741,7 @@ HDC WINAPI NtGdiCreateCompatibleDC( HDC hdc )
         return 0;
     }
 
-    if (!dib_driver.pCreateDC( &dc->physDev, NULL, NULL, NULL, NULL ))
+    if (!dib_driver.pCreateDC( &dc->physDev, NULL, NULL, NULL ))
     {
         free_dc_ptr( dc );
         return 0;
@@ -775,8 +773,8 @@ BOOL WINAPI NtGdiResetDC( HDC hdc, const DEVMODEW *devmode, BOOL *banding,
             dc->dirty = 0;
             dc->attr->vis_rect.left   = 0;
             dc->attr->vis_rect.top    = 0;
-            dc->attr->vis_rect.right  = GetDeviceCaps( hdc, DESKTOPHORZRES );
-            dc->attr->vis_rect.bottom = GetDeviceCaps( hdc, DESKTOPVERTRES );
+            dc->attr->vis_rect.right  = NtGdiGetDeviceCaps( hdc, DESKTOPHORZRES );
+            dc->attr->vis_rect.bottom = NtGdiGetDeviceCaps( hdc, DESKTOPVERTRES );
             if (dc->hVisRgn) NtGdiDeleteObjectApp( dc->hVisRgn );
             dc->hVisRgn = 0;
             update_dc_clipping( dc );
@@ -830,6 +828,7 @@ BOOL WINAPI NtGdiGetAndSetDCDword( HDC hdc, UINT method, DWORD value, DWORD *pre
 {
     PHYSDEV physdev;
     BOOL ret = TRUE;
+    DWORD prev;
     DC *dc;
 
     if (!(dc = get_dc_ptr( hdc ))) return 0;
@@ -837,36 +836,36 @@ BOOL WINAPI NtGdiGetAndSetDCDword( HDC hdc, UINT method, DWORD value, DWORD *pre
     switch (method)
     {
     case NtGdiSetMapMode:
-        *prev_value = dc->attr->map_mode;
+        prev = dc->attr->map_mode;
         ret = set_map_mode( dc, value );
         break;
 
     case NtGdiSetBkColor:
-        *prev_value = dc->attr->background_color;
+        prev = dc->attr->background_color;
         set_bk_color( dc, value );
         break;
 
     case NtGdiSetTextColor:
-        *prev_value = dc->attr->text_color;
+        prev = dc->attr->text_color;
         set_text_color( dc, value );
         break;
 
     case NtGdiSetDCBrushColor:
         physdev = GET_DC_PHYSDEV( dc, pSetDCBrushColor );
-        *prev_value = dc->attr->brush_color;
+        prev = dc->attr->brush_color;
         value = physdev->funcs->pSetDCBrushColor( physdev, value );
         if (value != CLR_INVALID) dc->attr->brush_color = value;
         break;
 
     case NtGdiSetDCPenColor:
         physdev = GET_DC_PHYSDEV( dc, pSetDCPenColor );
-        *prev_value = dc->attr->pen_color;
+        prev = dc->attr->pen_color;
         value = physdev->funcs->pSetDCPenColor( physdev, value );
         if (value != CLR_INVALID) dc->attr->pen_color = value;
         break;
 
     case NtGdiSetGraphicsMode:
-        if (prev_value) *prev_value = dc->attr->graphics_mode;
+        prev = dc->attr->graphics_mode;
         ret = set_graphics_mode( dc, value );
         break;
 
@@ -877,7 +876,25 @@ BOOL WINAPI NtGdiGetAndSetDCDword( HDC hdc, UINT method, DWORD value, DWORD *pre
     }
 
     release_dc_ptr( dc );
-    return ret;
+    if (!ret || !prev_value) return FALSE;
+    *prev_value = prev;
+    return TRUE;
+}
+
+
+/***********************************************************************
+ *           NtGdiSetBrushOrg    (win32u.@)
+ */
+BOOL WINAPI NtGdiSetBrushOrg( HDC hdc, INT x, INT y, POINT *oldorg )
+{
+    DC *dc;
+
+    if (!(dc = get_dc_ptr( hdc ))) return FALSE;
+    if (oldorg) *oldorg = dc->attr->brush_org;
+    dc->attr->brush_org.x = x;
+    dc->attr->brush_org.y = y;
+    release_dc_ptr( dc );
+    return TRUE;
 }
 
 
@@ -1009,7 +1026,7 @@ BOOL WINAPI NtGdiGetDeviceGammaRamp( HDC hdc, void *ptr )
     TRACE("%p, %p\n", hdc, ptr);
     if( dc )
     {
-        if (GetObjectType( hdc ) != OBJ_MEMDC)
+        if (get_gdi_object_type( hdc ) != NTGDI_OBJ_MEMDC)
         {
             PHYSDEV physdev = GET_DC_PHYSDEV( dc, pGetDeviceGammaRamp );
             ret = physdev->funcs->pGetDeviceGammaRamp( physdev, ptr );
@@ -1109,7 +1126,7 @@ BOOL WINAPI NtGdiSetDeviceGammaRamp( HDC hdc, void *ptr )
     TRACE( "%p, %p\n", hdc, ptr );
     if( dc )
     {
-        if (GetObjectType( hdc ) != OBJ_MEMDC)
+        if (get_gdi_object_type( hdc ) != NTGDI_OBJ_MEMDC)
         {
             PHYSDEV physdev = GET_DC_PHYSDEV( dc, pSetDeviceGammaRamp );
 
@@ -1237,4 +1254,21 @@ DWORD WINAPI NtGdiSetLayout( HDC hdc, LONG wox, DWORD layout )
     TRACE("hdc : %p, old layout : %08x, new layout : %08x\n", hdc, old_layout, layout);
 
     return old_layout;
+}
+
+/**********************************************************************
+ *           get_icm_profile     (win32u.@)
+ */
+BOOL CDECL get_icm_profile( HDC hdc, BOOL allow_default, DWORD *size, WCHAR *filename )
+{
+    PHYSDEV physdev;
+    DC *dc;
+    BOOL ret;
+
+    if (!(dc = get_dc_ptr(hdc))) return FALSE;
+
+    physdev = GET_DC_PHYSDEV( dc, pGetICMProfile );
+    ret = physdev->funcs->pGetICMProfile( physdev, allow_default, size, filename );
+    release_dc_ptr(dc);
+    return ret;
 }

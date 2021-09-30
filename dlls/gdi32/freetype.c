@@ -45,21 +45,30 @@
 
 #ifdef HAVE_CARBON_CARBON_H
 #define LoadResource __carbon_LoadResource
+#define CheckMenuItem __carbon_CheckMenuItem
 #define CompareString __carbon_CompareString
 #define GetCurrentThread __carbon_GetCurrentThread
 #define GetCurrentProcess __carbon_GetCurrentProcess
 #define AnimatePalette __carbon_AnimatePalette
+#define DeleteMenu __carbon_DeleteMenu
+#define DrawMenu __carbon_DrawMenu
+#define DrawMenuBar __carbon_DrawMenuBar
+#define EnableMenuItem __carbon_EnableMenuItem
 #define EqualRgn __carbon_EqualRgn
 #define FillRgn __carbon_FillRgn
 #define FrameRgn __carbon_FrameRgn
+#define GetMenu __carbon_GetMenu
 #define GetPixel __carbon_GetPixel
 #define InvertRgn __carbon_InvertRgn
+#define IsWindowVisible __carbon_IsWindowVisible
 #define LineTo __carbon_LineTo
+#define MoveWindow __carbon_MoveWindow
 #define OffsetRgn __carbon_OffsetRgn
 #define PaintRgn __carbon_PaintRgn
 #define Polygon __carbon_Polygon
 #define ResizePalette __carbon_ResizePalette
 #define SetRectRgn __carbon_SetRectRgn
+#define ShowWindow __carbon_ShowWindow
 #include <Carbon/Carbon.h>
 #undef LoadResource
 #undef CompareString
@@ -67,17 +76,26 @@
 #undef _CDECL
 #undef GetCurrentProcess
 #undef AnimatePalette
+#undef CheckMenuItem
+#undef DeleteMenu
+#undef DrawMenu
+#undef DrawMenuBar
+#undef EnableMenuItem
 #undef EqualRgn
 #undef FillRgn
 #undef FrameRgn
+#undef GetMenu
 #undef GetPixel
 #undef InvertRgn
+#undef IsWindowVisible
 #undef LineTo
+#undef MoveWindow
 #undef OffsetRgn
 #undef PaintRgn
 #undef Polygon
 #undef ResizePalette
 #undef SetRectRgn
+#undef ShowWindow
 #endif /* HAVE_CARBON_CARBON_H */
 
 #ifdef HAVE_FT2BUILD_H
@@ -263,8 +281,6 @@ static inline FT_Face get_ft_face( struct gdi_font *font )
 {
     return ((struct font_private_data *)font->private)->ft_face;
 }
-
-static const struct font_callback_funcs *callback_funcs;
 
 struct font_mapping
 {
@@ -713,21 +729,6 @@ static const LANGID mac_langid_table[] =
     MAKELANGID(LANG_GREENLANDIC,SUBLANG_DEFAULT),            /* TT_MAC_LANGID_GREELANDIC */
     MAKELANGID(LANG_AZERI,SUBLANG_AZERI_LATIN),              /* TT_MAC_LANGID_AZERBAIJANI_ROMAN_SCRIPT */
 };
-
-static CPTABLEINFO *get_cptable( WORD cp )
-{
-    static CPTABLEINFO tables[100];
-    unsigned int i;
-    USHORT *ptr;
-    SIZE_T size;
-
-    for (i = 0; i < ARRAY_SIZE(tables) && tables[i].CodePage; i++)
-        if (tables[i].CodePage == cp) return &tables[i];
-    if (NtGetNlsSectionPtr( 11, cp, NULL, (void **)&ptr, &size )) return NULL;
-    if (i == ARRAY_SIZE(tables)) ERR( "too many code pages\n" );
-    RtlInitCodePageTable( ptr, &tables[i] );
-    return &tables[i];
-}
 
 static CPTABLEINFO *get_mac_code_page( const FT_SfntName *name )
 {
@@ -1337,9 +1338,9 @@ static int add_unix_face( const char *unix_name, const WCHAR *file, void *data_p
 
     if (!HIWORD( flags )) flags |= ADDFONT_AA_FLAGS( default_aa_flags );
 
-    ret = callback_funcs->add_gdi_face( unix_face->family_name, unix_face->second_name, unix_face->style_name, unix_face->full_name,
-                                        file, data_ptr, data_size, face_index, unix_face->fs, unix_face->ntm_flags,
-                                        unix_face->font_version, flags, unix_face->scalable ? NULL : &unix_face->size );
+    ret = add_gdi_face( unix_face->family_name, unix_face->second_name, unix_face->style_name, unix_face->full_name,
+                        file, data_ptr, data_size, face_index, unix_face->fs, unix_face->ntm_flags,
+                        unix_face->font_version, flags, unix_face->scalable ? NULL : &unix_face->size );
 
     TRACE("fsCsb = %08x %08x/%08x %08x %08x %08x\n", unix_face->fs.fsCsb[0], unix_face->fs.fsCsb[1],
           unix_face->fs.fsUsb[0], unix_face->fs.fsUsb[1], unix_face->fs.fsUsb[2], unix_face->fs.fsUsb[3]);
@@ -1361,13 +1362,6 @@ static WCHAR *get_dos_file_name( LPCSTR str )
         RtlFreeHeap( GetProcessHeap(), 0, buffer );
         return NULL;
     }
-    if (buffer[5] == ':')
-    {
-        /* get rid of the \??\ prefix */
-        /* FIXME: should implement RtlNtPathNameToDosPathName and use that instead */
-        memmove( buffer, buffer + 4, (len - 4) * sizeof(WCHAR) );
-    }
-    else buffer[1] = '\\';
     return buffer;
 }
 
@@ -4305,31 +4299,21 @@ static const struct font_backend_funcs font_funcs =
     freetype_destroy_font
 };
 
-static NTSTATUS init_freetype_lib( HMODULE module, DWORD reason, const void *ptr_in, void *ptr_out )
+const struct font_backend_funcs *init_freetype_lib(void)
 {
-    callback_funcs = ptr_in;
-    if (!init_freetype()) return STATUS_DLL_NOT_FOUND;
+    if (!init_freetype()) return NULL;
 #ifdef SONAME_LIBFONTCONFIG
     init_fontconfig();
 #endif
     NtQueryDefaultLocale( FALSE, &system_lcid );
-    *(const struct font_backend_funcs **)ptr_out = &font_funcs;
-    return STATUS_SUCCESS;
+    return &font_funcs;
 }
 
 #else /* HAVE_FREETYPE */
 
-static NTSTATUS init_freetype_lib( HMODULE module, DWORD reason, const void *ptr_in, void *ptr_out )
+const struct font_backend_funcs *init_freetype_lib(void)
 {
-    return STATUS_DLL_NOT_FOUND;
+    return NULL;
 }
 
 #endif /* HAVE_FREETYPE */
-
-NTSTATUS CDECL __wine_init_unix_lib( HMODULE module, DWORD reason, const void *ptr_in, void *ptr_out )
-{
-    if (reason != DLL_PROCESS_ATTACH) return STATUS_SUCCESS;
-
-    if (ptr_in) return init_freetype_lib( module, reason, ptr_in, ptr_out );
-    else return init_opengl_lib( module, reason, ptr_in, ptr_out );
-}

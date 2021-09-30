@@ -18,6 +18,10 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
+#if 0
+#pragma makedep unix
+#endif
+
 #include <assert.h>
 #include <stdlib.h>
 #include <stdarg.h>
@@ -42,12 +46,14 @@ static GDI_SHARED_MEMORY gdi_shared;
 static GDI_HANDLE_ENTRY *next_free;
 static GDI_HANDLE_ENTRY *next_unused = gdi_shared.Handles + FIRST_GDI_HANDLE;
 static LONG debug_count;
-HMODULE gdi32_module = 0;
+SYSTEM_BASIC_INFORMATION system_info;
+
+const struct user_callbacks *user_callbacks = NULL;
 
 static inline HGDIOBJ entry_to_handle( GDI_HANDLE_ENTRY *entry )
 {
     unsigned int idx = entry - gdi_shared.Handles;
-    return LongToHandle( idx | (entry->Unique << 16) );
+    return LongToHandle( idx | (entry->Unique << NTGDI_HANDLE_TYPE_SHIFT) );
 }
 
 static inline GDI_HANDLE_ENTRY *handle_entry( HGDIOBJ handle )
@@ -80,19 +86,7 @@ static const LOGBRUSH LtGrayBrush = { BS_SOLID, RGB(192,192,192), 0 };
 static const LOGBRUSH GrayBrush   = { BS_SOLID, RGB(128,128,128), 0 };
 static const LOGBRUSH DkGrayBrush = { BS_SOLID, RGB(64,64,64), 0 };
 
-static const LOGPEN WhitePen = { PS_SOLID, { 0, 0 }, RGB(255,255,255) };
-static const LOGPEN BlackPen = { PS_SOLID, { 0, 0 }, RGB(0,0,0) };
-static const LOGPEN NullPen  = { PS_NULL,  { 0, 0 }, 0 };
-
 static const LOGBRUSH DCBrush = { BS_SOLID, RGB(255,255,255), 0 };
-static const LOGPEN DCPen     = { PS_SOLID, { 0, 0 }, RGB(0,0,0) };
-
-/* reserve one extra entry for the stock default bitmap */
-/* this is what Windows does too */
-#define NB_STOCK_OBJECTS (STOCK_LAST+2)
-
-static HGDIOBJ stock_objects[NB_STOCK_OBJECTS];
-static HGDIOBJ scaled_stock_objects[NB_STOCK_OBJECTS];
 
 static CRITICAL_SECTION gdi_section;
 static CRITICAL_SECTION_DEBUG critsect_debug =
@@ -112,15 +106,17 @@ static CRITICAL_SECTION gdi_section = { &critsect_debug, -1, 0, 0, 0, 0 };
 
 static const LOGFONTW OEMFixedFont =
 { 12, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, OEM_CHARSET,
-  0, 0, DEFAULT_QUALITY, FIXED_PITCH | FF_MODERN, L"" };
+  0, 0, DEFAULT_QUALITY, FIXED_PITCH | FF_MODERN };
 
 static const LOGFONTW AnsiFixedFont =
 { 12, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, ANSI_CHARSET,
-  0, 0, DEFAULT_QUALITY, FIXED_PITCH | FF_MODERN, L"Courier" };
+  0, 0, DEFAULT_QUALITY, FIXED_PITCH | FF_MODERN,
+  {'C','o','u','r','i','e','r'} };
 
 static const LOGFONTW AnsiVarFont =
 { 12, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, ANSI_CHARSET,
-  0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS, L"MS Sans Serif" };
+  0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
+  {'M','S',' ','S','a','n','s',' ','S','e','r','i','f'} };
 
 /******************************************************************************
  *
@@ -154,253 +150,309 @@ static const struct DefaultFontInfo default_fonts[] =
     {   ANSI_CHARSET,
         { /* System */
           16, 7, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, ANSI_CHARSET,
-           0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS, L"System"
+           0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
+           {'S','y','s','t','e','m'}
         },
         { /* Device Default */
           16, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, ANSI_CHARSET,
-           0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS, L"System"
+           0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
+           {'S','y','s','t','e','m'}
         },
         { /* System Fixed */
           16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, ANSI_CHARSET,
-           0, 0, DEFAULT_QUALITY, FIXED_PITCH | FF_MODERN, L"Courier"
+           0, 0, DEFAULT_QUALITY, FIXED_PITCH | FF_MODERN,
+           {'C','o','u','r','i','e','r'}
         },
         { /* DefaultGuiFont */
           -11, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, ANSI_CHARSET,
-           0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS, L"MS Shell Dlg"
+           0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
+           {'M','S',' ','S','h','e','l','l',' ','D','l','g'}
         },
     },
     {   EASTEUROPE_CHARSET,
         { /* System */
           16, 7, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, EASTEUROPE_CHARSET,
-           0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS, L"System"
+           0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
+           {'S','y','s','t','e','m'}
         },
         { /* Device Default */
           16, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, EASTEUROPE_CHARSET,
-           0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS, L"System"
+           0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
+           {'S','y','s','t','e','m'}
         },
         { /* System Fixed */
           16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, EASTEUROPE_CHARSET,
-           0, 0, DEFAULT_QUALITY, FIXED_PITCH | FF_MODERN, L"Courier"
+           0, 0, DEFAULT_QUALITY, FIXED_PITCH | FF_MODERN,
+           {'C','o','u','r','i','e','r'}
         },
         { /* DefaultGuiFont */
           -11, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, EASTEUROPE_CHARSET,
-           0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS, L"MS Shell Dlg"
+           0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
+           {'M','S',' ','S','h','e','l','l',' ','D','l','g'}
         },
     },
     {   RUSSIAN_CHARSET,
         { /* System */
           16, 7, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, RUSSIAN_CHARSET,
-           0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS, L"System"
+           0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
+           {'S','y','s','t','e','m'}
         },
         { /* Device Default */
           16, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, RUSSIAN_CHARSET,
-           0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS, L"System"
+           0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
+           {'S','y','s','t','e','m'}
         },
         { /* System Fixed */
           16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, RUSSIAN_CHARSET,
-           0, 0, DEFAULT_QUALITY, FIXED_PITCH | FF_MODERN, L"Courier"
+           0, 0, DEFAULT_QUALITY, FIXED_PITCH | FF_MODERN,
+           {'C','o','u','r','i','e','r'}
         },
         { /* DefaultGuiFont */
           -11, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, RUSSIAN_CHARSET,
-           0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS, L"MS Shell Dlg"
+           0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
+           {'M','S',' ','S','h','e','l','l',' ','D','l','g'}
         },
     },
     {   GREEK_CHARSET,
         { /* System */
           16, 7, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, GREEK_CHARSET,
-           0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS, L"System"
+           0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
+           {'S','y','s','t','e','m'}
         },
         { /* Device Default */
           16, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, GREEK_CHARSET,
-           0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS, L"System"
+           0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
+           {'S','y','s','t','e','m'}
         },
         { /* System Fixed */
           16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, GREEK_CHARSET,
-           0, 0, DEFAULT_QUALITY, FIXED_PITCH | FF_MODERN, L"Courier"
+           0, 0, DEFAULT_QUALITY, FIXED_PITCH | FF_MODERN,
+           {'C','o','u','r','i','e','r'}
         },
         { /* DefaultGuiFont */
           -11, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, GREEK_CHARSET,
-           0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS, L"MS Shell Dlg"
+           0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
+           {'M','S',' ','S','h','e','l','l',' ','D','l','g'}
         },
     },
     {   TURKISH_CHARSET,
         { /* System */
           16, 7, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, TURKISH_CHARSET,
-           0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS, L"System"
+           0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
+           {'S','y','s','t','e','m'}
         },
         { /* Device Default */
           16, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, TURKISH_CHARSET,
-           0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS, L"System"
+           0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
+           {'S','y','s','t','e','m'}
         },
         { /* System Fixed */
           16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, TURKISH_CHARSET,
-           0, 0, DEFAULT_QUALITY, FIXED_PITCH | FF_MODERN, L"Courier"
+           0, 0, DEFAULT_QUALITY, FIXED_PITCH | FF_MODERN,
+           {'C','o','u','r','i','e','r'}
         },
         { /* DefaultGuiFont */
           -11, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, TURKISH_CHARSET,
-           0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS, L"MS Shell Dlg"
+           0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
+           {'M','S',' ','S','h','e','l','l',' ','D','l','g'}
         },
     },
     {   HEBREW_CHARSET,
         { /* System */
           16, 7, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, HEBREW_CHARSET,
-           0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS, L"System"
+           0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
+           {'S','y','s','t','e','m'}
         },
         { /* Device Default */
           16, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, HEBREW_CHARSET,
-           0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS, L"System"
+           0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
+           {'S','y','s','t','e','m'}
         },
         { /* System Fixed */
           16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, HEBREW_CHARSET,
-           0, 0, DEFAULT_QUALITY, FIXED_PITCH | FF_MODERN, L"Courier"
+           0, 0, DEFAULT_QUALITY, FIXED_PITCH | FF_MODERN,
+           {'C','o','u','r','i','e','r'}
         },
         { /* DefaultGuiFont */
           -11, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, HEBREW_CHARSET,
-           0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS, L"MS Shell Dlg"
+           0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
+           {'M','S',' ','S','h','e','l','l',' ','D','l','g'}
         },
     },
     {   ARABIC_CHARSET,
         { /* System */
           16, 7, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, ARABIC_CHARSET,
-           0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS, L"System"
+           0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
+           {'S','y','s','t','e','m'}
         },
         { /* Device Default */
           16, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, ARABIC_CHARSET,
-           0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS, L"System"
+           0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
+           {'S','y','s','t','e','m'}
         },
         { /* System Fixed */
           16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, ARABIC_CHARSET,
-           0, 0, DEFAULT_QUALITY, FIXED_PITCH | FF_MODERN, L"Courier"
+           0, 0, DEFAULT_QUALITY, FIXED_PITCH | FF_MODERN,
+           {'C','o','u','r','i','e','r'}
         },
         { /* DefaultGuiFont */
           -11, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, ARABIC_CHARSET,
-           0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS, L"MS Shell Dlg"
+           0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
+           {'M','S',' ','S','h','e','l','l',' ','D','l','g'}
         },
     },
     {   BALTIC_CHARSET,
         { /* System */
           16, 7, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, BALTIC_CHARSET,
-           0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS, L"System"
+           0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
+           {'S','y','s','t','e','m'}
         },
         { /* Device Default */
           16, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, BALTIC_CHARSET,
-           0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS, L"System"
+           0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
+           {'S','y','s','t','e','m'}
         },
         { /* System Fixed */
           16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, BALTIC_CHARSET,
-           0, 0, DEFAULT_QUALITY, FIXED_PITCH | FF_MODERN, L"Courier"
+           0, 0, DEFAULT_QUALITY, FIXED_PITCH | FF_MODERN,
+           {'C','o','u','r','i','e','r'}
         },
         { /* DefaultGuiFont */
           -11, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, BALTIC_CHARSET,
-           0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS, L"MS Shell Dlg"
+           0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
+           {'M','S',' ','S','h','e','l','l',' ','D','l','g'}
         },
     },
     {   THAI_CHARSET,
         { /* System */
           16, 7, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, THAI_CHARSET,
-           0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS, L"System"
+           0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
+           {'S','y','s','t','e','m'}
         },
         { /* Device Default */
           16, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, THAI_CHARSET,
-           0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS, L"System"
+           0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
+           {'S','y','s','t','e','m'}
         },
         { /* System Fixed */
           16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, THAI_CHARSET,
-           0, 0, DEFAULT_QUALITY, FIXED_PITCH | FF_MODERN, L"Courier"
+           0, 0, DEFAULT_QUALITY, FIXED_PITCH | FF_MODERN,
+           {'C','o','u','r','i','e','r'}
         },
         { /* DefaultGuiFont */
           -11, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, THAI_CHARSET,
-           0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS, L"MS Shell Dlg"
+           0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
+           {'M','S',' ','S','h','e','l','l',' ','D','l','g'}
         },
     },
     {   SHIFTJIS_CHARSET,
         { /* System */
           18, 8, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, SHIFTJIS_CHARSET,
-           0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS, L"System"
+           0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
+           {'S','y','s','t','e','m'}
         },
         { /* Device Default */
           18, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, SHIFTJIS_CHARSET,
-           0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS, L"System"
+           0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
+           {'S','y','s','t','e','m'}
         },
         { /* System Fixed */
           16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, SHIFTJIS_CHARSET,
-           0, 0, DEFAULT_QUALITY, FIXED_PITCH | FF_MODERN, L"Courier"
+           0, 0, DEFAULT_QUALITY, FIXED_PITCH | FF_MODERN,
+           {'C','o','u','r','i','e','r'}
         },
         { /* DefaultGuiFont */
           -12, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, SHIFTJIS_CHARSET,
-           0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS, L"MS Shell Dlg"
+           0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
+           {'M','S',' ','S','h','e','l','l',' ','D','l','g'}
         },
     },
     {   GB2312_CHARSET,
         { /* System */
           16, 7, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, GB2312_CHARSET,
-           0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS, L"System"
+           0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
+           {'S','y','s','t','e','m'}
         },
         { /* Device Default */
           16, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, GB2312_CHARSET,
-           0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS, L"System"
+           0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
+           {'S','y','s','t','e','m'}
         },
         { /* System Fixed */
           16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, GB2312_CHARSET,
-           0, 0, DEFAULT_QUALITY, FIXED_PITCH | FF_MODERN, L"Courier"
+           0, 0, DEFAULT_QUALITY, FIXED_PITCH | FF_MODERN,
+           {'C','o','u','r','i','e','r'}
         },
         { /* DefaultGuiFont */
           -12, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, GB2312_CHARSET,
-           0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS, L"MS Shell Dlg"
+           0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
+           {'M','S',' ','S','h','e','l','l',' ','D','l','g'}
         },
     },
     {   HANGEUL_CHARSET,
         { /* System */
           16, 8, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, HANGEUL_CHARSET,
-           0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS, L"System"
+           0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
+           {'S','y','s','t','e','m'}
         },
         { /* Device Default */
           16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, HANGEUL_CHARSET,
-           0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS, L"System"
+           0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
+           {'S','y','s','t','e','m'}
         },
         { /* System Fixed */
           16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, HANGEUL_CHARSET,
-           0, 0, DEFAULT_QUALITY, FIXED_PITCH | FF_MODERN, L"Courier"
+           0, 0, DEFAULT_QUALITY, FIXED_PITCH | FF_MODERN,
+           {'C','o','u','r','i','e','r'}
         },
         { /* DefaultGuiFont */
           -12, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, HANGEUL_CHARSET,
-           0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS, L"MS Shell Dlg"
+           0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
+           {'M','S',' ','S','h','e','l','l',' ','D','l','g'}
         },
     },
     {   CHINESEBIG5_CHARSET,
         { /* System */
           16, 7, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, CHINESEBIG5_CHARSET,
-           0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS, L"System"
+           0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
+           {'S','y','s','t','e','m'}
         },
         { /* Device Default */
           16, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, CHINESEBIG5_CHARSET,
-           0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS, L"System"
+           0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
+           {'S','y','s','t','e','m'}
         },
         { /* System Fixed */
           16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, CHINESEBIG5_CHARSET,
-           0, 0, DEFAULT_QUALITY, FIXED_PITCH | FF_MODERN, L"Courier"
+           0, 0, DEFAULT_QUALITY, FIXED_PITCH | FF_MODERN,
+           {'C','o','u','r','i','e','r'}
         },
         { /* DefaultGuiFont */
           -12, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, CHINESEBIG5_CHARSET,
-           0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS, L"MS Shell Dlg"
+           0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
+           {'M','S',' ','S','h','e','l','l',' ','D','l','g'}
         },
     },
     {   JOHAB_CHARSET,
         { /* System */
           16, 7, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, JOHAB_CHARSET,
-           0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS, L"System"
+           0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
+           {'S','y','s','t','e','m'}
         },
         { /* Device Default */
           16, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, JOHAB_CHARSET,
-           0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS, L"System"
+           0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
+           {'S','y','s','t','e','m'}
         },
         { /* System Fixed */
           16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, JOHAB_CHARSET,
-           0, 0, DEFAULT_QUALITY, FIXED_PITCH | FF_MODERN, L"Courier"
+           0, 0, DEFAULT_QUALITY, FIXED_PITCH | FF_MODERN,
+           {'C','o','u','r','i','e','r'}
         },
         { /* DefaultGuiFont */
           -12, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, JOHAB_CHARSET,
-           0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS, L"MS Shell Dlg"
+           0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
+           {'M','S',' ','S','h','e','l','l',' ','D','l','g'}
         },
     },
 };
@@ -450,7 +502,7 @@ static UINT get_default_charset( void )
     CHARSETINFO     csi;
     UINT    uACP;
 
-    uACP = GetACP();
+    uACP = get_acp();
     csi.ciCharset = ANSI_CHARSET;
     if ( !translate_charset_info( ULongToPtr(uACP), &csi, TCI_SRCCODEPAGE ) )
     {
@@ -516,7 +568,7 @@ BOOL GDI_dec_ref_count( HGDIOBJ handle )
             entry_obj( entry )->deleted = 0;
             LeaveCriticalSection( &gdi_section );
             TRACE( "executing delayed DeleteObject for %p\n", handle );
-            DeleteObject( handle );
+            NtGdiDeleteObjectApp( handle );
             return TRUE;
         }
     }
@@ -526,76 +578,31 @@ BOOL GDI_dec_ref_count( HGDIOBJ handle )
 
 
 /******************************************************************************
- *              get_reg_dword
- *
- * Read a DWORD value from the registry
- */
-static BOOL get_reg_dword(HKEY base, const WCHAR *key_name, const WCHAR *value_name, DWORD *value)
-{
-    HKEY key;
-    DWORD type, data, size = sizeof(data);
-    BOOL ret = FALSE;
-
-    if (RegOpenKeyW(base, key_name, &key) == ERROR_SUCCESS)
-    {
-        if (RegQueryValueExW(key, value_name, NULL, &type, (void *)&data, &size) == ERROR_SUCCESS &&
-            type == REG_DWORD)
-        {
-            *value = data;
-            ret = TRUE;
-        }
-        RegCloseKey(key);
-    }
-    return ret;
-}
-
-/******************************************************************************
- *              get_dpi
- *
- * get the dpi from the registry
- */
-DWORD get_dpi(void)
-{
-    DWORD dpi;
-
-    if (get_reg_dword(HKEY_CURRENT_USER, L"Control Panel\\Desktop", L"LogPixels", &dpi))
-        return dpi;
-    if (get_reg_dword(HKEY_CURRENT_CONFIG, L"Software\\Fonts", L"LogPixels", &dpi))
-        return dpi;
-    return 0;
-}
-
-/******************************************************************************
  *              get_system_dpi
  *
  * Get the system DPI, based on the DPI awareness mode.
  */
 DWORD get_system_dpi(void)
 {
-    static UINT (WINAPI *pGetDpiForSystem)(void);
-
-    if (!pGetDpiForSystem)
-    {
-        HMODULE user = GetModuleHandleW( L"user32.dll" );
-        if (user) pGetDpiForSystem = (void *)GetProcAddress( user, "GetDpiForSystem" );
-    }
-    return pGetDpiForSystem ? pGetDpiForSystem() : 96;
+    return user_callbacks ? user_callbacks->pGetDpiForSystem() : 96;
 }
 
-static HFONT create_scaled_font( const LOGFONTW *deffont )
+static HFONT create_font( const LOGFONTW *deffont )
+{
+    ENUMLOGFONTEXDVW lf;
+
+    memset( &lf, 0, sizeof(lf) );
+    lf.elfEnumLogfontEx.elfLogFont = *deffont;
+    return NtGdiHfontCreate( &lf, sizeof(lf), 0, 0, NULL );
+}
+
+static HFONT create_scaled_font( const LOGFONTW *deffont, unsigned int dpi )
 {
     LOGFONTW lf;
-    static DWORD dpi;
-
-    if (!dpi)
-    {
-        dpi = get_dpi();
-        if (!dpi) dpi = 96;
-    }
 
     lf = *deffont;
-    lf.lfHeight = MulDiv( lf.lfHeight, dpi, 96 );
-    return CreateFontIndirectW( &lf );
+    lf.lfHeight = muldiv( lf.lfHeight, dpi, 96 );
+    return create_font( &lf );
 }
 
 static void set_gdi_shared(void)
@@ -613,87 +620,85 @@ static void set_gdi_shared(void)
     NtCurrentTeb()->Peb->GdiSharedHandleTable = &gdi_shared;
 }
 
-static HGDIOBJ make_stock_object( HGDIOBJ obj )
+HGDIOBJ get_stock_object( INT obj )
 {
-    GDI_HANDLE_ENTRY *entry;
+    assert( obj >= 0 && obj <= STOCK_LAST + 1 && obj != 9 );
 
-    if (!(entry = handle_entry( obj ))) return 0;
-    entry_obj( entry )->system = TRUE;
-    entry->StockFlag = 1;
-    return entry_to_handle( entry );
+    switch (obj)
+    {
+    case OEM_FIXED_FONT:
+        if (get_system_dpi() != 96) obj = 9;
+        break;
+    case SYSTEM_FONT:
+        if (get_system_dpi() != 96) obj = STOCK_LAST + 2;
+        break;
+    case SYSTEM_FIXED_FONT:
+        if (get_system_dpi() != 96) obj = STOCK_LAST + 3;
+        break;
+    case DEFAULT_GUI_FONT:
+        if (get_system_dpi() != 96) obj = STOCK_LAST + 4;
+        break;
+    }
+
+    return entry_to_handle( handle_entry( ULongToHandle( obj + FIRST_GDI_HANDLE )));
 }
 
-/***********************************************************************
- *           DllMain
- *
- * GDI initialization.
- */
-BOOL WINAPI DllMain( HINSTANCE inst, DWORD reason, LPVOID reserved )
+static void init_stock_objects( unsigned int dpi )
 {
-    const struct DefaultFontInfo* deffonts;
-    int i;
+    const struct DefaultFontInfo *deffonts;
+    unsigned int i;
+    HGDIOBJ obj;
 
-    if (reason != DLL_PROCESS_ATTACH) return TRUE;
+    /* Create stock objects in order matching stock object macros,
+     * so that they use predictable handle slots. Our GetStockObject
+     * depends on it. */
+    create_brush( &WhiteBrush );
+    create_brush( &LtGrayBrush );
+    create_brush( &GrayBrush );
+    create_brush( &DkGrayBrush );
+    create_brush( &BlackBrush );
+    create_brush( &NullBrush );
 
-    gdi32_module = inst;
-    DisableThreadLibraryCalls( inst );
-    set_gdi_shared();
-    font_init();
+    create_pen( PS_SOLID, 0, RGB(255,255,255) );
+    create_pen( PS_SOLID, 0, RGB(0,0,0) );
+    create_pen( PS_NULL,  0, RGB(0,0,0) );
 
-    /* create stock objects */
-    stock_objects[WHITE_BRUSH]  = create_brush( &WhiteBrush );
-    stock_objects[LTGRAY_BRUSH] = create_brush( &LtGrayBrush );
-    stock_objects[GRAY_BRUSH]   = create_brush( &GrayBrush );
-    stock_objects[DKGRAY_BRUSH] = create_brush( &DkGrayBrush );
-    stock_objects[BLACK_BRUSH]  = create_brush( &BlackBrush );
-    stock_objects[NULL_BRUSH]   = create_brush( &NullBrush );
-
-    stock_objects[WHITE_PEN]    = CreatePenIndirect( &WhitePen );
-    stock_objects[BLACK_PEN]    = CreatePenIndirect( &BlackPen );
-    stock_objects[NULL_PEN]     = CreatePenIndirect( &NullPen );
-
-    stock_objects[DEFAULT_PALETTE] = PALETTE_Init();
-    stock_objects[DEFAULT_BITMAP]  = CreateBitmap( 1, 1, 1, 1, NULL );
+    /* slot 9 is not used for non-scaled stock objects */
+    create_scaled_font( &OEMFixedFont, dpi );
 
     /* language-independent stock fonts */
-    stock_objects[OEM_FIXED_FONT]      = CreateFontIndirectW( &OEMFixedFont );
-    stock_objects[ANSI_FIXED_FONT]     = CreateFontIndirectW( &AnsiFixedFont );
-    stock_objects[ANSI_VAR_FONT]       = CreateFontIndirectW( &AnsiVarFont );
+    create_font( &OEMFixedFont );
+    create_font( &AnsiFixedFont );
+    create_font( &AnsiVarFont );
 
     /* language-dependent stock fonts */
     deffonts = get_default_fonts(get_default_charset());
-    stock_objects[SYSTEM_FONT]         = CreateFontIndirectW( &deffonts->SystemFont );
-    stock_objects[DEVICE_DEFAULT_FONT] = CreateFontIndirectW( &deffonts->DeviceDefaultFont );
-    stock_objects[SYSTEM_FIXED_FONT]   = CreateFontIndirectW( &deffonts->SystemFixedFont );
-    stock_objects[DEFAULT_GUI_FONT]    = CreateFontIndirectW( &deffonts->DefaultGuiFont );
+    create_font( &deffonts->SystemFont );
+    create_font( &deffonts->DeviceDefaultFont );
 
-    scaled_stock_objects[OEM_FIXED_FONT]    = create_scaled_font( &OEMFixedFont );
-    scaled_stock_objects[SYSTEM_FONT]       = create_scaled_font( &deffonts->SystemFont );
-    scaled_stock_objects[SYSTEM_FIXED_FONT] = create_scaled_font( &deffonts->SystemFixedFont );
-    scaled_stock_objects[DEFAULT_GUI_FONT]  = create_scaled_font( &deffonts->DefaultGuiFont );
+    PALETTE_Init();
 
-    stock_objects[DC_BRUSH]     = create_brush( &DCBrush );
-    stock_objects[DC_PEN]       = CreatePenIndirect( &DCPen );
+    create_font( &deffonts->SystemFixedFont );
+    create_font( &deffonts->DefaultGuiFont );
+
+    create_brush( &DCBrush );
+    NtGdiCreatePen( PS_SOLID, 0, RGB(0,0,0), NULL );
+
+    obj = NtGdiCreateBitmap( 1, 1, 1, 1, NULL );
+
+    assert( (HandleToULong( obj ) & 0xffff) == FIRST_GDI_HANDLE + DEFAULT_BITMAP );
+
+    create_scaled_font( &deffonts->SystemFont, dpi );
+    create_scaled_font( &deffonts->SystemFixedFont, dpi );
+    create_scaled_font( &deffonts->DefaultGuiFont, dpi );
 
     /* clear the NOSYSTEM bit on all stock objects*/
-    for (i = 0; i < NB_STOCK_OBJECTS; i++)
+    for (i = 0; i < STOCK_LAST + 5; i++)
     {
-        stock_objects[i] = make_stock_object( stock_objects[i] );
-        scaled_stock_objects[i] = make_stock_object( scaled_stock_objects[i] );
+        GDI_HANDLE_ENTRY *entry = &gdi_shared.Handles[FIRST_GDI_HANDLE + i];
+        entry_obj( entry )->system = TRUE;
+        entry->StockFlag = 1;
     }
-    return TRUE;
-}
-
-
-/***********************************************************************
- *           GdiDllInitialize
- *
- * Stub entry point, some games (CoD: Black Ops 3) call it directly.
- */
-BOOL WINAPI GdiDllInitialize( HINSTANCE inst, DWORD reason, LPVOID reserved )
-{
-    FIXME("stub\n");
-    return TRUE;
 }
 
 
@@ -732,8 +737,8 @@ static void dump_gdi_objects( void )
         else
             TRACE( "handle %p obj %s type %s selcount %u deleted %u\n",
                    entry_to_handle( entry ), wine_dbgstr_longlong( entry->Object ),
-                   gdi_obj_type( entry->ExtType ), entry_obj( entry )->selcount,
-                   entry_obj( entry )->deleted );
+                   gdi_obj_type( entry->ExtType << NTGDI_HANDLE_TYPE_SHIFT ),
+                   entry_obj( entry )->selcount, entry_obj( entry )->deleted );
     }
     LeaveCriticalSection( &gdi_section );
 }
@@ -743,7 +748,7 @@ static void dump_gdi_objects( void )
  *
  * Allocate a GDI handle for an object, which must have been allocated on the process heap.
  */
-HGDIOBJ alloc_gdi_handle( struct gdi_obj_header *obj, WORD type, const struct gdi_obj_funcs *funcs )
+HGDIOBJ alloc_gdi_handle( struct gdi_obj_header *obj, DWORD type, const struct gdi_obj_funcs *funcs )
 {
     GDI_HANDLE_ENTRY *entry;
     HGDIOBJ ret;
@@ -769,8 +774,8 @@ HGDIOBJ alloc_gdi_handle( struct gdi_obj_header *obj, WORD type, const struct gd
     obj->system   = 0;
     obj->deleted  = 0;
     entry->Object  = (UINT_PTR)obj;
-    entry->Type    = type & 0x1f;
-    entry->ExtType = type;
+    entry->ExtType = type >> NTGDI_HANDLE_TYPE_SHIFT;
+    entry->Type    = entry->ExtType & 0x1f;
     if (++entry->Generation == 0xff) entry->Generation = 1;
     ret = entry_to_handle( entry );
     LeaveCriticalSection( &gdi_section );
@@ -793,8 +798,8 @@ void *free_gdi_handle( HGDIOBJ handle )
     EnterCriticalSection( &gdi_section );
     if ((entry = handle_entry( handle )))
     {
-        TRACE( "freed %s %p %u/%u\n", gdi_obj_type( entry->ExtType ), handle,
-               InterlockedDecrement( &debug_count ) + 1, GDI_MAX_HANDLE_COUNT );
+        TRACE( "freed %s %p %u/%u\n", gdi_obj_type( entry->ExtType << NTGDI_HANDLE_TYPE_SHIFT ),
+               handle, InterlockedDecrement( &debug_count ) + 1, GDI_MAX_HANDLE_COUNT );
         object = entry_obj( entry );
         entry->Type = 0;
         entry->Object = (UINT_PTR)next_free;
@@ -804,23 +809,16 @@ void *free_gdi_handle( HGDIOBJ handle )
     return object;
 }
 
-
-/***********************************************************************
- *           get_full_gdi_handle
- *
- * Return the full GDI handle from a possibly truncated value.
- */
-HGDIOBJ get_full_gdi_handle( HGDIOBJ handle )
+DWORD get_gdi_object_type( HGDIOBJ obj )
 {
-    GDI_HANDLE_ENTRY *entry;
+    GDI_HANDLE_ENTRY *entry = handle_entry( obj );
+    return entry ? entry->ExtType << NTGDI_HANDLE_TYPE_SHIFT : 0;
+}
 
-    if (!HIWORD( handle ))
-    {
-        EnterCriticalSection( &gdi_section );
-        if ((entry = handle_entry( handle ))) handle = entry_to_handle( entry );
-        LeaveCriticalSection( &gdi_section );
-    }
-    return handle;
+void set_gdi_client_ptr( HGDIOBJ obj, void *ptr )
+{
+    GDI_HANDLE_ENTRY *entry = handle_entry( obj );
+    if (entry) entry->UserPointer = (UINT_PTR)ptr;
 }
 
 /***********************************************************************
@@ -830,7 +828,7 @@ HGDIOBJ get_full_gdi_handle( HGDIOBJ handle )
  * associated with the handle.
  * The object must be released with GDI_ReleaseObj.
  */
-void *get_any_obj_ptr( HGDIOBJ handle, WORD *type )
+void *get_any_obj_ptr( HGDIOBJ handle, DWORD *type )
 {
     void *ptr = NULL;
     GDI_HANDLE_ENTRY *entry;
@@ -840,7 +838,7 @@ void *get_any_obj_ptr( HGDIOBJ handle, WORD *type )
     if ((entry = handle_entry( handle )))
     {
         ptr = entry_obj( entry );
-        *type = entry->ExtType;
+        *type = entry->ExtType << NTGDI_HANDLE_TYPE_SHIFT;
     }
 
     if (!ptr) LeaveCriticalSection( &gdi_section );
@@ -854,9 +852,9 @@ void *get_any_obj_ptr( HGDIOBJ handle, WORD *type )
  * Return NULL if the object has the wrong type.
  * The object must be released with GDI_ReleaseObj.
  */
-void *GDI_GetObjPtr( HGDIOBJ handle, WORD type )
+void *GDI_GetObjPtr( HGDIOBJ handle, DWORD type )
 {
-    WORD ret_type;
+    DWORD ret_type;
     void *ptr = get_any_obj_ptr( handle, &ret_type );
     if (ptr && ret_type != type)
     {
@@ -884,7 +882,7 @@ void GDI_CheckNotLock(void)
     if (RtlIsCriticalSectionLockedByThread(&gdi_section))
     {
         ERR( "BUG: holding GDI lock\n" );
-        DebugBreak();
+        assert( 0 );
     }
 }
 
@@ -968,24 +966,6 @@ BOOL WINAPI NtGdiDeleteClientObj( HGDIOBJ handle )
     return TRUE;
 }
 
-/***********************************************************************
- *           GetStockObject    (GDI32.@)
- */
-HGDIOBJ WINAPI GetStockObject( INT obj )
-{
-    if ((obj < 0) || (obj >= NB_STOCK_OBJECTS)) return 0;
-    switch (obj)
-    {
-    case OEM_FIXED_FONT:
-    case SYSTEM_FONT:
-    case SYSTEM_FIXED_FONT:
-    case DEFAULT_GUI_FONT:
-        if (get_system_dpi() != 96) return scaled_stock_objects[obj];
-        break;
-    }
-    return stock_objects[obj];
-}
-
 
 /***********************************************************************
  *           NtGdiExtGetObjectW    (win32u.@)
@@ -1017,47 +997,28 @@ INT WINAPI NtGdiExtGetObjectW( HGDIOBJ handle, INT count, void *buffer )
 }
 
 /***********************************************************************
- *           GetCurrentObject    	(GDI32.@)
+ *           NtGdiGetDCObject    (win32u.@)
  *
  * Get the currently selected object of a given type in a device context.
- *
- * PARAMS
- *  hdc  [I] Device context to get the current object from
- *  type [I] Type of current object to get (OBJ_* defines from "wingdi.h")
- *
- * RETURNS
- *  Success: The current object of the given type selected in hdc.
- *  Failure: A NULL handle.
- *
- * NOTES
- * - only the following object types are supported:
- *| OBJ_PEN
- *| OBJ_BRUSH
- *| OBJ_PAL
- *| OBJ_FONT
- *| OBJ_BITMAP
  */
-HGDIOBJ WINAPI GetCurrentObject(HDC hdc,UINT type)
+HANDLE WINAPI NtGdiGetDCObject( HDC hdc, UINT type )
 {
     HGDIOBJ ret = 0;
-    DC * dc = get_dc_ptr( hdc );
+    DC *dc;
 
-    if (!dc) return 0;
+    if (!(dc = get_dc_ptr( hdc ))) return 0;
 
-    switch (type) {
-	case OBJ_EXTPEN: /* fall through */
-	case OBJ_PEN:	 ret = dc->hPen; break;
-	case OBJ_BRUSH:	 ret = dc->hBrush; break;
-	case OBJ_PAL:	 ret = dc->hPalette; break;
-	case OBJ_FONT:	 ret = dc->hFont; break;
-	case OBJ_BITMAP: ret = dc->hBitmap; break;
-
-	/* tests show that OBJ_REGION is explicitly ignored */
-	case OBJ_REGION: break;
-        default:
-            /* the SDK only mentions those above */
-            FIXME("(%p,%d): unknown type.\n",hdc,type);
-	    break;
+    switch (type)
+    {
+    case NTGDI_OBJ_EXTPEN: /* fall through */
+    case NTGDI_OBJ_PEN:    ret = dc->hPen; break;
+    case NTGDI_OBJ_BRUSH:  ret = dc->hBrush; break;
+    case NTGDI_OBJ_PAL:    ret = dc->hPalette; break;
+    case NTGDI_OBJ_FONT:   ret = dc->hFont; break;
+    case NTGDI_OBJ_SURF:   ret = dc->hBitmap; break;
+    default:
+        FIXME( "(%p, %d): unknown type.\n", hdc, type );
+        break;
     }
     release_dc_ptr( dc );
     return ret;
@@ -1110,4 +1071,208 @@ BOOL WINAPI NtGdiSetColorAdjustment( HDC hdc, const COLORADJUSTMENT *ca )
 {
     FIXME( "stub\n" );
     return FALSE;
+}
+
+
+static struct unix_funcs unix_funcs =
+{
+    NtGdiAbortDoc,
+    NtGdiAbortPath,
+    NtGdiAddFontMemResourceEx,
+    NtGdiAddFontResourceW,
+    NtGdiAlphaBlend,
+    NtGdiAngleArc,
+    NtGdiArcInternal,
+    NtGdiBeginPath,
+    NtGdiBitBlt,
+    NtGdiCloseFigure,
+    NtGdiCombineRgn,
+    NtGdiComputeXformCoefficients,
+    NtGdiCreateBitmap,
+    NtGdiCreateClientObj,
+    NtGdiCreateCompatibleBitmap,
+    NtGdiCreateCompatibleDC,
+    NtGdiCreateDIBBrush,
+    NtGdiCreateDIBSection,
+    NtGdiCreateDIBitmapInternal,
+    NtGdiCreateEllipticRgn,
+    NtGdiCreateHalftonePalette,
+    NtGdiCreateHatchBrushInternal,
+    NtGdiCreateMetafileDC,
+    NtGdiCreatePaletteInternal,
+    NtGdiCreatePatternBrushInternal,
+    NtGdiCreatePen,
+    NtGdiCreateRectRgn,
+    NtGdiCreateRoundRectRgn,
+    NtGdiCreateSolidBrush,
+    NtGdiDdDDICheckVidPnExclusiveOwnership,
+    NtGdiDdDDICloseAdapter,
+    NtGdiDdDDICreateDCFromMemory,
+    NtGdiDdDDICreateDevice,
+    NtGdiDdDDIDestroyDCFromMemory,
+    NtGdiDdDDIDestroyDevice,
+    NtGdiDdDDIEscape,
+    NtGdiDdDDIOpenAdapterFromDeviceName,
+    NtGdiDdDDIOpenAdapterFromHdc,
+    NtGdiDdDDIOpenAdapterFromLuid,
+    NtGdiDdDDIQueryStatistics,
+    NtGdiDdDDISetQueuedLimit,
+    NtGdiDdDDISetVidPnSourceOwner,
+    NtGdiDeleteClientObj,
+    NtGdiDeleteObjectApp,
+    NtGdiDescribePixelFormat,
+    NtGdiDoPalette,
+    NtGdiDrawStream,
+    NtGdiEllipse,
+    NtGdiEndDoc,
+    NtGdiEndPath,
+    NtGdiEndPage,
+    NtGdiEnumFonts,
+    NtGdiEqualRgn,
+    NtGdiExcludeClipRect,
+    NtGdiExtCreatePen,
+    NtGdiExtEscape,
+    NtGdiExtFloodFill,
+    NtGdiExtTextOutW,
+    NtGdiExtCreateRegion,
+    NtGdiExtGetObjectW,
+    NtGdiExtSelectClipRgn,
+    NtGdiFillPath,
+    NtGdiFillRgn,
+    NtGdiFlattenPath,
+    NtGdiFontIsLinked,
+    NtGdiFlush,
+    NtGdiFrameRgn,
+    NtGdiGetAndSetDCDword,
+    NtGdiGetAppClipBox,
+    NtGdiGetBitmapBits,
+    NtGdiGetBitmapDimension,
+    NtGdiGetBoundsRect,
+    NtGdiGetCharABCWidthsW,
+    NtGdiGetCharWidthW,
+    NtGdiGetCharWidthInfo,
+    NtGdiGetColorAdjustment,
+    NtGdiGetDCObject,
+    NtGdiGetDIBitsInternal,
+    NtGdiGetDeviceCaps,
+    NtGdiGetDeviceGammaRamp,
+    NtGdiGetFontData,
+    NtGdiGetFontFileData,
+    NtGdiGetFontFileInfo,
+    NtGdiGetFontUnicodeRanges,
+    NtGdiGetGlyphIndicesW,
+    NtGdiGetGlyphOutline,
+    NtGdiGetKerningPairs,
+    NtGdiGetNearestColor,
+    NtGdiGetNearestPaletteIndex,
+    NtGdiGetOutlineTextMetricsInternalW,
+    NtGdiGetPath,
+    NtGdiGetPixel,
+    NtGdiGetRandomRgn,
+    NtGdiGetRasterizerCaps,
+    NtGdiGetRealizationInfo,
+    NtGdiGetRegionData,
+    NtGdiGetRgnBox,
+    NtGdiGetSpoolMessage,
+    NtGdiGetSystemPaletteUse,
+    NtGdiGetTextCharsetInfo,
+    NtGdiGetTextExtentExW,
+    NtGdiGetTextFaceW,
+    NtGdiGetTextMetricsW,
+    NtGdiGetTransform,
+    NtGdiGradientFill,
+    NtGdiHfontCreate,
+    NtGdiInitSpool,
+    NtGdiIntersectClipRect,
+    NtGdiInvertRgn,
+    NtGdiLineTo,
+    NtGdiMaskBlt,
+    NtGdiModifyWorldTransform,
+    NtGdiMoveTo,
+    NtGdiOffsetClipRgn,
+    NtGdiOffsetRgn,
+    NtGdiOpenDCW,
+    NtGdiPatBlt,
+    NtGdiPathToRegion,
+    NtGdiPlgBlt,
+    NtGdiPolyDraw,
+    NtGdiPolyPolyDraw,
+    NtGdiPtInRegion,
+    NtGdiPtVisible,
+    NtGdiRectInRegion,
+    NtGdiRectVisible,
+    NtGdiRectangle,
+    NtGdiRemoveFontMemResourceEx,
+    NtGdiRemoveFontResourceW,
+    NtGdiResetDC,
+    NtGdiResizePalette,
+    NtGdiRestoreDC,
+    NtGdiRoundRect,
+    NtGdiSaveDC,
+    NtGdiScaleViewportExtEx,
+    NtGdiScaleWindowExtEx,
+    NtGdiSelectBitmap,
+    NtGdiSelectBrush,
+    NtGdiSelectClipPath,
+    NtGdiSelectFont,
+    NtGdiSelectPen,
+    NtGdiSetBitmapBits,
+    NtGdiSetBitmapDimension,
+    NtGdiSetBrushOrg,
+    NtGdiSetBoundsRect,
+    NtGdiSetColorAdjustment,
+    NtGdiSetDIBitsToDeviceInternal,
+    NtGdiSetDeviceGammaRamp,
+    NtGdiSetLayout,
+    NtGdiSetMagicColors,
+    NtGdiSetMetaRgn,
+    NtGdiSetPixel,
+    NtGdiSetPixelFormat,
+    NtGdiSetRectRgn,
+    NtGdiSetSystemPaletteUse,
+    NtGdiSetTextJustification,
+    NtGdiSetVirtualResolution,
+    NtGdiStartDoc,
+    NtGdiStartPage,
+    NtGdiStretchBlt,
+    NtGdiStretchDIBitsInternal,
+    NtGdiStrokeAndFillPath,
+    NtGdiStrokePath,
+    NtGdiSwapBuffers,
+    NtGdiTransparentBlt,
+    NtGdiTransformPoints,
+    NtGdiUnrealizeObject,
+    NtGdiUpdateColors,
+    NtGdiWidenPath,
+
+    GDIRealizePalette,
+    GDISelectPalette,
+    GetDCHook,
+    MirrorRgn,
+    SetDCHook,
+    SetDIBits,
+    SetHookFlags,
+    get_brush_bitmap_info,
+    get_file_outline_text_metric,
+    get_icm_profile,
+    __wine_get_vulkan_driver,
+    __wine_get_wgl_driver,
+    __wine_make_gdi_object_system,
+    set_display_driver,
+    __wine_set_visible_region,
+};
+
+NTSTATUS CDECL __wine_init_unix_lib( HMODULE module, DWORD reason, const void *ptr_in, void *ptr_out )
+{
+    unsigned int dpi;
+
+    if (reason != DLL_PROCESS_ATTACH) return 0;
+
+    NtQuerySystemInformation( SystemBasicInformation, &system_info, sizeof(system_info), NULL );
+    set_gdi_shared();
+    dpi = font_init();
+    init_stock_objects( dpi );
+    user_callbacks = ptr_in;
+    *(struct unix_funcs **)ptr_out = &unix_funcs;
+    return 0;
 }

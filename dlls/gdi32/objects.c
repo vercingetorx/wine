@@ -30,6 +30,7 @@
 #include "initguid.h"
 #include "devguid.h"
 #include "setupapi.h"
+#include "win32u_private.h"
 
 #include "wine/rbtree.h"
 #include "wine/debug.h"
@@ -38,6 +39,10 @@ WINE_DEFAULT_DEBUG_CHANNEL(gdi);
 
 
 DEFINE_DEVPROPKEY(DEVPROPKEY_GPU_LUID, 0x60b193cb, 0x5276, 0x4d0f, 0x96, 0xfc, 0xf1, 0x73, 0xab, 0xad, 0x3e, 0xc6, 2);
+
+#define FIRST_GDI_HANDLE 32
+
+HMODULE gdi32_module;
 
 struct hdc_list
 {
@@ -95,10 +100,16 @@ static inline GDI_HANDLE_ENTRY *handle_entry( HGDIOBJ handle )
     return NULL;
 }
 
-static WORD get_object_type( HGDIOBJ obj )
+static HGDIOBJ entry_to_handle( GDI_HANDLE_ENTRY *entry )
+{
+    unsigned int idx = entry - get_gdi_shared()->Handles;
+    return LongToHandle( idx | (entry->Unique << NTGDI_HANDLE_TYPE_SHIFT) );
+}
+
+static DWORD get_object_type( HGDIOBJ obj )
 {
     GDI_HANDLE_ENTRY *entry = handle_entry( obj );
-    return entry ? entry->ExtType : 0;
+    return entry ? entry->ExtType << NTGDI_HANDLE_TYPE_SHIFT : 0;
 }
 
 void set_gdi_client_ptr( HGDIOBJ obj, void *ptr )
@@ -107,12 +118,33 @@ void set_gdi_client_ptr( HGDIOBJ obj, void *ptr )
     if (entry) entry->UserPointer = (UINT_PTR)ptr;
 }
 
-void *get_gdi_client_ptr( HGDIOBJ obj, WORD type )
+void *get_gdi_client_ptr( HGDIOBJ obj, DWORD type )
 {
     GDI_HANDLE_ENTRY *entry = handle_entry( obj );
-    if (!entry || (type && entry->ExtType != type) || !entry->UserPointer)
+    if (!entry || (type && entry->ExtType << NTGDI_HANDLE_TYPE_SHIFT != type))
         return NULL;
     return (void *)(UINT_PTR)entry->UserPointer;
+}
+
+HGDIOBJ get_full_gdi_handle( HGDIOBJ obj )
+{
+    GDI_HANDLE_ENTRY *entry = handle_entry( obj );
+    return entry ? entry_to_handle( entry ) : 0;
+}
+
+/***********************************************************************
+ *           DllMain
+ *
+ * GDI initialization.
+ */
+BOOL WINAPI DllMain( HINSTANCE inst, DWORD reason, LPVOID reserved )
+{
+    if (reason != DLL_PROCESS_ATTACH) return TRUE;
+
+    DisableThreadLibraryCalls( inst );
+    gdi32_module = inst;
+    wrappers_init();
+    return TRUE;
 }
 
 /***********************************************************************
@@ -163,6 +195,7 @@ BOOL WINAPI DeleteObject( HGDIOBJ obj )
     struct hdc_list *hdc_list = NULL;
     struct wine_rb_entry *entry;
 
+    obj = get_full_gdi_handle( obj );
     switch (gdi_handle_type( obj ))
     {
     case NTGDI_OBJ_DC:
@@ -294,6 +327,7 @@ HGDIOBJ WINAPI SelectObject( HDC hdc, HGDIOBJ obj )
 
     TRACE( "(%p,%p)\n", hdc, obj );
 
+    obj = get_full_gdi_handle( obj );
     if (is_meta_dc( hdc )) return METADC_SelectObject( hdc, obj );
     if (!(dc_attr = get_dc_attr( hdc ))) return 0;
     if (dc_attr->emf && !EMFDC_SelectObject( dc_attr, obj )) return 0;
@@ -351,6 +385,76 @@ INT WINAPI GetObjectW( HGDIOBJ handle, INT count, void *buffer )
         }
     }
     return result;
+}
+
+/***********************************************************************
+ *           GetCurrentObject    (GDI32.@)
+ */
+HGDIOBJ WINAPI GetCurrentObject( HDC hdc, UINT type )
+{
+    unsigned int obj_type;
+
+    switch (type)
+    {
+    case OBJ_EXTPEN: obj_type = NTGDI_OBJ_EXTPEN; break;
+    case OBJ_PEN:    obj_type = NTGDI_OBJ_PEN; break;
+    case OBJ_BRUSH:  obj_type = NTGDI_OBJ_BRUSH; break;
+    case OBJ_PAL:    obj_type = NTGDI_OBJ_PAL; break;
+    case OBJ_FONT:   obj_type = NTGDI_OBJ_FONT; break;
+    case OBJ_BITMAP: obj_type = NTGDI_OBJ_SURF; break;
+    case OBJ_REGION:
+        /* tests show that OBJ_REGION is explicitly ignored */
+        return 0;
+    default:
+        FIXME( "(%p,%d): unknown type.\n", hdc, type );
+        return 0;
+    }
+
+    return NtGdiGetDCObject( hdc, obj_type );
+}
+
+/******************************************************************************
+ *              get_system_dpi
+ *
+ * Get the system DPI, based on the DPI awareness mode.
+ */
+static DWORD get_system_dpi(void)
+{
+    static UINT (WINAPI *pGetDpiForSystem)(void);
+
+    if (!pGetDpiForSystem)
+    {
+        HMODULE user = GetModuleHandleW( L"user32.dll" );
+        if (user) pGetDpiForSystem = (void *)GetProcAddress( user, "GetDpiForSystem" );
+    }
+    return pGetDpiForSystem ? pGetDpiForSystem() : 96;
+}
+
+/***********************************************************************
+ *           GetStockObject    (GDI32.@)
+ */
+HGDIOBJ WINAPI GetStockObject( INT obj )
+{
+    if (obj < 0 || obj > STOCK_LAST + 1 || obj == 9) return 0;
+
+    /* Wine stores stock objects in predictable order, see init_stock_objects */
+    switch (obj)
+    {
+    case OEM_FIXED_FONT:
+        if (get_system_dpi() != 96) obj = 9;
+        break;
+    case SYSTEM_FONT:
+        if (get_system_dpi() != 96) obj = STOCK_LAST + 2;
+        break;
+    case SYSTEM_FIXED_FONT:
+        if (get_system_dpi() != 96) obj = STOCK_LAST + 3;
+        break;
+    case DEFAULT_GUI_FONT:
+        if (get_system_dpi() != 96) obj = STOCK_LAST + 4;
+        break;
+    }
+
+    return entry_to_handle( handle_entry( ULongToHandle( obj + FIRST_GDI_HANDLE )));
 }
 
 /***********************************************************************
@@ -460,7 +564,7 @@ HBRUSH WINAPI CreateSolidBrush( COLORREF color )
  */
 HBRUSH WINAPI CreateHatchBrush( INT style, COLORREF color )
 {
-    return NtGdiCreateHatchBrush( style, color, FALSE );
+    return NtGdiCreateHatchBrushInternal( style, color, FALSE );
 }
 
 /***********************************************************************
@@ -669,6 +773,7 @@ UINT WINAPI GetPaletteEntries( HPALETTE palette, UINT start, UINT count, PALETTE
 UINT WINAPI SetPaletteEntries( HPALETTE palette, UINT start, UINT count,
                                const PALETTEENTRY *entries )
 {
+    palette = get_full_gdi_handle( palette );
     return NtGdiDoPalette( palette, start, count, (void *)entries, NtGdiSetPaletteEntries, FALSE );
 }
 
@@ -677,6 +782,7 @@ UINT WINAPI SetPaletteEntries( HPALETTE palette, UINT start, UINT count,
  */
 BOOL WINAPI AnimatePalette( HPALETTE palette, UINT start, UINT count, const PALETTEENTRY *entries )
 {
+    palette = get_full_gdi_handle( palette );
     return NtGdiDoPalette( palette, start, count, (void *)entries, NtGdiAnimatePalette, FALSE );
 }
 
@@ -999,5 +1105,74 @@ BOOL WINAPI CombineTransform( XFORM *result, const XFORM *xform1, const XFORM *x
     r.eDy  = xform1->eDx  * xform2->eM12 + xform1->eDy  * xform2->eM22 + xform2->eDy;
 
     *result = r;
+    return TRUE;
+}
+
+/***********************************************************************
+ *           LineDDA   (GDI32.@)
+ */
+BOOL WINAPI LineDDA( INT x_start, INT y_start, INT x_end, INT y_end,
+                     LINEDDAPROC callback, LPARAM lparam )
+{
+    INT xadd = 1, yadd = 1;
+    INT err,erradd;
+    INT cnt;
+    INT dx = x_end - x_start;
+    INT dy = y_end - y_start;
+
+    TRACE( "(%d, %d), (%d, %d), %p, %lx\n", x_start, y_start,
+           x_end, y_end, callback, lparam );
+
+    if (dx < 0)
+    {
+        dx = -dx;
+        xadd = -1;
+    }
+    if (dy < 0)
+    {
+        dy = -dy;
+        yadd = -1;
+    }
+    if (dx > dy)  /* line is "more horizontal" */
+    {
+        err = 2*dy - dx; erradd = 2*dy - 2*dx;
+        for(cnt = 0;cnt < dx; cnt++)
+        {
+            callback( x_start, y_start, lparam );
+            if (err > 0)
+            {
+                y_start += yadd;
+                err += erradd;
+            }
+            else err += 2*dy;
+            x_start += xadd;
+        }
+    }
+    else   /* line is "more vertical" */
+    {
+        err = 2*dx - dy; erradd = 2*dx - 2*dy;
+        for(cnt = 0; cnt < dy; cnt++)
+        {
+            callback( x_start, y_start, lparam );
+            if (err > 0)
+            {
+                x_start += xadd;
+                err += erradd;
+            }
+            else err += 2*dx;
+            y_start += yadd;
+        }
+    }
+    return TRUE;
+}
+
+/***********************************************************************
+ *           GdiDllInitialize    (GDI32.@)
+ *
+ * Stub entry point, some games (CoD: Black Ops 3) call it directly.
+ */
+BOOL WINAPI GdiDllInitialize( HINSTANCE inst, DWORD reason, LPVOID reserved )
+{
+    FIXME( "stub\n" );
     return TRUE;
 }

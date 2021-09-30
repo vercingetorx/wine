@@ -20,6 +20,10 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
+#if 0
+#pragma makedep unix
+#endif
+
 #include <stdarg.h>
 #include <string.h>
 #include <stdlib.h>
@@ -40,13 +44,17 @@ WINE_DEFAULT_DEBUG_CHANNEL(gdi);
 
 BOOL CDECL nulldrv_AngleArc( PHYSDEV dev, INT x, INT y, DWORD radius, FLOAT start, FLOAT sweep )
 {
+    DC *dc = get_physdev_dc( dev );
     INT x1 = GDI_ROUND( x + cos( start * M_PI / 180 ) * radius );
     INT y1 = GDI_ROUND( y - sin( start * M_PI / 180 ) * radius );
     INT x2 = GDI_ROUND( x + cos( (start + sweep) * M_PI / 180) * radius );
     INT y2 = GDI_ROUND( y - sin( (start + sweep) * M_PI / 180) * radius );
-    INT arcdir = SetArcDirection( dev->hdc, sweep >= 0 ? AD_COUNTERCLOCKWISE : AD_CLOCKWISE );
-    BOOL ret = ArcTo( dev->hdc, x - radius, y - radius, x + radius, y + radius, x1, y1, x2, y2 );
-    SetArcDirection( dev->hdc, arcdir );
+    INT arcdir = dc->attr->arc_direction;
+    BOOL ret;
+    dc->attr->arc_direction = sweep >= 0 ? AD_COUNTERCLOCKWISE : AD_CLOCKWISE;
+    ret = NtGdiArcInternal( NtGdiArcTo, dev->hdc, x - radius, y - radius, x + radius, y + radius,
+                            x1, y1, x2, y2 );
+    dc->attr->arc_direction = arcdir;
     return ret;
 }
 
@@ -64,9 +72,10 @@ BOOL CDECL nulldrv_ArcTo( PHYSDEV dev, INT left, INT top, INT right, INT bottom,
     if (!height || !width) return FALSE;
     /* draw a line from the current position to the starting point of the arc, then draw the arc */
     angle = atan2( (ystart - ycenter) / height, (xstart - xcenter) / width );
-    LineTo( dev->hdc, GDI_ROUND( xcenter + cos(angle) * xradius ),
-            GDI_ROUND( ycenter + sin(angle) * yradius ));
-    return Arc( dev->hdc, left, top, right, bottom, xstart, ystart, xend, yend );
+    NtGdiLineTo( dev->hdc, GDI_ROUND( xcenter + cos(angle) * xradius ),
+                 GDI_ROUND( ycenter + sin(angle) * yradius ));
+    return NtGdiArcInternal( NtGdiArc, dev->hdc, left, top, right, bottom,
+                             xstart, ystart, xend, yend );
 }
 
 BOOL CDECL nulldrv_FillRgn( PHYSDEV dev, HRGN rgn, HBRUSH brush )
@@ -92,16 +101,19 @@ BOOL CDECL nulldrv_FrameRgn( PHYSDEV dev, HRGN rgn, HBRUSH brush, INT width, INT
     {
         if (REGION_FrameRgn( tmp, rgn, width, height ))
             ret = NtGdiFillRgn( dev->hdc, tmp, brush );
-        DeleteObject( tmp );
+        NtGdiDeleteObjectApp( tmp );
     }
     return ret;
 }
 
 BOOL CDECL nulldrv_InvertRgn( PHYSDEV dev, HRGN rgn )
 {
-    INT prev_rop = SetROP2( dev->hdc, R2_NOT );
-    BOOL ret = NtGdiFillRgn( dev->hdc, rgn, GetStockObject(BLACK_BRUSH) );
-    SetROP2( dev->hdc, prev_rop );
+    DC *dc = get_physdev_dc( dev );
+    INT prev_rop = dc->attr->rop_mode;
+    BOOL ret;
+    dc->attr->rop_mode = R2_NOT;
+    ret = NtGdiFillRgn( dev->hdc, rgn, get_stock_object(BLACK_BRUSH) );
+    dc->attr->rop_mode = prev_rop;
     return ret;
 }
 
@@ -661,64 +673,6 @@ BOOL WINAPI NtGdiPolyDraw( HDC hdc, const POINT *points, const BYTE *types, DWOR
 
     release_dc_ptr( dc );
     return result;
-}
-
-
-/**********************************************************************
- *           LineDDA   (GDI32.@)
- */
-BOOL WINAPI LineDDA(INT nXStart, INT nYStart, INT nXEnd, INT nYEnd,
-                    LINEDDAPROC callback, LPARAM lParam )
-{
-    INT xadd = 1, yadd = 1;
-    INT err,erradd;
-    INT cnt;
-    INT dx = nXEnd - nXStart;
-    INT dy = nYEnd - nYStart;
-
-    TRACE( "(%d, %d), (%d, %d), %p, %lx\n", nXStart, nYStart, nXEnd, nYEnd, callback, lParam );
-
-    if (dx < 0)
-    {
-        dx = -dx;
-        xadd = -1;
-    }
-    if (dy < 0)
-    {
-        dy = -dy;
-        yadd = -1;
-    }
-    if (dx > dy)  /* line is "more horizontal" */
-    {
-        err = 2*dy - dx; erradd = 2*dy - 2*dx;
-        for(cnt = 0;cnt < dx; cnt++)
-        {
-            callback(nXStart,nYStart,lParam);
-            if (err > 0)
-            {
-                nYStart += yadd;
-                err += erradd;
-            }
-            else err += 2*dy;
-            nXStart += xadd;
-        }
-    }
-    else   /* line is "more vertical" */
-    {
-        err = 2*dx - dy; erradd = 2*dx - 2*dy;
-        for(cnt = 0;cnt < dy; cnt++)
-        {
-            callback(nXStart,nYStart,lParam);
-            if (err > 0)
-            {
-                nXStart += xadd;
-                err += erradd;
-            }
-            else err += 2*dx;
-            nYStart += yadd;
-        }
-    }
-    return TRUE;
 }
 
 

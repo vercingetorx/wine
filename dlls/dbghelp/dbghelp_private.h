@@ -151,6 +151,11 @@ struct symt_ht
     struct hash_table_elt       hash_elt;        /* if global symbol or type */
 };
 
+static inline BOOL symt_check_tag(const struct symt* s, enum SymTagEnum tag)
+{
+    return s && s->tag == tag;
+}
+
 /* lexical tree */
 struct symt_block
 {
@@ -174,6 +179,7 @@ struct symt_compiland
     ULONG_PTR                   address;
     unsigned                    source;
     struct vector               vchildren;      /* global variables & functions */
+    void*                       user;           /* when debug info provider needs to store information */
 };
 
 struct symt_data
@@ -631,7 +637,7 @@ extern struct module*
                     module_new(struct process* pcs, const WCHAR* name,
                                enum module_type type, BOOL virtual,
                                DWORD64 addr, DWORD64 size,
-                               ULONG_PTR stamp, ULONG_PTR checksum) DECLSPEC_HIDDEN;
+                               ULONG_PTR stamp, ULONG_PTR checksum, WORD machine) DECLSPEC_HIDDEN;
 extern struct module*
                     module_get_containee(const struct process* pcs,
                                          const struct module* inner) DECLSPEC_HIDDEN;
@@ -639,7 +645,7 @@ extern void         module_reset_debug_info(struct module* module) DECLSPEC_HIDD
 extern BOOL         module_remove(struct process* pcs,
                                   struct module* module) DECLSPEC_HIDDEN;
 extern void         module_set_module(struct module* module, const WCHAR* name) DECLSPEC_HIDDEN;
-extern const WCHAR *get_wine_loader_name(struct process *pcs) DECLSPEC_HIDDEN;
+extern WCHAR*       get_wine_loader_name(struct process *pcs) DECLSPEC_HIDDEN;
 
 /* msc.c */
 extern BOOL         pe_load_debug_directory(const struct process* pcs,
@@ -740,8 +746,6 @@ extern struct symt_function*
                                       const char* name,
                                       ULONG_PTR addr, ULONG_PTR size,
                                       struct symt* type) DECLSPEC_HIDDEN;
-extern BOOL         symt_normalize_function(struct module* module, 
-                                            const struct symt_function* func) DECLSPEC_HIDDEN;
 extern void         symt_add_func_line(struct module* module,
                                        struct symt_function* func, 
                                        unsigned source_idx, int line_num, 
@@ -752,6 +756,10 @@ extern struct symt_data*
                                         enum DataKind dt, const struct location* loc,
                                         struct symt_block* block,
                                         struct symt* type, const char* name) DECLSPEC_HIDDEN;
+extern struct symt_data*
+                    symt_add_func_constant(struct module* module,
+                                           struct symt_function* func, struct symt_block* block,
+                                           struct symt* type, const char* name, VARIANT* v) DECLSPEC_HIDDEN;
 extern struct symt_block*
                     symt_open_func_block(struct module* module, 
                                          struct symt_function* func,
@@ -767,10 +775,6 @@ extern struct symt_hierarchy_point*
                                             enum SymTagEnum point, 
                                             const struct location* loc,
                                             const char* name) DECLSPEC_HIDDEN;
-extern BOOL         symt_fill_func_line_info(const struct module* module,
-                                             const struct symt_function* func,
-                                             DWORD64 addr, IMAGEHLP_LINE64* line) DECLSPEC_HIDDEN;
-extern BOOL         symt_get_func_line_next(const struct module* module, PIMAGEHLP_LINE64 line) DECLSPEC_HIDDEN;
 extern struct symt_thunk*
                     symt_new_thunk(struct module* module, 
                                    struct symt_compiland* parent,

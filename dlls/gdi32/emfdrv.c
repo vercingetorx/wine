@@ -19,6 +19,10 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
+#if 0
+#pragma makedep unix
+#endif
+
 #include "ntgdi_private.h"
 
 
@@ -263,7 +267,7 @@ static BOOL CDECL EMFDRV_Ellipse( PHYSDEV dev, INT left, INT top, INT right, INT
     return TRUE;
 }
 
-static BOOL EMFDRV_Rectangle( PHYSDEV dev, INT left, INT top, INT right, INT bottom )
+static BOOL CDECL EMFDRV_Rectangle( PHYSDEV dev, INT left, INT top, INT right, INT bottom )
 {
     DC *dc = get_physdev_dc( dev );
     RECTL bounds;
@@ -461,14 +465,11 @@ static const struct gdi_dc_funcs emfdrv_driver =
     NULL,                            /* pCreateDC */
     EMFDRV_DeleteDC,                 /* pDeleteDC */
     NULL,                            /* pDeleteObject */
-    NULL,                            /* pDeviceCapabilities */
     EMFDRV_Ellipse,                  /* pEllipse */
     NULL,                            /* pEndDoc */
     NULL,                            /* pEndPage */
     NULL,                            /* pEndPath */
     NULL,                            /* pEnumFonts */
-    NULL,                            /* pEnumICMProfiles */
-    NULL,                            /* pExtDeviceMode */
     NULL,                            /* pExtEscape */
     NULL,                            /* pExtFloodFill */
     EMFDRV_ExtTextOut,               /* pExtTextOut */
@@ -588,7 +589,7 @@ HDC WINAPI NtGdiCreateMetafileDC( HDC hdc )
     if (hdc)  /* if no ref, use current display */
         ref_dc = hdc;
     else
-        ref_dc = CreateDCW( L"DISPLAY", NULL, NULL, NULL );
+        ref_dc = NtGdiOpenDCW( NULL, NULL, NULL, 0, TRUE, NULL, NULL, NULL );
 
     memset( physDev->dev_caps, 0, sizeof(physDev->dev_caps) );
     for (cap = 0; cap < ARRAY_SIZE( physDev->dev_caps ); cap++)

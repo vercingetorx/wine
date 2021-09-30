@@ -23,6 +23,10 @@
  * Information in the "Undocumented Windows" is incorrect.
  */
 
+#if 0
+#pragma makedep unix
+#endif
+
 #include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
@@ -89,7 +93,7 @@ HPALETTE PALETTE_Init(void)
         palPtr->palPalEntry[i].peBlue  = entries[i < 10 ? i : 236 + i].rgbBlue;
         palPtr->palPalEntry[i].peFlags = 0;
     }
-    return CreatePalette( palPtr );
+    return NtGdiCreatePaletteInternal( palPtr, palPtr->palNumEntries );
 }
 
 
@@ -158,7 +162,7 @@ HPALETTE WINAPI NtGdiCreateHalftonePalette( HDC hdc )
         pal->palPalEntry[i].peBlue  = entries[i].rgbBlue;
         pal->palPalEntry[i].peFlags = 0;
     }
-    return CreatePalette( pal );
+    return NtGdiCreatePaletteInternal( pal, pal->palNumEntries );
 }
 
 
@@ -201,8 +205,7 @@ static UINT set_palette_entries( HPALETTE hpalette, UINT start, UINT count,
 
     TRACE("hpal=%p,start=%i,count=%i\n",hpalette,start,count );
 
-    hpalette = get_full_gdi_handle( hpalette );
-    if (hpalette == GetStockObject(DEFAULT_PALETTE)) return 0;
+    if (hpalette == get_stock_object(DEFAULT_PALETTE)) return 0;
     palPtr = GDI_GetObjPtr( hpalette, NTGDI_OBJ_PAL );
     if (!palPtr) return 0;
 
@@ -254,8 +257,7 @@ static BOOL animate_palette( HPALETTE hPal, UINT StartIndex, UINT NumEntries,
 {
     TRACE("%p (%i - %i)\n", hPal, StartIndex,StartIndex+NumEntries);
 
-    hPal = get_full_gdi_handle( hPal );
-    if( hPal != GetStockObject(DEFAULT_PALETTE) )
+    if( hPal != get_stock_object(DEFAULT_PALETTE) )
     {
         PALETTEOBJ * palPtr;
         UINT pal_entries;
@@ -306,9 +308,8 @@ UINT WINAPI NtGdiSetSystemPaletteUse( HDC hdc, UINT use )
     UINT old = SystemPaletteUse;
 
     /* Device doesn't support colour palettes */
-    if (!(GetDeviceCaps(hdc, RASTERCAPS) & RC_PALETTE)) {
+    if (!(NtGdiGetDeviceCaps( hdc, RASTERCAPS ) & RC_PALETTE))
         return SYSPAL_ERROR;
-    }
 
     switch (use) {
         case SYSPAL_NOSTATIC:
@@ -402,7 +403,7 @@ COLORREF CDECL nulldrv_GetNearestColor( PHYSDEV dev, COLORREF color )
     unsigned char spec_type;
     DC *dc = get_nulldrv_dc( dev );
 
-    if (!(GetDeviceCaps( dev->hdc, RASTERCAPS ) & RC_PALETTE)) return color;
+    if (!(NtGdiGetDeviceCaps( dev->hdc, RASTERCAPS ) & RC_PALETTE)) return color;
 
     spec_type = color >> 24;
     if (spec_type == 1 || spec_type == 2)
@@ -412,7 +413,7 @@ COLORREF CDECL nulldrv_GetNearestColor( PHYSDEV dev, COLORREF color )
         PALETTEENTRY entry;
         HPALETTE hpal = dc->hPalette;
 
-        if (!hpal) hpal = GetStockObject( DEFAULT_PALETTE );
+        if (!hpal) hpal = get_stock_object( DEFAULT_PALETTE );
         if (spec_type == 2) /* PALETTERGB */
             index = NtGdiGetNearestPaletteIndex( hpal, color );
         else  /* PALETTEINDEX */
@@ -520,8 +521,7 @@ HPALETTE WINAPI GDISelectPalette( HDC hdc, HPALETTE hpal, WORD wBkg)
 
     TRACE("%p %p\n", hdc, hpal );
 
-    hpal = get_full_gdi_handle( hpal );
-    if (GetObjectType(hpal) != OBJ_PAL)
+    if (get_gdi_object_type(hpal) != NTGDI_OBJ_PAL)
     {
       WARN("invalid selected palette %p\n",hpal);
       return 0;
@@ -549,7 +549,7 @@ UINT WINAPI GDIRealizePalette( HDC hdc )
 
     TRACE("%p...\n", hdc );
 
-    if( dc->hPalette == GetStockObject( DEFAULT_PALETTE ))
+    if( dc->hPalette == get_stock_object( DEFAULT_PALETTE ))
     {
         PHYSDEV physdev = GET_DC_PHYSDEV( dc, pRealizeDefaultPalette );
         realized = physdev->funcs->pRealizeDefaultPalette( physdev );
@@ -584,29 +584,18 @@ typedef BOOL (WINAPI *RedrawWindow_funcptr)( HWND, const RECT *, HRGN, UINT );
  */
 BOOL WINAPI NtGdiUpdateColors( HDC hDC )
 {
-    HMODULE mod;
-    int size = GetDeviceCaps( hDC, SIZEPALETTE );
+    int size = NtGdiGetDeviceCaps( hDC, SIZEPALETTE );
+    HWND hwnd;
 
     if (!size) return FALSE;
+    if (!user_callbacks) return TRUE;
 
-    mod = GetModuleHandleA("user32.dll");
-    if (mod)
-    {
-        WindowFromDC_funcptr pWindowFromDC = (WindowFromDC_funcptr)GetProcAddress(mod,"WindowFromDC");
-        if (pWindowFromDC)
-        {
-            HWND hWnd = pWindowFromDC( hDC );
+    hwnd = user_callbacks->pWindowFromDC( hDC );
 
-            /* Docs say that we have to remap current drawable pixel by pixel
-             * but it would take forever given the speed of XGet/PutPixel.
-             */
-            if (hWnd && size)
-            {
-                RedrawWindow_funcptr pRedrawWindow = (void *)GetProcAddress( mod, "RedrawWindow" );
-                if (pRedrawWindow) pRedrawWindow( hWnd, NULL, 0, RDW_INVALIDATE );
-            }
-        }
-    }
+    /* Docs say that we have to remap current drawable pixel by pixel
+     * but it would take forever given the speed of XGet/PutPixel.
+     */
+    if (hwnd && size) user_callbacks->pRedrawWindow( hwnd, NULL, 0, RDW_INVALIDATE );
     return TRUE;
 }
 

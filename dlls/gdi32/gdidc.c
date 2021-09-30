@@ -23,21 +23,237 @@
 #include "gdi_private.h"
 #include "winternl.h"
 #include "ddrawgdi.h"
+#include "winnls.h"
 
+#include "wine/list.h"
 #include "wine/debug.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(gdi);
 
+static struct list drivers = LIST_INIT( drivers );
+
+static CRITICAL_SECTION driver_section;
+static CRITICAL_SECTION_DEBUG critsect_debug =
+{
+    0, 0, &driver_section,
+    { &critsect_debug.ProcessLocksList, &critsect_debug.ProcessLocksList },
+      0, 0, { (DWORD_PTR)(__FILE__ ": driver_section") }
+};
+static CRITICAL_SECTION driver_section = { &critsect_debug, -1, 0, 0, 0, 0 };
+
+typedef const void * (CDECL *driver_entry_point)( unsigned int version );
+
+struct graphics_driver
+{
+    struct list         entry;
+    HMODULE             module;  /* module handle */
+    driver_entry_point  entry_point;
+};
+
+
 DC_ATTR *get_dc_attr( HDC hdc )
 {
-    WORD type = gdi_handle_type( hdc );
+    DWORD type = gdi_handle_type( hdc );
     DC_ATTR *dc_attr;
-    if ((type & 0x1f) != NTGDI_OBJ_DC || !(dc_attr = get_gdi_client_ptr( hdc, 0 )))
+    if ((type & 0x1f0000) != NTGDI_OBJ_DC || !(dc_attr = get_gdi_client_ptr( hdc, 0 )))
     {
         SetLastError( ERROR_INVALID_HANDLE );
         return NULL;
     }
     return dc_attr->disabled ? NULL : dc_attr;
+}
+
+static BOOL is_display_device( const WCHAR *name )
+{
+    const WCHAR *p = name;
+
+    if (!name)
+        return FALSE;
+
+    if (wcsnicmp( name, L"\\\\.\\DISPLAY", lstrlenW(L"\\\\.\\DISPLAY") )) return FALSE;
+
+    p += lstrlenW(L"\\\\.\\DISPLAY");
+
+    if (!iswdigit( *p++ ))
+        return FALSE;
+
+    for (; *p; p++)
+    {
+        if (!iswdigit( *p ))
+            return FALSE;
+    }
+
+    return TRUE;
+}
+
+static BOOL get_driver_name( const WCHAR *device, WCHAR *driver, DWORD size )
+{
+    WCHAR *p;
+
+    /* display is a special case */
+    if (!wcsicmp( device, L"display" ) || is_display_device( device ))
+    {
+        lstrcpynW( driver, L"display", size );
+        return TRUE;
+    }
+
+    size = GetProfileStringW(L"devices", device, L"", driver, size);
+    if (!size)
+    {
+        WARN("Unable to find %s in [devices] section of win.ini\n", debugstr_w(device));
+        return FALSE;
+    }
+    p = wcschr(driver, ',');
+    if (!p)
+    {
+        WARN("%s entry in [devices] section of win.ini is malformed.\n", debugstr_w(device));
+        return FALSE;
+    }
+    *p = 0;
+    TRACE("Found %s for %s\n", debugstr_w(driver), debugstr_w(device));
+    return TRUE;
+}
+
+static struct graphics_driver *create_driver( HMODULE module )
+{
+    struct graphics_driver *driver;
+
+    if (!(driver = HeapAlloc( GetProcessHeap(), 0, sizeof(*driver)))) return NULL;
+    driver->module = module;
+
+    if (module)
+        driver->entry_point = (void *)GetProcAddress( module, "wine_get_gdi_driver" );
+    else
+        driver->entry_point = NULL;
+
+    return driver;
+}
+
+#ifdef __i386__
+static const WCHAR printer_env[] = L"w32x86";
+#elif defined __x86_64__
+static const WCHAR printer_env[] = L"x64";
+#elif defined __arm__
+static const WCHAR printer_env[] = L"arm";
+#elif defined __aarch64__
+static const WCHAR printer_env[] = L"arm64";
+#else
+#error not defined for this cpu
+#endif
+
+static driver_entry_point load_driver( LPCWSTR name )
+{
+    HMODULE module;
+    struct graphics_driver *driver, *new_driver;
+
+    if ((module = GetModuleHandleW( name )))
+    {
+        EnterCriticalSection( &driver_section );
+        LIST_FOR_EACH_ENTRY( driver, &drivers, struct graphics_driver, entry )
+        {
+            if (driver->module == module) goto done;
+        }
+        LeaveCriticalSection( &driver_section );
+    }
+
+    if (!(module = LoadLibraryW( name )))
+    {
+        WCHAR path[MAX_PATH];
+
+        GetSystemDirectoryW( path, MAX_PATH );
+        swprintf( path + wcslen(path), MAX_PATH - wcslen(path), L"\\spool\\drivers\\%s\\3\\%s",
+                  printer_env, name );
+        if (!(module = LoadLibraryW( path ))) return NULL;
+    }
+
+    if (!(new_driver = create_driver( module )))
+    {
+        FreeLibrary( module );
+        return NULL;
+    }
+
+    /* check if someone else added it in the meantime */
+    EnterCriticalSection( &driver_section );
+    LIST_FOR_EACH_ENTRY( driver, &drivers, struct graphics_driver, entry )
+    {
+        if (driver->module != module) continue;
+        FreeLibrary( module );
+        HeapFree( GetProcessHeap(), 0, new_driver );
+        goto done;
+    }
+    driver = new_driver;
+    list_add_head( &drivers, &driver->entry );
+    TRACE( "loaded driver %p for %s\n", driver, debugstr_w(name) );
+done:
+    LeaveCriticalSection( &driver_section );
+    return driver->entry_point;
+}
+
+/***********************************************************************
+ *           CreateDCW    (GDI32.@)
+ */
+HDC WINAPI CreateDCW( LPCWSTR driver, LPCWSTR device, LPCWSTR output,
+                      const DEVMODEW *devmode )
+{
+    UNICODE_STRING device_str, output_str;
+    driver_entry_point entry_point = NULL;
+    const WCHAR *display = NULL, *p;
+    BOOL is_display = FALSE;
+    WCHAR buf[300];
+
+    if (!device || !get_driver_name( device, buf, 300 ))
+    {
+        if (!driver)
+        {
+            ERR( "no device found for %s\n", debugstr_w(device) );
+            return 0;
+        }
+        lstrcpyW(buf, driver);
+    }
+
+    if (is_display_device( driver ))
+    {
+        display = driver;
+        is_display = TRUE;
+    }
+    else if (is_display_device( device ))
+    {
+        display = device;
+        is_display = TRUE;
+    }
+    else if (!wcsicmp( buf, L"display" ) || is_display_device( buf ))
+    {
+        is_display = TRUE;
+    }
+    else if (!(entry_point = load_driver( buf )))
+    {
+        ERR( "no driver found for %s\n", debugstr_w(buf) );
+        return 0;
+    }
+
+    if (display)
+    {
+        /* Use only the display name. For example, \\.\DISPLAY1 in \\.\DISPLAY1\Monitor0 */
+        p = display + 12;
+        while (iswdigit( *p )) p++;
+
+        device_str.Length = device_str.MaximumLength = (p - display) * sizeof(WCHAR);
+        device_str.Buffer = (WCHAR *)display;
+    }
+    else if (device)
+    {
+        device_str.Length = device_str.MaximumLength = lstrlenW( device ) * sizeof(WCHAR);
+        device_str.Buffer = (WCHAR *)device;
+    }
+
+    if (output)
+    {
+        output_str.Length = output_str.MaximumLength = lstrlenW(output) * sizeof(WCHAR);
+        output_str.Buffer = (WCHAR *)output;
+    }
+
+    return NtGdiOpenDCW( device || display ? &device_str : NULL, devmode, output ? &output_str : NULL,
+                         0, is_display, entry_point, NULL, NULL );
 }
 
 /***********************************************************************
@@ -94,6 +310,55 @@ HDC WINAPI CreateICW( const WCHAR *driver, const WCHAR *device, const WCHAR *out
 {
     /* Nothing special yet for ICs */
     return CreateDCW( driver, device, output, init_data );
+}
+
+/***********************************************************************
+ *           GdiConvertToDevmodeW    (GDI32.@)
+ */
+DEVMODEW *WINAPI GdiConvertToDevmodeW( const DEVMODEA *dmA )
+{
+    DEVMODEW *dmW;
+    WORD dmW_size, dmA_size;
+
+    dmA_size = dmA->dmSize;
+
+    /* this is the minimal dmSize that XP accepts */
+    if (dmA_size < FIELD_OFFSET(DEVMODEA, dmFields))
+        return NULL;
+
+    if (dmA_size > sizeof(DEVMODEA))
+        dmA_size = sizeof(DEVMODEA);
+
+    dmW_size = dmA_size + CCHDEVICENAME;
+    if (dmA_size >= FIELD_OFFSET(DEVMODEA, dmFormName) + CCHFORMNAME)
+        dmW_size += CCHFORMNAME;
+
+    dmW = HeapAlloc( GetProcessHeap(), 0, dmW_size + dmA->dmDriverExtra );
+    if (!dmW) return NULL;
+
+    MultiByteToWideChar( CP_ACP, 0, (const char*) dmA->dmDeviceName, -1,
+                         dmW->dmDeviceName, CCHDEVICENAME );
+    /* copy slightly more, to avoid long computations */
+    memcpy( &dmW->dmSpecVersion, &dmA->dmSpecVersion, dmA_size - CCHDEVICENAME );
+
+    if (dmA_size >= FIELD_OFFSET(DEVMODEA, dmFormName) + CCHFORMNAME)
+    {
+        if (dmA->dmFields & DM_FORMNAME)
+            MultiByteToWideChar( CP_ACP, 0, (const char*) dmA->dmFormName, -1,
+                                 dmW->dmFormName, CCHFORMNAME );
+        else
+            dmW->dmFormName[0] = 0;
+
+        if (dmA_size > FIELD_OFFSET(DEVMODEA, dmLogPixels))
+            memcpy( &dmW->dmLogPixels, &dmA->dmLogPixels, dmA_size - FIELD_OFFSET(DEVMODEA, dmLogPixels) );
+    }
+
+    if (dmA->dmDriverExtra)
+        memcpy( (char *)dmW + dmW_size, (const char *)dmA + dmA_size, dmA->dmDriverExtra );
+
+    dmW->dmSize = dmW_size;
+
+    return dmW;
 }
 
 /***********************************************************************
@@ -1449,6 +1714,56 @@ BOOL WINAPI StretchBlt( HDC hdc, INT x_dst, INT y_dst, INT width_dst, INT height
                             height_src, rop, 0 /* FIXME */ );
 }
 
+/***********************************************************************
+ *           MaskBlt [GDI32.@]
+ */
+BOOL WINAPI MaskBlt( HDC hdc, INT x_dst, INT y_dst, INT width_dst, INT height_dst,
+                     HDC hdc_src, INT x_src, INT y_src, HBITMAP mask,
+                     INT x_mask, INT y_mask, DWORD rop )
+{
+    DC_ATTR *dc_attr;
+
+    if (!(dc_attr = get_dc_attr( hdc ))) return FALSE;
+    if (dc_attr->emf && !EMFDC_MaskBlt( dc_attr, x_dst, y_dst, width_dst, height_dst,
+                                        hdc_src, x_src, y_src, mask, x_mask, y_mask, rop ))
+        return FALSE;
+    return NtGdiMaskBlt( hdc, x_dst, y_dst, width_dst, height_dst, hdc_src, x_src, y_src,
+                         mask, x_mask, y_mask, rop, 0 /* FIXME */ );
+}
+
+/***********************************************************************
+ *      PlgBlt    (GDI32.@)
+ */
+BOOL WINAPI PlgBlt( HDC hdc, const POINT *points, HDC hdc_src, INT x_src, INT y_src,
+                    INT width, INT height, HBITMAP mask, INT x_mask, INT y_mask )
+{
+    DC_ATTR *dc_attr;
+
+    if (!(dc_attr = get_dc_attr( hdc ))) return FALSE;
+    if (dc_attr->emf && !EMFDC_PlgBlt( dc_attr, points, hdc_src, x_src, y_src,
+                                       width, height, mask, x_mask, y_mask ))
+        return FALSE;
+    return NtGdiPlgBlt( hdc, points, hdc_src, x_src, y_src, width, height,
+                        mask, x_mask, y_mask, 0 /* FIXME */ );
+}
+
+/******************************************************************************
+ *           GdiTransparentBlt    (GDI32.@)
+ */
+BOOL WINAPI GdiTransparentBlt( HDC hdc, int x_dst, int y_dst, int width_dst, int height_dst,
+                               HDC hdc_src, int x_src, int y_src, int width_src, int height_src,
+                               UINT color )
+{
+    DC_ATTR *dc_attr;
+
+    if (!(dc_attr = get_dc_attr( hdc ))) return FALSE;
+    if (dc_attr->emf && !EMFDC_TransparentBlt( dc_attr, x_dst, y_dst, width_dst, height_dst, hdc_src,
+                                               x_src, y_src, width_src, height_src, color ))
+        return FALSE;
+    return NtGdiTransparentBlt( hdc, x_dst, y_dst, width_dst, height_dst, hdc_src, x_src, y_src,
+                                width_src, height_src, color );
+}
+
 /******************************************************************************
  *           GdiAlphaBlend   (GDI32.@)
  */
@@ -1634,6 +1949,22 @@ BOOL WINAPI SelectClipPath( HDC hdc, INT mode )
 }
 
 /***********************************************************************
+ *           GetClipRgn  (GDI32.@)
+ */
+INT WINAPI GetClipRgn( HDC hdc, HRGN rgn )
+{
+    return NtGdiGetRandomRgn( hdc, rgn, NTGDI_RGN_MIRROR_RTL | 1 );
+}
+
+/***********************************************************************
+ *           GetMetaRgn    (GDI32.@)
+ */
+INT WINAPI GetMetaRgn( HDC hdc, HRGN rgn )
+{
+    return NtGdiGetRandomRgn( hdc, rgn, NTGDI_RGN_MIRROR_RTL | 2 );
+}
+
+/***********************************************************************
  *           IntersectClipRect    (GDI32.@)
  */
 INT WINAPI IntersectClipRect( HDC hdc, INT left, INT top, INT right, INT bottom )
@@ -1772,6 +2103,7 @@ HPALETTE WINAPI SelectPalette( HDC hdc, HPALETTE palette, BOOL force_background 
 {
     DC_ATTR *dc_attr;
 
+    palette = get_full_gdi_handle( palette );
     if (is_meta_dc( hdc )) return ULongToHandle( METADC_SelectPalette( hdc, palette ) );
     if (!(dc_attr = get_dc_attr( hdc ))) return FALSE;
     if (dc_attr->emf && !EMFDC_SelectPalette( dc_attr, palette )) return 0;
@@ -1802,6 +2134,116 @@ BOOL WINAPI GdiSetPixelFormat( HDC hdc, INT format, const PIXELFORMATDESCRIPTOR 
 BOOL WINAPI CancelDC(HDC hdc)
 {
     FIXME( "stub\n" );
+    return TRUE;
+}
+
+/***********************************************************************
+ *           StartDocW  [GDI32.@]
+ *
+ * StartDoc calls the STARTDOC Escape with the input data pointing to DocName
+ * and the output data (which is used as a second input parameter).pointing at
+ * the whole docinfo structure.  This seems to be an undocumented feature of
+ * the STARTDOC Escape.
+ *
+ * Note: we now do it the other way, with the STARTDOC Escape calling StartDoc.
+ */
+INT WINAPI StartDocW( HDC hdc, const DOCINFOW *doc )
+{
+    DC_ATTR *dc_attr;
+
+    TRACE("DocName %s, Output %s, Datatype %s, fwType %#x\n",
+          debugstr_w(doc->lpszDocName), debugstr_w(doc->lpszOutput),
+          debugstr_w(doc->lpszDatatype), doc->fwType);
+
+    if (!(dc_attr = get_dc_attr( hdc ))) return SP_ERROR;
+
+    if (dc_attr->abort_proc && !dc_attr->abort_proc( hdc, 0 )) return 0;
+    return NtGdiStartDoc( hdc, doc, NULL, 0 );
+}
+
+/***********************************************************************
+ *           StartDocA [GDI32.@]
+ */
+INT WINAPI StartDocA( HDC hdc, const DOCINFOA *doc )
+{
+    WCHAR *doc_name = NULL, *output = NULL, *data_type = NULL;
+    DOCINFOW docW;
+    INT ret, len;
+
+    docW.cbSize = doc->cbSize;
+    if (doc->lpszDocName)
+    {
+        len = MultiByteToWideChar( CP_ACP, 0, doc->lpszDocName, -1, NULL, 0 );
+        doc_name = HeapAlloc( GetProcessHeap(), 0, len * sizeof(WCHAR) );
+        MultiByteToWideChar( CP_ACP, 0, doc->lpszDocName, -1, doc_name, len );
+    }
+    if (doc->lpszOutput)
+    {
+        len = MultiByteToWideChar( CP_ACP, 0, doc->lpszOutput, -1, NULL, 0 );
+        output = HeapAlloc( GetProcessHeap(), 0, len * sizeof(WCHAR) );
+        MultiByteToWideChar( CP_ACP, 0, doc->lpszOutput, -1, output, len );
+    }
+    if (doc->lpszDatatype)
+    {
+        len = MultiByteToWideChar( CP_ACP, 0, doc->lpszDatatype, -1, NULL, 0);
+        data_type = HeapAlloc( GetProcessHeap(), 0, len * sizeof(WCHAR) );
+        MultiByteToWideChar( CP_ACP, 0, doc->lpszDatatype, -1, data_type, len );
+    }
+
+    docW.lpszDocName = doc_name;
+    docW.lpszOutput = output;
+    docW.lpszDatatype = data_type;
+    docW.fwType = doc->fwType;
+
+    ret = StartDocW(hdc, &docW);
+
+    HeapFree( GetProcessHeap(), 0, doc_name );
+    HeapFree( GetProcessHeap(), 0, output );
+    HeapFree( GetProcessHeap(), 0, data_type );
+    return ret;
+}
+
+/***********************************************************************
+ *           StartPage    (GDI32.@)
+ */
+INT WINAPI StartPage( HDC hdc )
+{
+    return NtGdiStartPage( hdc );
+}
+
+/***********************************************************************
+ *           EndPage    (GDI32.@)
+ */
+INT WINAPI EndPage( HDC hdc )
+{
+    return NtGdiEndPage( hdc );
+}
+
+/***********************************************************************
+ *           EndDoc    (GDI32.@)
+ */
+INT WINAPI EndDoc( HDC hdc )
+{
+    return NtGdiEndDoc( hdc );
+}
+
+/***********************************************************************
+ *           AbortDoc    (GDI32.@)
+ */
+INT WINAPI AbortDoc( HDC hdc )
+{
+    return NtGdiAbortDoc( hdc );
+}
+
+/**********************************************************************
+ *           SetAbortProc   (GDI32.@)
+ */
+INT WINAPI SetAbortProc( HDC hdc, ABORTPROC abrtprc )
+{
+    DC_ATTR *dc_attr;
+
+    if (!(dc_attr = get_dc_attr( hdc ))) return FALSE;
+    dc_attr->abort_proc = abrtprc;
     return TRUE;
 }
 

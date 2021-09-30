@@ -118,6 +118,7 @@ struct d3d10_effect_shader_variable
     unsigned int resource_count;
     struct d3d10_effect_shader_resource *resources;
     char *stream_output_declaration;
+    unsigned int isinline : 1;
 };
 
 struct d3d10_effect_state_object_variable
@@ -255,20 +256,26 @@ struct d3d10_effect_anonymous_shader
     struct d3d10_effect_type type;
 };
 
+enum d3d10_effect_flags
+{
+    D3D10_EFFECT_OPTIMIZED = 0x1,
+};
+
 /* ID3D10Effect */
-extern const struct ID3D10EffectVtbl d3d10_effect_vtbl DECLSPEC_HIDDEN;
 struct d3d10_effect
 {
     ID3D10Effect ID3D10Effect_iface;
+    ID3D10EffectPool ID3D10EffectPool_iface;
     LONG refcount;
 
     ID3D10Device *device;
+    ID3D10Effect *pool;
     DWORD version;
     DWORD local_buffer_count;
     DWORD variable_count;
     DWORD local_variable_count;
-    DWORD sharedbuffers_count;
-    DWORD sharedobjects_count;
+    DWORD shared_buffer_count;
+    DWORD shared_object_count;
     DWORD technique_count;
     DWORD index_offset;
     DWORD texture_count;
@@ -280,6 +287,7 @@ struct d3d10_effect
     DWORD depthstencilview_count;
     DWORD used_shader_count;
     DWORD anonymous_shader_count;
+    DWORD flags;
 
     DWORD used_shader_current;
     DWORD anonymous_shader_current;

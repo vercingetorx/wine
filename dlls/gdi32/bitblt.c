@@ -18,6 +18,10 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
+#if 0
+#pragma makedep unix
+#endif
+
 #include <stdarg.h>
 #include <limits.h>
 #include <math.h>
@@ -488,7 +492,7 @@ BOOL CDECL nulldrv_GradientFill( PHYSDEV dev, TRIVERTEX *vert_array, ULONG nvert
     ret = !dev->funcs->pPutImage( dev, rgn, info, &bits, &src, &dst, SRCCOPY );
 
     if (bits.free) bits.free( &bits );
-    DeleteObject( rgn );
+    NtGdiDeleteObjectApp( rgn );
 
 done:
     HeapFree( GetProcessHeap(), 0, pts );
@@ -567,7 +571,7 @@ BOOL WINAPI NtGdiPatBlt( HDC hdc, INT left, INT top, INT width, INT height, DWOR
 
 
 /***********************************************************************
- *           BitBlt    (GDI32.@)
+ *           NtGdiBitBlt    (win32u.@)
  */
 BOOL WINAPI NtGdiBitBlt( HDC hdc_dst, INT x_dst, INT y_dst, INT width, INT height,
                          HDC hdc_src, INT x_src, INT y_src, DWORD rop, DWORD bk_color, FLONG fl )
@@ -638,12 +642,11 @@ BOOL WINAPI NtGdiStretchBlt( HDC hdcDst, INT xDst, INT yDst, INT widthDst, INT h
 #define BKGND_ROP3(ROP4)	(ROP3Table[((ROP4)>>24) & 0xFF])
 
 /***********************************************************************
- *           MaskBlt [GDI32.@]
+ *           NtGdiMaskBlt    (win32u.@)
  */
-BOOL WINAPI MaskBlt(HDC hdcDest, INT nXDest, INT nYDest,
-                        INT nWidth, INT nHeight, HDC hdcSrc,
-			INT nXSrc, INT nYSrc, HBITMAP hbmMask,
-			INT xMask, INT yMask, DWORD dwRop)
+BOOL WINAPI NtGdiMaskBlt( HDC hdcDest, INT nXDest, INT nYDest, INT nWidth, INT nHeight,
+                          HDC hdcSrc, INT nXSrc, INT nYSrc, HBITMAP hbmMask,
+                          INT xMask, INT yMask, DWORD dwRop, DWORD bk_color )
 {
     HBITMAP hBitmap1, hOldBitmap1, hBitmap2, hOldBitmap2;
     HDC hDC1, hDC2;
@@ -782,10 +785,11 @@ BOOL WINAPI MaskBlt(HDC hdcDest, INT nXDest, INT nYDest,
     };
 
     if (!hbmMask)
-	return BitBlt(hdcDest, nXDest, nYDest, nWidth, nHeight, hdcSrc, nXSrc, nYSrc, FRGND_ROP3(dwRop));
+        return NtGdiBitBlt( hdcDest, nXDest, nYDest, nWidth, nHeight, hdcSrc,
+                            nXSrc, nYSrc, FRGND_ROP3(dwRop), bk_color, 0 );
 
-    hbrMask = CreatePatternBrush(hbmMask);
-    hbrDst = NtGdiSelectBrush(hdcDest, GetStockObject(NULL_BRUSH));
+    hbrMask = NtGdiCreatePatternBrushInternal( hbmMask, FALSE, FALSE );
+    hbrDst = NtGdiSelectBrush( hdcDest, get_stock_object(NULL_BRUSH) );
 
     /* make bitmap */
     hDC1 = NtGdiCreateCompatibleDC( hdcDest );
@@ -793,9 +797,9 @@ BOOL WINAPI MaskBlt(HDC hdcDest, INT nXDest, INT nYDest,
     hOldBitmap1 = NtGdiSelectBitmap(hDC1, hBitmap1);
 
     /* draw using bkgnd rop */
-    BitBlt(hDC1, 0, 0, nWidth, nHeight, hdcDest, nXDest, nYDest, SRCCOPY);
+    NtGdiBitBlt( hDC1, 0, 0, nWidth, nHeight, hdcDest, nXDest, nYDest, SRCCOPY, 0, 0 );
     hbrTmp = NtGdiSelectBrush(hDC1, hbrDst);
-    BitBlt(hDC1, 0, 0, nWidth, nHeight, hdcSrc, nXSrc, nYSrc, BKGND_ROP3(dwRop));
+    NtGdiBitBlt( hDC1, 0, 0, nWidth, nHeight, hdcSrc, nXSrc, nYSrc, BKGND_ROP3(dwRop), 0, 0 );
     NtGdiSelectBrush(hDC1, hbrTmp);
 
     /* make bitmap */
@@ -804,18 +808,19 @@ BOOL WINAPI MaskBlt(HDC hdcDest, INT nXDest, INT nYDest,
     hOldBitmap2 = NtGdiSelectBitmap(hDC2, hBitmap2);
 
     /* draw using foregnd rop */
-    BitBlt(hDC2, 0, 0, nWidth, nHeight, hdcDest, nXDest, nYDest, SRCCOPY);
+    NtGdiBitBlt( hDC2, 0, 0, nWidth, nHeight, hdcDest, nXDest, nYDest, SRCCOPY, 0, 0 );
     hbrTmp = NtGdiSelectBrush(hDC2, hbrDst);
-    BitBlt(hDC2, 0, 0, nWidth, nHeight, hdcSrc, nXSrc, nYSrc, FRGND_ROP3(dwRop));
+    NtGdiBitBlt( hDC2, 0, 0, nWidth, nHeight, hdcSrc, nXSrc, nYSrc, FRGND_ROP3(dwRop), 0, 0 );
 
     /* combine both using the mask as a pattern brush */
     NtGdiSelectBrush(hDC2, hbrMask);
-    SetBrushOrgEx(hDC2, -xMask, -yMask, NULL);
-    BitBlt(hDC2, 0, 0, nWidth, nHeight, hDC1, 0, 0, 0xac0744 ); /* (D & P) | (S & ~P) */ 
+    NtGdiSetBrushOrg( hDC2, -xMask, -yMask, NULL );
+    /* (D & P) | (S & ~P) */
+    NtGdiBitBlt(hDC2, 0, 0, nWidth, nHeight, hDC1, 0, 0, 0xac0744, 0, 0 );
     NtGdiSelectBrush(hDC2, hbrTmp);
 
     /* blit to dst */
-    BitBlt(hdcDest, nXDest, nYDest, nWidth, nHeight, hDC2, 0, 0, SRCCOPY);
+    NtGdiBitBlt( hdcDest, nXDest, nYDest, nWidth, nHeight, hDC2, 0, 0, SRCCOPY, bk_color, 0 );
 
     /* restore all objects */
     NtGdiSelectBrush(hdcDest, hbrDst);
@@ -823,9 +828,9 @@ BOOL WINAPI MaskBlt(HDC hdcDest, INT nXDest, INT nYDest,
     NtGdiSelectBitmap(hDC2, hOldBitmap2);
 
     /* delete all temp objects */
-    DeleteObject(hBitmap1);
-    DeleteObject(hBitmap2);
-    DeleteObject(hbrMask);
+    NtGdiDeleteObjectApp( hBitmap1 );
+    NtGdiDeleteObjectApp( hBitmap2 );
+    NtGdiDeleteObjectApp( hbrMask );
 
     NtGdiDeleteObjectApp( hDC1 );
     NtGdiDeleteObjectApp( hDC2 );
@@ -834,11 +839,11 @@ BOOL WINAPI MaskBlt(HDC hdcDest, INT nXDest, INT nYDest,
 }
 
 /******************************************************************************
- *           GdiTransparentBlt [GDI32.@]
+ *           NtGdiTransparentBlt    (win32u.@)
  */
-BOOL WINAPI GdiTransparentBlt( HDC hdcDest, int xDest, int yDest, int widthDest, int heightDest,
-                            HDC hdcSrc, int xSrc, int ySrc, int widthSrc, int heightSrc,
-                            UINT crTransparent )
+BOOL WINAPI NtGdiTransparentBlt( HDC hdcDest, int xDest, int yDest, int widthDest, int heightDest,
+                                 HDC hdcSrc, int xSrc, int ySrc, int widthSrc, int heightSrc,
+                                 UINT crTransparent )
 {
     BOOL ret = FALSE;
     HDC hdcWork;
@@ -851,23 +856,27 @@ BOOL WINAPI GdiTransparentBlt( HDC hdcDest, int xDest, int yDest, int widthDest,
     COLORREF oldForeground;
     int oldStretchMode;
     DIBSECTION dib;
+    DC *dc_src;
 
     if(widthDest < 0 || heightDest < 0 || widthSrc < 0 || heightSrc < 0) {
         TRACE("Cannot mirror\n");
         return FALSE;
     }
 
-    oldBackground = SetBkColor(hdcDest, RGB(255,255,255));
-    oldForeground = SetTextColor(hdcDest, RGB(0,0,0));
+    if (!(dc_src = get_dc_ptr( hdcSrc ))) return FALSE;
+
+    NtGdiGetAndSetDCDword( hdcDest, NtGdiSetBkColor, RGB(255,255,255), &oldBackground );
+    NtGdiGetAndSetDCDword( hdcDest, NtGdiSetTextColor, RGB(0,0,0), &oldForeground );
 
     /* Stretch bitmap */
-    oldStretchMode = GetStretchBltMode(hdcSrc);
-    if(oldStretchMode == BLACKONWHITE || oldStretchMode == WHITEONBLACK)
-        SetStretchBltMode(hdcSrc, COLORONCOLOR);
+    oldStretchMode = dc_src->attr->stretch_blt_mode;
+    if (oldStretchMode == BLACKONWHITE || oldStretchMode == WHITEONBLACK)
+        dc_src->attr->stretch_blt_mode = COLORONCOLOR;
     hdcWork = NtGdiCreateCompatibleDC( hdcDest );
-    if ((GetObjectType( hdcDest ) != OBJ_MEMDC ||
-         GetObjectW( GetCurrentObject( hdcDest, OBJ_BITMAP ), sizeof(dib), &dib ) == sizeof(BITMAP)) &&
-        GetDeviceCaps( hdcDest, BITSPIXEL ) == 32)
+    if ((get_gdi_object_type( hdcDest ) != NTGDI_OBJ_MEMDC ||
+         NtGdiExtGetObjectW( NtGdiGetDCObject( hdcDest, NTGDI_OBJ_SURF ),
+                             sizeof(dib), &dib ) == sizeof(BITMAP)) &&
+        NtGdiGetDeviceCaps( hdcDest, BITSPIXEL ) == 32)
     {
         /* screen DCs or DDBs are not supposed to have an alpha channel, so use a 24-bpp bitmap as copy */
         BITMAPINFO info;
@@ -881,56 +890,63 @@ BOOL WINAPI GdiTransparentBlt( HDC hdcDest, int xDest, int yDest, int widthDest,
     }
     else bmpWork = NtGdiCreateCompatibleBitmap( hdcDest, widthDest, heightDest );
     oldWork = NtGdiSelectBitmap(hdcWork, bmpWork);
-    if(!StretchBlt(hdcWork, 0, 0, widthDest, heightDest, hdcSrc, xSrc, ySrc, widthSrc, heightSrc, SRCCOPY)) {
+    if (!NtGdiStretchBlt( hdcWork, 0, 0, widthDest, heightDest, hdcSrc, xSrc, ySrc,
+                          widthSrc, heightSrc, SRCCOPY, 0 ))
+    {
         TRACE("Failed to stretch\n");
         goto error;
     }
-    SetBkColor(hdcWork, crTransparent);
+    NtGdiGetAndSetDCDword( hdcWork, NtGdiSetBkColor, crTransparent, NULL );
 
     /* Create mask */
     hdcMask = NtGdiCreateCompatibleDC( hdcDest );
     bmpMask = NtGdiCreateCompatibleBitmap( hdcMask, widthDest, heightDest );
     oldMask = NtGdiSelectBitmap(hdcMask, bmpMask);
-    if(!BitBlt(hdcMask, 0, 0, widthDest, heightDest, hdcWork, 0, 0, SRCCOPY)) {
+    if (!NtGdiBitBlt( hdcMask, 0, 0, widthDest, heightDest, hdcWork, 0, 0, SRCCOPY, 0, 0 ))
+    {
         TRACE("Failed to create mask\n");
         goto error;
     }
 
     /* Replace transparent color with black */
-    SetBkColor(hdcWork, RGB(0,0,0));
-    SetTextColor(hdcWork, RGB(255,255,255));
-    if(!BitBlt(hdcWork, 0, 0, widthDest, heightDest, hdcMask, 0, 0, SRCAND)) {
+    NtGdiGetAndSetDCDword( hdcWork, NtGdiSetBkColor, RGB(0,0,0), NULL );
+    NtGdiGetAndSetDCDword( hdcWork, NtGdiSetTextColor, RGB(255,255,255), NULL );
+    if (!NtGdiBitBlt( hdcWork, 0, 0, widthDest, heightDest, hdcMask, 0, 0, SRCAND, 0, 0 ))
+    {
         TRACE("Failed to mask out background\n");
         goto error;
     }
 
     /* Replace non-transparent area on destination with black */
-    if(!BitBlt(hdcDest, xDest, yDest, widthDest, heightDest, hdcMask, 0, 0, SRCAND)) {
+    if (!NtGdiBitBlt( hdcDest, xDest, yDest, widthDest, heightDest, hdcMask, 0, 0, SRCAND, 0, 0 ))
+    {
         TRACE("Failed to clear destination area\n");
         goto error;
     }
 
     /* Draw the image */
-    if(!BitBlt(hdcDest, xDest, yDest, widthDest, heightDest, hdcWork, 0, 0, SRCPAINT)) {
+    if (!NtGdiBitBlt( hdcDest, xDest, yDest, widthDest, heightDest, hdcWork, 0, 0, SRCPAINT, 0, 0 ))
+    {
         TRACE("Failed to paint image\n");
         goto error;
     }
 
     ret = TRUE;
 error:
-    SetStretchBltMode(hdcSrc, oldStretchMode);
-    SetBkColor(hdcDest, oldBackground);
-    SetTextColor(hdcDest, oldForeground);
+    dc_src->attr->stretch_blt_mode = oldStretchMode;
+    release_dc_ptr( dc_src );
+    NtGdiGetAndSetDCDword( hdcDest, NtGdiSetBkColor, oldBackground, NULL );
+    NtGdiGetAndSetDCDword( hdcDest, NtGdiSetTextColor, oldForeground, NULL );
     if(hdcWork) {
         NtGdiSelectBitmap(hdcWork, oldWork);
         NtGdiDeleteObjectApp( hdcWork );
     }
-    if(bmpWork) DeleteObject(bmpWork);
+    if(bmpWork) NtGdiDeleteObjectApp( bmpWork );
     if(hdcMask) {
         NtGdiSelectBitmap(hdcMask, oldMask);
         NtGdiDeleteObjectApp( hdcMask );
     }
-    if(bmpMask) DeleteObject(bmpMask);
+    if(bmpMask) NtGdiDeleteObjectApp( bmpMask );
     return ret;
 }
 
@@ -1012,12 +1028,11 @@ BOOL WINAPI NtGdiAlphaBlend( HDC hdcDst, int xDst, int yDst, int widthDst, int h
 }
 
 /*********************************************************************
- *      PlgBlt [GDI32.@]
- *
+ *           NtGdiPlgBlt    (win32u.@)
  */
-BOOL WINAPI PlgBlt( HDC hdcDest, const POINT *lpPoint,
-                        HDC hdcSrc, INT nXSrc, INT nYSrc, INT nWidth,
-                        INT nHeight, HBITMAP hbmMask, INT xMask, INT yMask)
+BOOL WINAPI NtGdiPlgBlt( HDC hdcDest, const POINT *lpPoint, HDC hdcSrc, INT nXSrc, INT nYSrc,
+                         INT nWidth, INT nHeight, HBITMAP hbmMask, INT xMask, INT yMask,
+                         DWORD bk_color )
 {
     DWORD prev_mode;
     /* parallelogram coords */
@@ -1069,20 +1084,18 @@ BOOL WINAPI PlgBlt( HDC hdcDest, const POINT *lpPoint,
                rect[2].x*(rect[0].y*plg[1].y - rect[1].y*plg[0].y)
                ) / det;
 
-    GetWorldTransform(hdcSrc,&SrcXf);
+    NtGdiGetTransform( hdcSrc, 0x203, &SrcXf );
     combine_transform( &xf, &xf, &SrcXf );
 
     /* save actual dest transform */
-    GetWorldTransform(hdcDest,&oldDestXf);
+    NtGdiGetTransform( hdcDest, 0x203, &oldDestXf );
 
-    SetWorldTransform(hdcDest,&xf);
+    NtGdiModifyWorldTransform( hdcDest, &xf, MWT_SET );
     /* now destination and source DCs use same coords */
-    MaskBlt(hdcDest,nXSrc,nYSrc,nWidth,nHeight,
-            hdcSrc, nXSrc,nYSrc,
-            hbmMask,xMask,yMask,
-            SRCCOPY);
+    NtGdiMaskBlt( hdcDest, nXSrc, nYSrc, nWidth, nHeight, hdcSrc, nXSrc, nYSrc,
+                  hbmMask, xMask, yMask, SRCCOPY, 0 );
     /* restore dest DC */
-    SetWorldTransform(hdcDest,&oldDestXf);
+    NtGdiModifyWorldTransform( hdcDest, &oldDestXf, MWT_SET );
     NtGdiGetAndSetDCDword( hdcDest, NtGdiSetGraphicsMode, prev_mode, NULL );
 
     return TRUE;
