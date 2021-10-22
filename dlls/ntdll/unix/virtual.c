@@ -23,29 +23,28 @@
 #endif
 
 #include "config.h"
-#include "wine/port.h"
 
 #include <assert.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <stdarg.h>
 #include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
 #include <signal.h>
 #include <sys/types.h>
 #ifdef HAVE_SYS_SOCKET_H
 # include <sys/socket.h>
 #endif
-#ifdef HAVE_SYS_STAT_H
-# include <sys/stat.h>
-#endif
+#include <sys/stat.h>
 #ifdef HAVE_SYS_MMAN_H
 # include <sys/mman.h>
 #endif
 #ifdef HAVE_SYS_SYSINFO_H
 # include <sys/sysinfo.h>
 #endif
-#ifdef HAVE_UNISTD_H
-# include <unistd.h>
-#endif
+#include <unistd.h>
+#include <dlfcn.h>
 #ifdef HAVE_VALGRIND_VALGRIND_H
 # include <valgrind/valgrind.h>
 #endif
@@ -59,7 +58,6 @@
 #include "windef.h"
 #include "winnt.h"
 #include "winternl.h"
-#include "wine/exception.h"
 #include "wine/list.h"
 #include "wine/rbtree.h"
 #include "unix_private.h"
@@ -103,35 +101,6 @@ struct file_view
     size_t        size;          /* size in bytes */
     unsigned int  protect;       /* protection for all pages at allocation time and SEC_* flags */
 };
-
-#undef __TRY
-#undef __EXCEPT
-#undef __ENDTRY
-
-#define __TRY \
-    do { __wine_jmp_buf __jmp; \
-         int __first = 1; \
-         assert( !ntdll_get_thread_data()->jmp_buf ); \
-         for (;;) if (!__first) \
-         { \
-             do {
-
-#define __EXCEPT \
-             } while(0); \
-             ntdll_get_thread_data()->jmp_buf = NULL; \
-             break; \
-         } else { \
-             if (__wine_setjmpex( &__jmp, NULL )) { \
-                 do {
-
-#define __ENDTRY \
-                 } while (0); \
-                 break; \
-             } \
-             ntdll_get_thread_data()->jmp_buf = &__jmp; \
-             __first = 0; \
-         } \
-    } while (0);
 
 /* per-page protection flags */
 #define VPROT_READ       0x01
@@ -672,7 +641,7 @@ static NTSTATUS get_builtin_unix_funcs( void *module, BOOL wow, void **funcs )
     {
         if (builtin->module != module) continue;
         *funcs = dlsym( builtin->unix_handle, ptr_name );
-        status = STATUS_SUCCESS;
+        status = *funcs ? STATUS_SUCCESS : STATUS_ENTRYPOINT_NOT_FOUND;
         break;
     }
     server_leave_uninterrupted_section( &virtual_mutex, &sigset );

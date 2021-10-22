@@ -3279,6 +3279,12 @@ static BOOL shader_none_has_ffp_proj_control(void *shader_priv)
     return priv->ffp_proj_control;
 }
 
+static uint64_t shader_none_shader_compile(struct wined3d_context *context, const struct wined3d_shader_desc *shader_desc,
+        enum wined3d_shader_type shader_type)
+{
+    return 0;
+}
+
 const struct wined3d_shader_backend_ops none_shader_backend =
 {
     shader_none_handle_instruction,
@@ -3298,6 +3304,7 @@ const struct wined3d_shader_backend_ops none_shader_backend =
     shader_none_get_caps,
     shader_none_color_fixup_supported,
     shader_none_has_ffp_proj_control,
+    shader_none_shader_compile,
 };
 
 static unsigned int shader_max_version_from_feature_level(enum wined3d_feature_level level)
@@ -3432,8 +3439,10 @@ ULONG CDECL wined3d_shader_decref(struct wined3d_shader *shader)
 
     if (!refcount)
     {
+        wined3d_mutex_lock();
         shader->parent_ops->wined3d_object_destroyed(shader->parent);
         wined3d_cs_destroy_object(shader->device->cs, wined3d_shader_destroy_object, shader);
+        wined3d_mutex_unlock();
     }
 
     return refcount;

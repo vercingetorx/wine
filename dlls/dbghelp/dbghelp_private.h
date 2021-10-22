@@ -169,6 +169,7 @@ struct symt_block
 struct symt_module /* in fact any of .exe, .dll... */
 {
     struct symt                 symt;           /* module */
+    struct vector               vchildren;      /* compilation units */
     struct module*              module;
 };
 
@@ -255,6 +256,14 @@ struct symt_thunk
     THUNK_ORDINAL               ordinal;        /* FIXME: doesn't seem to be accessible */
 };
 
+struct symt_custom
+{
+    struct symt                 symt;
+    struct hash_table_elt       hash_elt;
+    DWORD64                     address;
+    DWORD                       size;
+};
+
 /* class tree */
 struct symt_array
 {
@@ -293,7 +302,6 @@ struct symt_function_arg_type
 {
     struct symt                 symt;
     struct symt*                arg_type;
-    struct symt*                container;
 };
 
 struct symt_pointer
@@ -382,6 +390,7 @@ struct module
 
     /* symbols & symbol tables */
     struct vector               vsymt;
+    struct vector               vcustom_symt;
     int                         sortlist_valid;
     unsigned                    num_sorttab;    /* number of symbols with addresses */
     unsigned                    num_symbols;
@@ -617,9 +626,10 @@ void minidump_add_memory_block(struct dump_context* dc, ULONG64 base, ULONG size
 /* module.c */
 extern const WCHAR      S_ElfW[] DECLSPEC_HIDDEN;
 extern const WCHAR      S_WineLoaderW[] DECLSPEC_HIDDEN;
-extern const WCHAR      S_SlashW[] DECLSPEC_HIDDEN;
 extern const struct loader_ops no_loader_ops DECLSPEC_HIDDEN;
 
+extern BOOL         module_init_pair(struct module_pair* pair, HANDLE hProcess,
+                                     DWORD64 addr) DECLSPEC_HIDDEN;
 extern struct module*
                     module_find_by_addr(const struct process* pcs, DWORD64 addr,
                                         enum module_type type) DECLSPEC_HIDDEN;
@@ -791,6 +801,9 @@ extern struct symt_hierarchy_point*
                                    const char* name, ULONG_PTR address) DECLSPEC_HIDDEN;
 extern struct symt* symt_index2ptr(struct module* module, DWORD id) DECLSPEC_HIDDEN;
 extern DWORD        symt_ptr2index(struct module* module, const struct symt* sym) DECLSPEC_HIDDEN;
+extern struct symt_custom*
+                    symt_new_custom(struct module* module, const char* name,
+                                    DWORD64 addr, DWORD size) DECLSPEC_HIDDEN;
 
 /* type.c */
 extern void         symt_init_basic(struct module* module) DECLSPEC_HIDDEN;

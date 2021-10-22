@@ -1586,6 +1586,13 @@ static int msvcrt_get_flags(const wchar_t* mode, int *open_flags, int* stream_fl
       *open_flags |=  _O_TEXT;
       *open_flags &= ~_O_BINARY;
       break;
+#if _MSVCR_VER>=140
+    case 'x':
+      if(!MSVCRT_CHECK_PMT((*open_flags & (_O_CREAT | _O_APPEND)) == _O_CREAT))
+          return -1;
+      *open_flags |= _O_EXCL;
+      break;
+#endif
     case 'D':
       *open_flags |= _O_TEMPORARY;
       break;
@@ -3616,6 +3623,8 @@ int CDECL fclose(FILE* file)
 {
   int ret;
 
+  if (!MSVCRT_CHECK_PMT(file != NULL)) return EOF;
+
   _lock_file(file);
   ret = _fclose_nolock(file);
   _unlock_file(file);
@@ -3629,6 +3638,8 @@ int CDECL fclose(FILE* file)
 int CDECL _fclose_nolock(FILE* file)
 {
   int r, flag;
+
+  if (!MSVCRT_CHECK_PMT(file != NULL)) return EOF;
 
   if(!(file->_flag & (_IOREAD | _IOWRT | _IORW)))
   {

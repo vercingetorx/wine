@@ -40,7 +40,7 @@ WINE_DEFAULT_DEBUG_CHANNEL(hid);
 DEFINE_DEVPROPKEY(DEVPROPKEY_HID_HANDLE, 0xbc62e415, 0xf4fe, 0x405c, 0x8e, 0xda, 0x63, 0x6f, 0xb5, 0x9f, 0x08, 0x98, 2);
 DEFINE_GUID(GUID_DEVINTERFACE_WINEXINPUT, 0x6c53d5fd, 0x6480, 0x440f, 0xb6, 0x18, 0x47, 0x67, 0x50, 0xc5, 0xe1, 0xa6);
 
-#if defined(__i386__) && !defined(_WIN32)
+#ifdef __ASM_USE_FASTCALL_WRAPPER
 
 extern void * WINAPI wrap_fastcall_func1( void *func, const void *a );
 __ASM_STDCALL_FUNC( wrap_fastcall_func1, 8,
@@ -113,6 +113,8 @@ static void send_wm_input_device_change(BASE_DEVICE_EXTENSION *ext, LPARAM param
     HIDP_COLLECTION_DESC *desc = ext->u.pdo.device_desc.CollectionDesc;
     RAWINPUT rawinput;
     INPUT input;
+
+    if (!IsEqualGUID( ext->class_guid, &GUID_DEVINTERFACE_HID )) return;
 
     rawinput.header.dwType = RIM_TYPEHID;
     rawinput.header.dwSize = offsetof(RAWINPUT, data.hid.bRawData[2 * sizeof(USAGE)]);

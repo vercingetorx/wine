@@ -19,7 +19,6 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#include "config.h"
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -512,7 +511,7 @@ BOOL symbol_is_local(const char* name)
  *
  * Read a symbol file into the hash table.
  */
-void symbol_read_symtable(const char* filename, unsigned long offset)
+void symbol_read_symtable(const char* filename, ULONG_PTR offset)
 {
     dbg_printf("No longer supported\n");
 
@@ -756,7 +755,7 @@ BOOL symbol_info_locals(void)
     addr.Mode = AddrModeFlat;
     addr.Offset = ihsf.InstructionOffset;
     print_address(&addr, FALSE);
-    dbg_printf(": (%08lx)\n", (DWORD_PTR)ihsf.FrameOffset);
+    dbg_printf(": (%0*lx)\n", ADDRWIDTH, (DWORD_PTR)ihsf.FrameOffset);
     SymEnumSymbols(dbg_curr_process->handle, 0, NULL, info_locals_cb, (void*)(DWORD_PTR)ihsf.FrameOffset);
 
     return TRUE;
@@ -779,7 +778,7 @@ static BOOL CALLBACK symbols_info_cb(PSYMBOL_INFO sym, ULONG size, PVOID ctx)
             mi.ModuleName[len - 5] = '\0';
     }
 
-    dbg_printf("%08lx: %s!%s", (ULONG_PTR)sym->Address, mi.ModuleName, sym->Name);
+    dbg_printf("%0*lx: %s!%s", ADDRWIDTH, (ULONG_PTR)sym->Address, mi.ModuleName, sym->Name);
     type.id = sym->TypeIndex;
     type.module = sym->ModBase;
 

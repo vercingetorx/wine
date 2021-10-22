@@ -25,7 +25,6 @@
 #endif
 
 #include "config.h"
-#include "wine/port.h"
 
 #include <assert.h>
 #include <sys/types.h>
@@ -37,15 +36,12 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <limits.h>
+#include <unistd.h>
 #ifdef HAVE_MNTENT_H
 #include <mntent.h>
 #endif
-#ifdef HAVE_POLL_H
 #include <poll.h>
-#endif
-#ifdef HAVE_SYS_STAT_H
-# include <sys/stat.h>
-#endif
+#include <sys/stat.h>
 #ifdef HAVE_SYS_STATVFS_H
 # include <sys/statvfs.h>
 #endif
@@ -1172,7 +1168,7 @@ static BOOLEAN get_dir_case_sensitivity_stat( const char *dir )
     struct stat st;
     int fd, flags;
 
-    if ((fd = open( dir, O_RDONLY | O_NONBLOCK | O_LARGEFILE )) == -1)
+    if ((fd = open( dir, O_RDONLY | O_NONBLOCK )) == -1)
         return TRUE;
 
     if (ioctl( fd, EXT2_IOC_GETFLAGS, &flags ) != -1 && (flags & EXT4_CASEFOLD_FL))

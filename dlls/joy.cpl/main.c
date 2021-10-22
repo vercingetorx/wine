@@ -414,7 +414,7 @@ static INT_PTR CALLBACK list_dlgproc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM 
  * Joystick testing functions
  *
  */
-static void dump_joy_state(DIJOYSTATE* st, int num_buttons)
+static void dump_joy_state(DIJOYSTATE* st)
 {
     int i;
     TRACE("Ax (% 5d,% 5d,% 5d)\n", st->lX,st->lY, st->lZ);
@@ -423,7 +423,7 @@ static void dump_joy_state(DIJOYSTATE* st, int num_buttons)
     TRACE("Pov (% 5d,% 5d,% 5d,% 5d)\n", st->rgdwPOV[0], st->rgdwPOV[1], st->rgdwPOV[2], st->rgdwPOV[3]);
 
     TRACE("Buttons ");
-    for(i=0; i < num_buttons; i++)
+    for(i=0; i < TEST_MAX_BUTTONS; i++)
         TRACE("  %c",st->rgbButtons[i] ? 'x' : 'o');
     TRACE("\n");
 }
@@ -474,10 +474,10 @@ static DWORD WINAPI input_thread(void *param)
 
         poll_input(&data->joysticks[data->chosen_joystick], &state);
 
-        dump_joy_state(&state, data->joysticks[data->chosen_joystick].num_buttons);
+        dump_joy_state(&state);
 
         /* Indicate pressed buttons */
-        for (i = 0; i < data->joysticks[data->chosen_joystick].num_buttons; i++)
+        for (i = 0; i < TEST_MAX_BUTTONS; i++)
             SendMessageW(data->graphics.buttons[i], BM_SETSTATE, !!state.rgbButtons[i], 0);
 
         /* Indicate axis positions, axes showing are hardcoded for now */
@@ -726,6 +726,9 @@ static void ff_handle_effectchange(HWND hwnd, struct Joystick *joy)
     if (sel < 0) return;
 
     joy->chosen_effect = sel;
+    IDirectInputDevice8_Unacquire(joy->device);
+    IDirectInputDevice8_SetCooperativeLevel(joy->device, GetAncestor(hwnd, GA_ROOT), DISCL_BACKGROUND|DISCL_EXCLUSIVE);
+    IDirectInputDevice8_Acquire(joy->device);
 }
 
 static DWORD WINAPI ff_input_thread(void *param)
@@ -763,7 +766,7 @@ static DWORD WINAPI ff_input_thread(void *param)
 
         SetWindowPos(data->graphics.ff_axis, 0, r.left, r.top, 0, 0, SWP_NOZORDER | SWP_NOSIZE);
 
-        for (i=0; i < joy->num_buttons; i++)
+        for (i=0; i < TEST_MAX_BUTTONS; i++)
             if (state.rgbButtons[i])
             {
                 IDirectInputEffect_SetParameters(joy->effects[chosen_effect].effect, dieffect, flags);
@@ -806,7 +809,7 @@ static BOOL CALLBACK ff_effects_callback(const DIEFFECTINFOW *pdei, void *pvRef)
     ZeroMemory(&dieffect, sizeof(dieffect));
 
     dieffect.dwSize = sizeof(dieffect);
-    dieffect.dwFlags = DIEFF_CARTESIAN;
+    dieffect.dwFlags = DIEFF_CARTESIAN|DIEFF_OBJECTOFFSETS;
     dieffect.dwDuration = FF_PLAY_TIME;
 
     dieffect.cAxes = 2;
@@ -864,6 +867,11 @@ static BOOL CALLBACK ff_effects_callback(const DIEFFECTINFOW *pdei, void *pvRef)
 
     hr = IDirectInputDevice2_CreateEffect(
         joystick->device, &pdei->guid, &dieffect, &joystick->effects[joystick->cur_effect].effect, NULL);
+    if (FAILED(hr))
+    {
+        FIXME("Failed to create effect with type %s, hr %#x\n", debugstr_guid(&pdei->guid), hr);
+        return DIENUM_CONTINUE;
+    }
 
     joystick->effects[joystick->cur_effect].params = dieffect;
     joystick->effects[joystick->cur_effect].info = *pdei;

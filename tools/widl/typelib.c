@@ -20,21 +20,16 @@
  */
 
 #include "config.h"
-#include "wine/port.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdarg.h>
-#ifdef HAVE_UNISTD_H
-# include <unistd.h>
-#endif
 #include <string.h>
 #include <ctype.h>
 
+#include "widl.h"
 #include "windef.h"
 #include "winbase.h"
-
-#include "widl.h"
 #include "utils.h"
 #include "wpp_private.h"
 #include "parser.h"
@@ -250,7 +245,7 @@ static void tlb_read(int fd, void *buf, int count)
         error("error while reading importlib.\n");
 }
 
-static void tlb_lseek(int fd, off_t offset)
+static void tlb_lseek(int fd, int offset)
 {
     if(lseek(fd, offset, SEEK_SET) == -1)
         error("lseek failed\n");

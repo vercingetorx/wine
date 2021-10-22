@@ -19,7 +19,6 @@
  */
 
 #include "config.h"
-#include "wine/port.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -28,10 +27,9 @@
 #include <assert.h>
 #include <ctype.h>
 
-#include "wmctypes.h"
+#include "wmc.h"
 #include "winnls.h"
 #include "utils.h"
-#include "wmc.h"
 
 #define SUPPRESS_YACC_ERROR_MESSAGE
 

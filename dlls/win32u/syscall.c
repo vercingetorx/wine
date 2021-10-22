@@ -28,21 +28,92 @@
 #define WIN32_NO_STATUS
 #include "windef.h"
 #include "winnt.h"
-#include "winternl.h"
+#include "ntgdi_private.h"
+#include "ntuser.h"
 #include "wine/unixlib.h"
 
 
-/***********************************************************************
- *           NtGdiFlush    (win32u.@)
- */
-BOOL WINAPI NtGdiFlush(void)
-{
-    return TRUE;
-}
-
 static void * const syscalls[] =
 {
+    NtGdiAddFontMemResourceEx,
+    NtGdiAddFontResourceW,
+    NtGdiCombineRgn,
+    NtGdiCreateBitmap,
+    NtGdiCreateClientObj,
+    NtGdiCreateDIBBrush,
+    NtGdiCreateDIBSection,
+    NtGdiCreateEllipticRgn,
+    NtGdiCreateHalftonePalette,
+    NtGdiCreateHatchBrushInternal,
+    NtGdiCreatePaletteInternal,
+    NtGdiCreatePatternBrushInternal,
+    NtGdiCreatePen,
+    NtGdiCreateRectRgn,
+    NtGdiCreateRoundRectRgn,
+    NtGdiCreateSolidBrush,
+    NtGdiDdDDICloseAdapter,
+    NtGdiDdDDICreateDevice,
+    NtGdiDdDDIOpenAdapterFromDeviceName,
+    NtGdiDdDDIOpenAdapterFromHdc,
+    NtGdiDdDDIOpenAdapterFromLuid,
+    NtGdiDdDDIQueryStatistics,
+    NtGdiDdDDISetQueuedLimit,
+    NtGdiDeleteClientObj,
+    NtGdiDescribePixelFormat,
+    NtGdiDrawStream,
+    NtGdiEqualRgn,
+    NtGdiExtCreatePen,
+    NtGdiExtCreateRegion,
+    NtGdiExtGetObjectW,
+    NtGdiFlattenPath,
     NtGdiFlush,
+    NtGdiGetBitmapBits,
+    NtGdiGetBitmapDimension,
+    NtGdiGetColorAdjustment,
+    NtGdiGetDCObject,
+    NtGdiGetFontFileData,
+    NtGdiGetFontFileInfo,
+    NtGdiGetNearestPaletteIndex,
+    NtGdiGetPath,
+    NtGdiGetRegionData,
+    NtGdiGetRgnBox,
+    NtGdiGetSpoolMessage,
+    NtGdiGetSystemPaletteUse,
+    NtGdiGetTransform,
+    NtGdiHfontCreate,
+    NtGdiInitSpool,
+    NtGdiOffsetRgn,
+    NtGdiPathToRegion,
+    NtGdiPtInRegion,
+    NtGdiRectInRegion,
+    NtGdiRemoveFontMemResourceEx,
+    NtGdiRemoveFontResourceW,
+    NtGdiSaveDC,
+    NtGdiSetBitmapBits,
+    NtGdiSetBitmapDimension,
+    NtGdiSetBrushOrg,
+    NtGdiSetColorAdjustment,
+    NtGdiSetMagicColors,
+    NtGdiSetMetaRgn,
+    NtGdiSetPixelFormat,
+    NtGdiSetRectRgn,
+    NtGdiSetTextJustification,
+    NtGdiSetVirtualResolution,
+    NtGdiSwapBuffers,
+    NtGdiTransformPoints,
+    NtUserCloseDesktop,
+    NtUserCloseWindowStation,
+    NtUserCreateDesktopEx,
+    NtUserCreateWindowStation,
+    NtUserGetObjectInformation,
+    NtUserGetProcessWindowStation,
+    NtUserGetThreadDesktop,
+    NtUserOpenDesktop,
+    NtUserOpenInputDesktop,
+    NtUserOpenWindowStation,
+    NtUserSetObjectInformation,
+    NtUserSetProcessWindowStation,
+    NtUserSetThreadDesktop,
 };
 
 static BYTE arguments[ARRAY_SIZE(syscalls)];
@@ -57,7 +128,15 @@ static SYSTEM_SERVICE_TABLE syscall_table =
 
 static NTSTATUS init( void *dispatcher )
 {
-    return ntdll_init_syscalls( 1, &syscall_table, dispatcher );
+    NTSTATUS status;
+    if ((status = ntdll_init_syscalls( 1, &syscall_table, dispatcher ))) return status;
+    if ((status = gdi_init())) return status;
+    winstation_init();
+    return STATUS_SUCCESS;
 }
 
-unixlib_entry_t __wine_unix_call_funcs[] = { init };
+unixlib_entry_t __wine_unix_call_funcs[] =
+{
+    init,
+    callbacks_init,
+};

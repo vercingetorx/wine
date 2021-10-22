@@ -19,8 +19,6 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#include "config.h"
-
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -31,7 +29,6 @@
 #include "winuser.h"
 #include "tlhelp32.h"
 #include "wine/debug.h"
-#include "wine/exception.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(winedbg);
 
@@ -177,7 +174,7 @@ static void module_print_info(const struct info_module *module, BOOL is_embedded
                is_embedded ? "\\" : get_symtype_str(&module->mi), module->name);
 }
 
-static int      module_compare(const void* p1, const void* p2)
+static int __cdecl module_compare(const void* p1, const void* p2)
 {
     struct info_module *left = (struct info_module *)p1;
     struct info_module *right = (struct info_module *)p2;
@@ -287,7 +284,7 @@ void info_win32_module(DWORD64 base)
     HeapFree(GetProcessHeap(), 0, im.modules);
 
     if (base && !num_printed)
-        dbg_printf("'0x%x%08x' is not a valid module address\n", (DWORD)(base >> 32), (DWORD)base);
+        dbg_printf("'0x%0*I64x' is not a valid module address\n", ADDRWIDTH, base);
 }
 
 struct class_walker
@@ -794,8 +791,8 @@ void info_win32_virtual(DWORD pid)
             type = "";
             prot[0] = '\0';
         }
-        dbg_printf("%08lx %08lx %s %s %s\n",
-                   (DWORD_PTR)addr, (DWORD_PTR)addr + mbi.RegionSize - 1, state, type, prot);
+        dbg_printf("%0*lx %0*lx %s %s %s\n",
+                   ADDRWIDTH, (DWORD_PTR)addr, ADDRWIDTH, (DWORD_PTR)addr + mbi.RegionSize - 1, state, type, prot);
         if (addr + mbi.RegionSize < addr) /* wrap around ? */
             break;
         addr += mbi.RegionSize;
@@ -896,10 +893,10 @@ void info_win32_exception(void)
         break;
     case EXCEPTION_ACCESS_VIOLATION:
         if (rec->NumberParameters == 2)
-            dbg_printf("page fault on %s access to 0x%08lx",
+            dbg_printf("page fault on %s access to 0x%0*lx",
                        rec->ExceptionInformation[0] == EXCEPTION_WRITE_FAULT ? "write" :
                        rec->ExceptionInformation[0] == EXCEPTION_EXECUTE_FAULT ? "execute" : "read",
-                       rec->ExceptionInformation[1]);
+                       ADDRWIDTH, rec->ExceptionInformation[1]);
         else
             dbg_printf("page fault");
         break;
@@ -964,15 +961,15 @@ void info_win32_exception(void)
         break;
     case EXCEPTION_WINE_CXX_EXCEPTION:
         if(rec->NumberParameters == 3 && rec->ExceptionInformation[0] == EXCEPTION_WINE_CXX_FRAME_MAGIC)
-            dbg_printf("C++ exception(object = 0x%08lx, type = 0x%08lx)",
-                       rec->ExceptionInformation[1], rec->ExceptionInformation[2]);
+            dbg_printf("C++ exception(object = 0x%0*lx, type = 0x%0*lx)",
+                       ADDRWIDTH, rec->ExceptionInformation[1], ADDRWIDTH, rec->ExceptionInformation[2]);
         else if(rec->NumberParameters == 4 && rec->ExceptionInformation[0] == EXCEPTION_WINE_CXX_FRAME_MAGIC)
             dbg_printf("C++ exception(object = %p, type = %p, base = %p)",
                        (void*)rec->ExceptionInformation[1], (void*)rec->ExceptionInformation[2],
                        (void*)rec->ExceptionInformation[3]);
         else
-            dbg_printf("C++ exception with strange parameter count %d or magic 0x%08lx",
-                       rec->NumberParameters, rec->ExceptionInformation[0]);
+            dbg_printf("C++ exception with strange parameter count %d or magic 0x%0*lx",
+                       rec->NumberParameters, ADDRWIDTH, rec->ExceptionInformation[0]);
         break;
     default:
         dbg_printf("0x%08x", rec->ExceptionCode);

@@ -4,4 +4,6 @@ IMPORTS   = win32u ntdll winecrt0
 EXTRADLLFLAGS = -nodefaultlibs -Wl,--image-base,0x6f200000
 
 C_SRCS = \
-	syscall.c
+	gdi.c \
+	syscall.c \
+	user.c

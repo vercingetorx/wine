@@ -26,6 +26,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/types.h>
+#include <sys/stat.h>
 #include <fcntl.h>
 #include <time.h>
 #include <errno.h>
@@ -33,11 +34,35 @@
 # include <unistd.h>
 #endif
 
-#if defined(_WIN32) && !defined(__CYGWIN__)
+#ifdef _WIN32
+# include <direct.h>
+# include <io.h>
 # include <process.h>
+# define mkdir(path,mode) mkdir(path)
+# ifndef S_ISREG
+#  define S_ISREG(mod) (((mod) & _S_IFMT) == _S_IFREG)
+# endif
+# ifdef _MSC_VER
+#  define popen _popen
+#  define pclose _pclose
+#  define strtoll _strtoi64
+#  define strtoull _strtoui64
+#  define strncasecmp _strnicmp
+#  define strcasecmp _stricmp
+# endif
 #else
 # include <sys/wait.h>
 # include <unistd.h>
+# ifndef O_BINARY
+#  define O_BINARY 0
+# endif
+# ifndef __int64
+#   if defined(__x86_64__) || defined(__aarch64__) || defined(__powerpc64__)
+#     define __int64 long
+#   else
+#     define __int64 long long
+#   endif
+# endif
 #endif
 
 #if !defined(__GNUC__) && !defined(__attribute__)
@@ -176,7 +201,7 @@ static inline struct strarray strarray_fromstring( const char *str, const char *
 static inline struct strarray strarray_frompath( const char *path )
 {
     if (!path) return empty_strarray;
-#if defined(_WIN32) && !defined(__CYGWIN__)
+#ifdef _WIN32
     return strarray_fromstring( path, ";" );
 #else
     return strarray_fromstring( path, ":" );
@@ -228,7 +253,7 @@ static inline void strarray_trace( struct strarray args )
 
 static inline int strarray_spawn( struct strarray args )
 {
-#if defined(_WIN32) && !defined(__CYGWIN__)
+#ifdef _WIN32
     strarray_add( &args, NULL );
     return _spawnvp( _P_WAIT, args.str[0], args.str );
 #else
@@ -308,6 +333,116 @@ static inline int make_temp_file( const char *prefix, const char *suffix, char *
     }
     fprintf( stderr, "failed to create temp file for %s%s\n", prefix, suffix );
     exit(1);
+}
+
+
+/* command-line option parsing */
+/* partly based on the Glibc getopt() implementation */
+
+struct long_option
+{
+    const char *name;
+    int has_arg;
+    int val;
+};
+
+static inline struct strarray parse_options( int argc, char **argv, const char *short_opts,
+                                             const struct long_option *long_opts, int long_only,
+                                             void (*callback)( int, char* ) )
+{
+    struct strarray ret = empty_strarray;
+    const char *flag;
+    char *start, *end;
+    int i;
+
+#define OPT_ERR(fmt) { callback( '?', strmake( fmt, argv[1] )); continue; }
+
+    for (i = 1; i < argc; i++)
+    {
+        if (argv[i][0] != '-' || !argv[i][1])  /* not an option */
+        {
+            strarray_add( &ret, argv[i] );
+            continue;
+        }
+        if (!strcmp( argv[i], "--" ))
+        {
+            /* add remaining args */
+            while (++i < argc) strarray_add( &ret, argv[i] );
+            break;
+        }
+        start = argv[i] + 1 + (argv[i][1] == '-');
+
+        if (argv[i][1] == '-' || (long_only && (argv[i][2] || !strchr( short_opts, argv[i][1] ))))
+        {
+            /* handle long option */
+            const struct long_option *opt, *found = NULL;
+            int count = 0;
+
+            if (!(end = strchr( start, '=' ))) end = start + strlen(start);
+            for (opt = long_opts; opt && opt->name; opt++)
+            {
+                if (strncmp( opt->name, start, end - start )) continue;
+                if (!opt->name[end - start])  /* exact match */
+                {
+                    found = opt;
+                    count = 1;
+                    break;
+                }
+                if (!found)
+                {
+                    found = opt;
+                    count++;
+                }
+                else if (long_only || found->has_arg != opt->has_arg || found->val != opt->val)
+                {
+                    count++;
+                }
+            }
+
+            if (count > 1) OPT_ERR( "option '%s' is ambiguous" );
+
+            if (found)
+            {
+                if (*end)
+                {
+                    if (!found->has_arg) OPT_ERR( "argument not allowed in '%s'" );
+                    end++;  /* skip '=' */
+                }
+                else if (found->has_arg == 1)
+                {
+                    if (i == argc - 1) OPT_ERR( "option '%s' requires an argument" );
+                    end = argv[++i];
+                }
+                else end = NULL;
+
+                callback( found->val, end );
+                continue;
+            }
+            if (argv[i][1] == '-' || !long_only || !strchr( short_opts, argv[i][1] ))
+                OPT_ERR( "unrecognized option '%s'" );
+        }
+
+        /* handle short option */
+        for ( ; *start; start++)
+        {
+            if (!(flag = strchr( short_opts, *start ))) OPT_ERR( "invalid option '%s'" );
+            if (flag[1] == ':')
+            {
+                end = start + 1;
+                if (!*end) end = NULL;
+                if (flag[2] != ':' && !end)
+                {
+                    if (i == argc - 1) OPT_ERR( "option '%s' requires an argument" );
+                    end = argv[++i];
+                }
+                callback( *start, end );
+                break;
+            }
+            callback( *start, NULL );
+        }
+    }
+    return ret;
+#undef OPT_ERR
 }
 
 #endif /* __WINE_TOOLS_H */

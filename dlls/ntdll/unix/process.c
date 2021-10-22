@@ -24,7 +24,6 @@
 #endif
 
 #include "config.h"
-#include "wine/port.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -47,9 +46,7 @@
 #ifdef HAVE_SYS_WAIT_H
 # include <sys/wait.h>
 #endif
-#ifdef HAVE_UNISTD_H
-# include <unistd.h>
-#endif
+#include <unistd.h>
 #ifdef HAVE_MACH_MACH_H
 # include <mach/mach.h>
 #endif
@@ -61,7 +58,6 @@
 #include "winioctl.h"
 #include "unix_private.h"
 #include "wine/condrv.h"
-#include "wine/exception.h"
 #include "wine/server.h"
 #include "wine/debug.h"
 

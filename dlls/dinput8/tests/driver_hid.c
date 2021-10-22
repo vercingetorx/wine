@@ -96,9 +96,15 @@ static void expect_queue_reset( struct expect_queue *queue, void *buffer, unsign
     {
         winetest_push_context( "%s expect[%d]", tmp->context, tmp - missing );
         if (tmp->broken)
+        {
+            todo_wine_if( tmp->todo )
             win_skip( "broken (code %#x id %u len %u)\n", tmp->code, tmp->report_id, tmp->report_len );
+        }
         else
+        {
+            todo_wine_if( tmp->todo )
             ok( 0, "missing (code %#x id %u len %u)\n", tmp->code, tmp->report_id, tmp->report_len );
+        }
         winetest_pop_context();
         tmp++;
     }
@@ -123,7 +129,8 @@ static void expect_queue_next( struct expect_queue *queue, ULONG code, HID_XFER_
     tmp = queue->pos;
     while (tmp < queue->end)
     {
-        if (!tmp->broken || running_under_wine) break;
+        if (running_under_wine && !tmp->todo) break;
+        if (!running_under_wine && !tmp->broken) break;
         if (tmp->code == code && tmp->report_id == id && tmp->report_len == len &&
             (!compare_buf || RtlCompareMemory( tmp->report_buf, buf, len ) == len))
             break;
@@ -137,14 +144,25 @@ static void expect_queue_next( struct expect_queue *queue, ULONG code, HID_XFER_
 
     ok( tmp != &queue->spurious, "got spurious packet\n" );
 
+    winetest_push_context( "%s expect[%d]", tmp->context, tmp - queue->buffer );
+    todo_wine_if( tmp->todo )
+    ok( 1, "found code %#x id %u len %u\n", tmp->code, tmp->report_id, tmp->report_len );
+    winetest_pop_context();
+
     tmp = missing;
     while (tmp != missing_end)
     {
         winetest_push_context( "%s expect[%d]", tmp->context, tmp - missing );
         if (tmp->broken)
+        {
+            todo_wine_if( tmp->todo )
             win_skip( "broken (code %#x id %u len %u)\n", tmp->code, tmp->report_id, tmp->report_len );
+        }
         else
+        {
+            todo_wine_if( tmp->todo )
             ok( 0, "missing (code %#x id %u len %u)\n", tmp->code, tmp->report_id, tmp->report_len );
+        }
         winetest_pop_context();
         tmp++;
     }
@@ -480,7 +498,6 @@ static NTSTATUS WINAPI driver_internal_ioctl( DEVICE_OBJECT *device, IRP *irp )
         ok( !in_size, "got input size %u\n", in_size );
         ok( out_size == sizeof(*packet), "got output size %u\n", out_size );
 
-        ok( packet->reportId == report_id, "got id %u\n", packet->reportId );
         ok( packet->reportBufferLen >= expected_size, "got len %u\n", packet->reportBufferLen );
         ok( !!packet->reportBuffer, "got buffer %p\n", packet->reportBuffer );
 
@@ -504,7 +521,6 @@ static NTSTATUS WINAPI driver_internal_ioctl( DEVICE_OBJECT *device, IRP *irp )
         ok( in_size == sizeof(*packet), "got input size %u\n", in_size );
         ok( !out_size, "got output size %u\n", out_size );
 
-        ok( packet->reportId == report_id, "got id %u\n", packet->reportId );
         ok( packet->reportBufferLen >= expected_size, "got len %u\n", packet->reportBufferLen );
         ok( !!packet->reportBuffer, "got buffer %p\n", packet->reportBuffer );
 
@@ -529,7 +545,6 @@ static NTSTATUS WINAPI driver_internal_ioctl( DEVICE_OBJECT *device, IRP *irp )
         ok( !in_size, "got input size %u\n", in_size );
         ok( out_size == sizeof(*packet), "got output size %u\n", out_size );
 
-        ok( packet->reportId == report_id, "got id %u\n", packet->reportId );
         ok( packet->reportBufferLen >= expected_size, "got len %u\n", packet->reportBufferLen );
         ok( !!packet->reportBuffer, "got buffer %p\n", packet->reportBuffer );
 
@@ -553,7 +568,6 @@ static NTSTATUS WINAPI driver_internal_ioctl( DEVICE_OBJECT *device, IRP *irp )
         ok( in_size == sizeof(*packet), "got input size %u\n", in_size );
         ok( !out_size, "got output size %u\n", out_size );
 
-        ok( packet->reportId == report_id, "got id %u\n", packet->reportId );
         ok( packet->reportBufferLen >= expected_size, "got len %u\n", packet->reportBufferLen );
         ok( !!packet->reportBuffer, "got buffer %p\n", packet->reportBuffer );
 

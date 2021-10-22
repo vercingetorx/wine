@@ -20,7 +20,6 @@
  */
 
 #include "config.h"
-#include "wine/port.h"
 
 #include <assert.h>
 #include <ctype.h>
@@ -30,9 +29,6 @@
 #include <string.h>
 #include <stdarg.h>
 #include <time.h>
-#ifdef HAVE_UNISTD_H
-# include <unistd.h>
-#endif
 
 #include "../tools.h"
 #include "utils.h"
@@ -425,7 +421,7 @@ static const char * const pp_if_state_str[] = {
 void pp_push_if(pp_if_state_t s)
 {
 	if(if_stack_idx >= MAXIFSTACK)
-		error("#if-stack overflow; #{if,ifdef,ifndef} nested too deeply (> %d)", MAXIFSTACK);
+		error("#if-stack overflow; #{if,ifdef,ifndef} nested too deeply (> %d)\n", MAXIFSTACK);
 
 	if(pp_flex_debug)
 		fprintf(stderr, "Push if %s:%d: %s(%d) -> %s(%d)\n", pp_status.input, pp_status.line_number, pp_if_state_str[pp_if_state()], if_stack_idx, pp_if_state_str[s], if_stack_idx+1);

@@ -25,7 +25,6 @@
 #ifdef __i386__
 
 #include "config.h"
-#include "wine/port.h"
 
 #include <errno.h>
 #include <signal.h>
@@ -34,9 +33,7 @@
 #include <stdio.h>
 #include <sys/types.h>
 #include <assert.h>
-#ifdef HAVE_UNISTD_H
-# include <unistd.h>
-#endif
+#include <unistd.h>
 #ifdef HAVE_SYS_PARAM_H
 # include <sys/param.h>
 #endif
@@ -60,7 +57,6 @@
 #include "winternl.h"
 #include "ddk/wdm.h"
 #include "wine/asm.h"
-#include "wine/exception.h"
 #include "unix_private.h"
 #include "wine/debug.h"
 
@@ -1698,7 +1694,7 @@ static BOOL handle_syscall_fault( ucontext_t *sigcontext, void *stack_ptr,
     struct syscall_frame *frame = x86_thread_data()->syscall_frame;
     DWORD i, *stack;
 
-    if (!is_inside_syscall( sigcontext )) return FALSE;
+    if (!is_inside_syscall( sigcontext ) && !ntdll_get_thread_data()->jmp_buf) return FALSE;
 
     TRACE( "code=%x flags=%x addr=%p ip=%08x tid=%04x\n",
            rec->ExceptionCode, rec->ExceptionFlags, rec->ExceptionAddress,
