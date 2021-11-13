@@ -48,7 +48,7 @@
 @ cdecl __AdjustPointer(ptr ptr)
 @ stub __BuildCatchObject
 @ stub __BuildCatchObjectHelper
-@ stdcall -arch=x86_64,arm64 __C_specific_handler(ptr long ptr ptr) ntdll.__C_specific_handler
+@ stdcall -arch=x86_64,arm,arm64 __C_specific_handler(ptr long ptr ptr) ntdll.__C_specific_handler
 @ cdecl -arch=i386,x86_64,arm,arm64 __CxxDetectRethrow(ptr)
 @ cdecl -arch=i386,x86_64,arm,arm64 __CxxExceptionFilter(ptr ptr long ptr)
 @ cdecl -arch=i386,x86_64,arm,arm64 -norelay __CxxFrameHandler(ptr ptr ptr ptr)
@@ -94,12 +94,13 @@
 @ cdecl __initialize_lconv_for_unsigned_char() __lconv_init
 @ cdecl __intrinsic_abnormal_termination()
 @ cdecl -arch=i386,x86_64,arm,arm64 -norelay __intrinsic_setjmp(ptr) MSVCRT__setjmp
-@ cdecl -arch=x86_64,arm64 -norelay __intrinsic_setjmpex(ptr ptr) __wine_setjmpex
+@ cdecl -arch=x86_64,arm,arm64 -norelay __intrinsic_setjmpex(ptr ptr) __wine_setjmpex
 @ cdecl __isascii(long)
 @ cdecl __iscsym(long)
 @ cdecl __iscsymf(long)
 @ stub __iswcsym
 @ stub __iswcsymf
+@ stdcall -arch=arm __jump_unwind(ptr ptr) ntdll.__jump_unwind
 @ cdecl -arch=i386 -norelay __libm_sse2_acos()
 @ cdecl -arch=i386 -norelay __libm_sse2_acosf()
 @ cdecl -arch=i386 -norelay __libm_sse2_asin()

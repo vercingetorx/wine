@@ -3321,18 +3321,37 @@ static BOOL CALLBACK find_test_device( const DIDEVICEINSTANCEW *devinst, void *c
     return DIENUM_CONTINUE;
 }
 
+struct check_objects_todos
+{
+    BOOL type;
+    BOOL guid;
+    BOOL usage;
+};
+
 struct check_objects_params
 {
+    DWORD version;
     UINT index;
     UINT expect_count;
     const DIDEVICEOBJECTINSTANCEW *expect_objs;
+    const struct check_objects_todos *todo_objs;
+    BOOL todo_extra;
 };
 
 static BOOL CALLBACK check_objects( const DIDEVICEOBJECTINSTANCEW *obj, void *args )
 {
     static const DIDEVICEOBJECTINSTANCEW unexpected_obj = {0};
+    static const struct check_objects_todos todo_none = {0};
     struct check_objects_params *params = args;
     const DIDEVICEOBJECTINSTANCEW *exp = params->expect_objs + params->index;
+    const struct check_objects_todos *todo;
+
+    if (!params->todo_objs) todo = &todo_none;
+    else todo = params->todo_objs + params->index;
+
+    todo_wine_if( params->todo_extra && params->index >= params->expect_count )
+    ok( params->index < params->expect_count, "unexpected extra object\n" );
+    if (params->index >= params->expect_count) return DIENUM_STOP;
 
     winetest_push_context( "obj[%d]", params->index );
 
@@ -3340,8 +3359,11 @@ static BOOL CALLBACK check_objects( const DIDEVICEOBJECTINSTANCEW *obj, void *ar
     if (params->index >= params->expect_count) exp = &unexpected_obj;
 
     check_member( *obj, *exp, "%u", dwSize );
+    todo_wine_if( todo->guid )
     check_member_guid( *obj, *exp, guidType );
+    todo_wine_if( params->version < 0x700 && (obj->dwType & DIDFT_BUTTON) )
     check_member( *obj, *exp, "%#x", dwOfs );
+    todo_wine_if( todo->type )
     check_member( *obj, *exp, "%#x", dwType );
     check_member( *obj, *exp, "%#x", dwFlags );
     if (!localized) todo_wine check_member_wstr( *obj, *exp, tszName );
@@ -3350,6 +3372,7 @@ static BOOL CALLBACK check_objects( const DIDEVICEOBJECTINSTANCEW *obj, void *ar
     check_member( *obj, *exp, "%u", wCollectionNumber );
     check_member( *obj, *exp, "%u", wDesignatorIndex );
     check_member( *obj, *exp, "%#04x", wUsagePage );
+    todo_wine_if( todo->usage )
     check_member( *obj, *exp, "%#04x", wUsage );
     check_member( *obj, *exp, "%#04x", dwDimension );
     check_member( *obj, *exp, "%#04x", wExponent );
@@ -3388,11 +3411,8 @@ static BOOL CALLBACK check_effects( const DIEFFECTINFOW *effect, void *args )
 
     check_member( *effect, *exp, "%u", dwSize );
     check_member_guid( *effect, *exp, guid );
-    todo_wine
     check_member( *effect, *exp, "%#x", dwEffType );
-    todo_wine
     check_member( *effect, *exp, "%#x", dwStaticParams );
-    todo_wine
     check_member( *effect, *exp, "%#x", dwDynamicParams );
     check_member_wstr( *effect, *exp, tszName );
 
@@ -3712,6 +3732,7 @@ static void test_simple_joystick(void)
 
     struct check_objects_params check_objects_params =
     {
+        .version = DIRECTINPUT_VERSION,
         .expect_count = ARRAY_SIZE(expect_objects),
         .expect_objs = expect_objects,
     };
@@ -5306,7 +5327,7 @@ static BOOL test_device_types(void)
     return success;
 }
 
-static void test_periodic_effect( IDirectInputDevice8W *device, HANDLE file )
+static void test_periodic_effect( IDirectInputDevice8W *device, HANDLE file, DWORD version )
 {
     struct hid_expect expect_download[] =
     {
@@ -5329,7 +5350,7 @@ static void test_periodic_effect( IDirectInputDevice8W *device, HANDLE file )
             .code = IOCTL_HID_WRITE_REPORT,
             .report_id = 3,
             .report_len = 11,
-            .report_buf = {0x03,0x01,0x01,0x08,0x01,0x00,0x06,0x00,0x01,0x55,0xd5},
+            .report_buf = {0x03,0x01,0x01,0x08,0x01,0x00,version >= 0x700 ? 0x06 : 0x00,0x00,0x01,0x55,0xd5},
         },
         /* start command when DIEP_START is set */
         {
@@ -5398,9 +5419,9 @@ static void test_periodic_effect( IDirectInputDevice8W *device, HANDLE file )
         .report_buf = {1, 0x01},
     };
     static const DWORD expect_axes_init[2] = {0};
-    static const DIEFFECT expect_desc_init =
+    const DIEFFECT expect_desc_init =
     {
-        .dwSize = sizeof(DIEFFECT),
+        .dwSize = version >= 0x700 ? sizeof(DIEFFECT_DX6) : sizeof(DIEFFECT_DX5),
         .dwTriggerButton = -1,
         .rgdwAxes = (void *)expect_axes_init,
     };
@@ -5431,9 +5452,9 @@ static void test_periodic_effect( IDirectInputDevice8W *device, HANDLE file )
         .dwPhase = 3000,
         .dwPeriod = 4000,
     };
-    static const DIEFFECT expect_desc =
+    const DIEFFECT expect_desc =
     {
-        .dwSize = sizeof(DIEFFECT),
+        .dwSize = version >= 0x700 ? sizeof(DIEFFECT_DX6) : sizeof(DIEFFECT_DX5),
         .dwFlags = DIEFF_SPHERICAL | DIEFF_OBJECTIDS,
         .dwDuration = 1000,
         .dwSamplePeriod = 2000,
@@ -5455,7 +5476,7 @@ static void test_periodic_effect( IDirectInputDevice8W *device, HANDLE file )
     LONG directions[4] = {0};
     DIEFFECT desc = {0};
     DWORD axes[4] = {0};
-    ULONG ref, flags;
+    ULONG i, ref, flags;
     HRESULT hr;
     GUID guid;
 
@@ -5477,19 +5498,30 @@ static void test_periodic_effect( IDirectInputDevice8W *device, HANDLE file )
     ok( hr == DI_OK, "EnumCreatedEffectObjects returned %#x\n", hr );
     ok( check_params.count == 1, "got count %u, expected 1\n", check_params.count );
 
-    hr = IDirectInputEffect_Initialize( effect, NULL, DIRECTINPUT_VERSION, &GUID_Sine );
+    hr = IDirectInputEffect_Initialize( effect, NULL, version, &GUID_Sine );
     ok( hr == DIERR_INVALIDPARAM, "Initialize returned %#x\n", hr );
+    hr = IDirectInputEffect_Initialize( effect, instance, 0x800 - (version - 0x700), &GUID_Sine );
+    if (version == 0x800)
+    {
+        todo_wine
+        ok( hr == DIERR_BETADIRECTINPUTVERSION, "Initialize returned %#x\n", hr );
+    }
+    else
+    {
+        todo_wine
+        ok( hr == DIERR_OLDDIRECTINPUTVERSION, "Initialize returned %#x\n", hr );
+    }
     hr = IDirectInputEffect_Initialize( effect, instance, 0, &GUID_Sine );
     todo_wine
     ok( hr == DIERR_NOTINITIALIZED, "Initialize returned %#x\n", hr );
-    hr = IDirectInputEffect_Initialize( effect, instance, DIRECTINPUT_VERSION, NULL );
+    hr = IDirectInputEffect_Initialize( effect, instance, version, NULL );
     ok( hr == E_POINTER, "Initialize returned %#x\n", hr );
 
-    hr = IDirectInputEffect_Initialize( effect, instance, DIRECTINPUT_VERSION, &GUID_NULL );
+    hr = IDirectInputEffect_Initialize( effect, instance, version, &GUID_NULL );
     ok( hr == DIERR_DEVICENOTREG, "Initialize returned %#x\n", hr );
-    hr = IDirectInputEffect_Initialize( effect, instance, DIRECTINPUT_VERSION, &GUID_Sine );
+    hr = IDirectInputEffect_Initialize( effect, instance, version, &GUID_Sine );
     ok( hr == DI_OK, "Initialize returned %#x\n", hr );
-    hr = IDirectInputEffect_Initialize( effect, instance, DIRECTINPUT_VERSION, &GUID_Square );
+    hr = IDirectInputEffect_Initialize( effect, instance, version, &GUID_Square );
     ok( hr == DI_OK, "Initialize returned %#x\n", hr );
 
     hr = IDirectInputEffect_GetEffectGuid( effect, NULL );
@@ -5505,7 +5537,15 @@ static void test_periodic_effect( IDirectInputDevice8W *device, HANDLE file )
     ok( hr == DI_OK, "GetParameters returned %#x\n", hr );
     hr = IDirectInputEffect_GetParameters( effect, &desc, 0 );
     ok( hr == DIERR_INVALIDPARAM, "GetParameters returned %#x\n", hr );
-    desc.dwSize = sizeof(DIEFFECT);
+    desc.dwSize = sizeof(DIEFFECT_DX5) + 2;
+    hr = IDirectInputEffect_GetParameters( effect, &desc, 0 );
+    ok( hr == DIERR_INVALIDPARAM, "GetParameters returned %#x\n", hr );
+    desc.dwSize = sizeof(DIEFFECT_DX5);
+    hr = IDirectInputEffect_GetParameters( effect, &desc, 0 );
+    ok( hr == DI_OK, "GetParameters returned %#x\n", hr );
+    hr = IDirectInputEffect_GetParameters( effect, &desc, DIEP_STARTDELAY );
+    ok( hr == DIERR_INVALIDPARAM, "GetParameters returned %#x\n", hr );
+    desc.dwSize = sizeof(DIEFFECT_DX6);
     hr = IDirectInputEffect_GetParameters( effect, &desc, 0 );
     ok( hr == DI_OK, "GetParameters returned %#x\n", hr );
 
@@ -5525,18 +5565,21 @@ static void test_periodic_effect( IDirectInputDevice8W *device, HANDLE file )
     ok( hr == DI_OK, "GetParameters returned %#x\n", hr );
     check_member( desc, expect_desc_init, "%u", dwDuration );
     memset( &desc, 0xcd, sizeof(desc) );
-    desc.dwSize = sizeof(DIEFFECT);
+    desc.dwSize = version >= 0x700 ? sizeof(DIEFFECT_DX6) : sizeof(DIEFFECT_DX5);
     desc.dwFlags = 0;
-    flags = DIEP_GAIN | DIEP_SAMPLEPERIOD | DIEP_STARTDELAY | DIEP_TRIGGERREPEATINTERVAL;
+    desc.dwStartDelay = 0xdeadbeef;
+    flags = DIEP_GAIN | DIEP_SAMPLEPERIOD | DIEP_TRIGGERREPEATINTERVAL |
+            (version >= 0x700 ? DIEP_STARTDELAY : 0);
     hr = IDirectInputEffect_GetParameters( effect, &desc, flags );
     ok( hr == DI_OK, "GetParameters returned %#x\n", hr );
     check_member( desc, expect_desc_init, "%u", dwSamplePeriod );
     check_member( desc, expect_desc_init, "%u", dwGain );
-    check_member( desc, expect_desc_init, "%u", dwStartDelay );
+    if (version >= 0x700) check_member( desc, expect_desc_init, "%u", dwStartDelay );
+    else ok( desc.dwStartDelay == 0xdeadbeef, "got dwStartDelay %#x\n", desc.dwStartDelay );
     check_member( desc, expect_desc_init, "%u", dwTriggerRepeatInterval );
 
     memset( &desc, 0xcd, sizeof(desc) );
-    desc.dwSize = sizeof(DIEFFECT);
+    desc.dwSize = version >= 0x700 ? sizeof(DIEFFECT_DX6) : sizeof(DIEFFECT_DX5);
     desc.dwFlags = 0;
     desc.lpEnvelope = NULL;
     hr = IDirectInputEffect_GetParameters( effect, &desc, DIEP_ENVELOPE );
@@ -5555,7 +5598,7 @@ static void test_periodic_effect( IDirectInputDevice8W *device, HANDLE file )
     desc.lpEnvelope = NULL;
     desc.cbTypeSpecificParams = 0;
     desc.lpvTypeSpecificParams = NULL;
-    hr = IDirectInputEffect_GetParameters( effect, &desc, DIEP_ALLPARAMS );
+    hr = IDirectInputEffect_GetParameters( effect, &desc, version >= 0x700 ? DIEP_ALLPARAMS : DIEP_ALLPARAMS_DX5 );
     ok( hr == DIERR_INVALIDPARAM, "GetParameters returned %#x\n", hr );
     hr = IDirectInputEffect_GetParameters( effect, &desc, DIEP_TRIGGERBUTTON );
     ok( hr == DIERR_INVALIDPARAM, "GetParameters returned %#x\n", hr );
@@ -5609,7 +5652,7 @@ static void test_periodic_effect( IDirectInputDevice8W *device, HANDLE file )
     desc.lpEnvelope = &envelope;
     desc.cbTypeSpecificParams = sizeof(periodic);
     desc.lpvTypeSpecificParams = &periodic;
-    hr = IDirectInputEffect_GetParameters( effect, &desc, DIEP_ALLPARAMS );
+    hr = IDirectInputEffect_GetParameters( effect, &desc, version >= 0x700 ? DIEP_ALLPARAMS : DIEP_ALLPARAMS_DX5 );
     ok( hr == DI_OK, "GetParameters returned %#x\n", hr );
     check_member( desc, expect_desc_init, "%u", dwDuration );
     check_member( desc, expect_desc_init, "%u", dwSamplePeriod );
@@ -5624,7 +5667,8 @@ static void test_periodic_effect( IDirectInputDevice8W *device, HANDLE file )
     check_member( desc, expect_desc_init, "%p", lpEnvelope );
     todo_wine
     check_member( desc, expect_desc_init, "%u", cbTypeSpecificParams );
-    check_member( desc, expect_desc_init, "%u", dwStartDelay );
+    if (version >= 0x700) check_member( desc, expect_desc_init, "%u", dwStartDelay );
+    else ok( desc.dwStartDelay == 0xcdcdcdcd, "got dwStartDelay %#x\n", desc.dwStartDelay );
 
     set_hid_expect( file, &expect_dc_reset, sizeof(expect_dc_reset) );
     hr = IDirectInputDevice8_Unacquire( device );
@@ -5647,7 +5691,7 @@ static void test_periodic_effect( IDirectInputDevice8W *device, HANDLE file )
     memset( &desc, 0, sizeof(desc) );
     hr = IDirectInputEffect_SetParameters( effect, &desc, DIEP_NODOWNLOAD );
     ok( hr == DIERR_INVALIDPARAM, "SetParameters returned %#x\n", hr );
-    desc.dwSize = sizeof(DIEFFECT);
+    desc.dwSize = version >= 0x700 ? sizeof(DIEFFECT_DX6) : sizeof(DIEFFECT_DX5);
     hr = IDirectInputEffect_SetParameters( effect, &desc, DIEP_NODOWNLOAD );
     ok( hr == DI_DOWNLOADSKIPPED, "SetParameters returned %#x\n", hr );
 
@@ -5684,12 +5728,13 @@ static void test_periodic_effect( IDirectInputDevice8W *device, HANDLE file )
     hr = IDirectInputEffect_Unload( effect );
     ok( hr == DI_NOEFFECT, "Unload returned %#x\n", hr );
 
-    hr = IDirectInputEffect_SetParameters( effect, &expect_desc,
-                                           DIEP_GAIN | DIEP_SAMPLEPERIOD | DIEP_STARTDELAY |
-                                               DIEP_TRIGGERREPEATINTERVAL | DIEP_NODOWNLOAD );
+    flags = DIEP_GAIN | DIEP_SAMPLEPERIOD | DIEP_TRIGGERREPEATINTERVAL | DIEP_NODOWNLOAD;
+    if (version >= 0x700) flags |= DIEP_STARTDELAY;
+    hr = IDirectInputEffect_SetParameters( effect, &expect_desc, flags );
     ok( hr == DI_DOWNLOADSKIPPED, "SetParameters returned %#x\n", hr );
     desc.dwDuration = 0;
-    flags = DIEP_DURATION | DIEP_GAIN | DIEP_SAMPLEPERIOD | DIEP_STARTDELAY | DIEP_TRIGGERREPEATINTERVAL;
+    flags = DIEP_DURATION | DIEP_GAIN | DIEP_SAMPLEPERIOD | DIEP_TRIGGERREPEATINTERVAL;
+    if (version >= 0x700) flags |= DIEP_STARTDELAY;
     hr = IDirectInputEffect_GetParameters( effect, &desc, flags );
     ok( hr == DI_OK, "GetParameters returned %#x\n", hr );
     check_member( desc, expect_desc, "%u", dwDuration );
@@ -5701,7 +5746,8 @@ static void test_periodic_effect( IDirectInputDevice8W *device, HANDLE file )
     check_member( desc, expect_desc_init, "%p", rglDirection );
     check_member( desc, expect_desc_init, "%p", lpEnvelope );
     check_member( desc, expect_desc_init, "%u", cbTypeSpecificParams );
-    check_member( desc, expect_desc, "%u", dwStartDelay );
+    if (version >= 0x700) check_member( desc, expect_desc, "%u", dwStartDelay );
+    else ok( desc.dwStartDelay == 0, "got dwStartDelay %#x\n", desc.dwStartDelay );
 
     hr = IDirectInputEffect_Download( effect );
     ok( hr == DIERR_INCOMPLETEEFFECT, "Download returned %#x\n", hr );
@@ -5740,7 +5786,8 @@ static void test_periodic_effect( IDirectInputDevice8W *device, HANDLE file )
     desc.lpEnvelope = NULL;
     desc.cbTypeSpecificParams = 0;
     desc.lpvTypeSpecificParams = NULL;
-    hr = IDirectInputEffect_SetParameters( effect, &desc, DIEP_ALLPARAMS | DIEP_NODOWNLOAD );
+    flags = version >= 0x700 ? DIEP_ALLPARAMS : DIEP_ALLPARAMS_DX5;
+    hr = IDirectInputEffect_SetParameters( effect, &desc, flags | DIEP_NODOWNLOAD );
     ok( hr == DIERR_INVALIDPARAM, "SetParameters returned %#x\n", hr );
     hr = IDirectInputEffect_SetParameters( effect, &desc, DIEP_TRIGGERBUTTON | DIEP_NODOWNLOAD );
     ok( hr == DIERR_INVALIDPARAM, "SetParameters returned %#x\n", hr );
@@ -5990,9 +6037,122 @@ static void test_periodic_effect( IDirectInputDevice8W *device, HANDLE file )
 
     ref = IDirectInputEffect_Release( effect );
     ok( ref == 0, "Release returned %d\n", ref );
+
+    for (i = 1; i < 4; i++)
+    {
+        winetest_push_context( "%u axes", i );
+        hr = IDirectInputDevice8_CreateEffect( device, &GUID_Sine, NULL, &effect, NULL );
+        ok( hr == DI_OK, "CreateEffect returned %#x\n", hr );
+
+        desc.dwFlags = DIEFF_OBJECTIDS;
+        desc.cAxes = i;
+        desc.rgdwAxes[0] = DIDFT_ABSAXIS | DIDFT_MAKEINSTANCE( 2 ) | DIDFT_FFACTUATOR;
+        desc.rgdwAxes[1] = DIDFT_ABSAXIS | DIDFT_MAKEINSTANCE( 0 ) | DIDFT_FFACTUATOR;
+        desc.rgdwAxes[2] = DIDFT_ABSAXIS | DIDFT_MAKEINSTANCE( 1 ) | DIDFT_FFACTUATOR;
+        desc.rglDirection[0] = 0;
+        desc.rglDirection[1] = 0;
+        desc.rglDirection[2] = 0;
+        hr = IDirectInputEffect_SetParameters( effect, &desc, DIEP_AXES | DIEP_NODOWNLOAD );
+        ok( hr == DI_DOWNLOADSKIPPED, "SetParameters returned %#x\n", hr );
+
+        desc.dwFlags = DIEFF_CARTESIAN;
+        desc.cAxes = i == 3 ? 2 : 3;
+        desc.rglDirection[0] = 1000;
+        desc.rglDirection[1] = 2000;
+        desc.rglDirection[2] = 3000;
+        hr = IDirectInputEffect_SetParameters( effect, &desc, DIEP_DIRECTION | DIEP_NODOWNLOAD );
+        ok( hr == DIERR_INVALIDPARAM, "SetParameters returned %#x\n", hr );
+        desc.cAxes = i;
+        hr = IDirectInputEffect_SetParameters( effect, &desc, DIEP_DIRECTION | DIEP_NODOWNLOAD );
+        ok( hr == DI_DOWNLOADSKIPPED, "SetParameters returned %#x\n", hr );
+
+        desc.dwFlags = DIEFF_SPHERICAL;
+        desc.cAxes = i;
+        hr = IDirectInputEffect_GetParameters( effect, &desc, DIEP_DIRECTION );
+        ok( hr == DI_OK, "GetParameters returned %#x\n", hr );
+        desc.cAxes = 3;
+        memset( desc.rglDirection, 0xcd, 3 * sizeof(LONG) );
+        hr = IDirectInputEffect_GetParameters( effect, &desc, DIEP_DIRECTION );
+        ok( hr == DI_OK, "GetParameters returned %#x\n", hr );
+        ok( desc.cAxes == i, "got cAxes %u expected 2\n", desc.cAxes );
+        if (i == 1)
+        {
+            ok( desc.rglDirection[0] == 0, "got rglDirection[0] %d expected %d\n", desc.rglDirection[0], 0 );
+            ok( desc.rglDirection[1] == 0xcdcdcdcd, "got rglDirection[1] %d expected %d\n",
+                desc.rglDirection[1], 0xcdcdcdcd );
+            ok( desc.rglDirection[2] == 0xcdcdcdcd, "got rglDirection[2] %d expected %d\n",
+                desc.rglDirection[2], 0xcdcdcdcd );
+        }
+        else
+        {
+            ok( desc.rglDirection[0] == 6343, "got rglDirection[0] %d expected %d\n",
+                desc.rglDirection[0], 6343 );
+            if (i == 2)
+            {
+                ok( desc.rglDirection[1] == 0, "got rglDirection[1] %d expected %d\n",
+                    desc.rglDirection[1], 0 );
+                ok( desc.rglDirection[2] == 0xcdcdcdcd, "got rglDirection[2] %d expected %d\n",
+                    desc.rglDirection[2], 0xcdcdcdcd );
+            }
+            else
+            {
+                ok( desc.rglDirection[1] == 5330, "got rglDirection[1] %d expected %d\n",
+                    desc.rglDirection[1], 5330 );
+                ok( desc.rglDirection[2] == 0, "got rglDirection[2] %d expected %d\n",
+                    desc.rglDirection[2], 0 );
+            }
+        }
+
+        desc.dwFlags = DIEFF_CARTESIAN;
+        desc.cAxes = i;
+        hr = IDirectInputEffect_GetParameters( effect, &desc, DIEP_DIRECTION );
+        ok( hr == DI_OK, "GetParameters returned %#x\n", hr );
+        desc.cAxes = 3;
+        memset( desc.rglDirection, 0xcd, 3 * sizeof(LONG) );
+        hr = IDirectInputEffect_GetParameters( effect, &desc, DIEP_DIRECTION );
+        ok( hr == DI_OK, "GetParameters returned %#x\n", hr );
+        ok( desc.cAxes == i, "got cAxes %u expected 2\n", desc.cAxes );
+        ok( desc.rglDirection[0] == 1000, "got rglDirection[0] %d expected %d\n", desc.rglDirection[0], 1000 );
+        if (i == 1)
+            ok( desc.rglDirection[1] == 0xcdcdcdcd, "got rglDirection[1] %d expected %d\n",
+                desc.rglDirection[1], 0xcdcdcdcd );
+        else
+            ok( desc.rglDirection[1] == 2000, "got rglDirection[1] %d expected %d\n",
+                desc.rglDirection[1], 2000 );
+        if (i <= 2)
+            ok( desc.rglDirection[2] == 0xcdcdcdcd, "got rglDirection[2] %d expected %d\n",
+                desc.rglDirection[2], 0xcdcdcdcd );
+        else
+            ok( desc.rglDirection[2] == 3000, "got rglDirection[2] %d expected %d\n",
+                desc.rglDirection[2], 3000 );
+
+        desc.dwFlags = DIEFF_POLAR;
+        desc.cAxes = 1;
+        hr = IDirectInputEffect_GetParameters( effect, &desc, DIEP_DIRECTION );
+        if (i != 2) ok( hr == DIERR_INVALIDPARAM, "GetParameters returned %#x\n", hr );
+        else ok( hr == DIERR_MOREDATA, "GetParameters returned %#x\n", hr );
+        desc.cAxes = 3;
+        memset( desc.rglDirection, 0xcd, 3 * sizeof(LONG) );
+        hr = IDirectInputEffect_GetParameters( effect, &desc, DIEP_DIRECTION );
+        if (i != 2) ok( hr == DIERR_INVALIDPARAM, "GetParameters returned %#x\n", hr );
+        else
+        {
+            ok( hr == DI_OK, "GetParameters returned %#x\n", hr );
+            ok( desc.cAxes == i, "got cAxes %u expected 2\n", desc.cAxes );
+            ok( desc.rglDirection[0] == 15343, "got rglDirection[0] %d expected %d\n",
+                desc.rglDirection[0], 15343 );
+            ok( desc.rglDirection[1] == 0, "got rglDirection[1] %d expected %d\n", desc.rglDirection[1], 0 );
+            ok( desc.rglDirection[2] == 0xcdcdcdcd, "got rglDirection[2] %d expected %d\n",
+                desc.rglDirection[2], 0xcdcdcdcd );
+        }
+
+        ref = IDirectInputEffect_Release( effect );
+        ok( ref == 0, "Release returned %d\n", ref );
+        winetest_pop_context();
+    }
 }
 
-static void test_condition_effect( IDirectInputDevice8W *device, HANDLE file )
+static void test_condition_effect( IDirectInputDevice8W *device, HANDLE file, DWORD version )
 {
     struct hid_expect expect_create[] =
     {
@@ -6015,7 +6175,7 @@ static void test_condition_effect( IDirectInputDevice8W *device, HANDLE file )
             .code = IOCTL_HID_WRITE_REPORT,
             .report_id = 3,
             .report_len = 11,
-            .report_buf = {0x03,0x01,0x03,0x08,0x01,0x00,0x06,0x00,0x01,0x55,0x00},
+            .report_buf = {0x03,0x01,0x03,0x08,0x01,0x00,version >= 0x700 ? 0x06 : 0x00,0x00,0x01,0x55,0x00},
         },
     };
     struct hid_expect expect_create_1[] =
@@ -6032,7 +6192,7 @@ static void test_condition_effect( IDirectInputDevice8W *device, HANDLE file )
             .code = IOCTL_HID_WRITE_REPORT,
             .report_id = 3,
             .report_len = 11,
-            .report_buf = {0x03,0x01,0x03,0x08,0x01,0x00,0x06,0x00,0x01,0x00,0x00},
+            .report_buf = {0x03,0x01,0x03,0x08,0x01,0x00,version >= 0x700 ? 0x06 : 0x00,0x00,0x01,0x00,0x00},
         },
     };
     struct hid_expect expect_create_2[] =
@@ -6049,7 +6209,7 @@ static void test_condition_effect( IDirectInputDevice8W *device, HANDLE file )
             .code = IOCTL_HID_WRITE_REPORT,
             .report_id = 3,
             .report_len = 11,
-            .report_buf = {0x03,0x01,0x03,0x08,0x01,0x00,0x06,0x00,0x01,0x55,0x00},
+            .report_buf = {0x03,0x01,0x03,0x08,0x01,0x00,version >= 0x700 ? 0x06 : 0x00,0x00,0x01,0x55,0x00},
         },
     };
     struct hid_expect expect_destroy =
@@ -6104,9 +6264,9 @@ static void test_condition_effect( IDirectInputDevice8W *device, HANDLE file )
             .lDeadBand = -12000,
         },
     };
-    static const DIEFFECT expect_desc =
+    const DIEFFECT expect_desc =
     {
-        .dwSize = sizeof(DIEFFECT),
+        .dwSize = version >= 0x700 ? sizeof(DIEFFECT_DX6) : sizeof(DIEFFECT_DX5),
         .dwFlags = DIEFF_SPHERICAL | DIEFF_OBJECTIDS,
         .dwDuration = 1000,
         .dwSamplePeriod = 2000,
@@ -6130,7 +6290,7 @@ static void test_condition_effect( IDirectInputDevice8W *device, HANDLE file )
     DWORD axes[4] = {0};
     DIEFFECT desc =
     {
-        .dwSize = sizeof(DIEFFECT),
+        .dwSize = version >= 0x700 ? sizeof(DIEFFECT_DX6) : sizeof(DIEFFECT_DX5),
         .dwFlags = DIEFF_SPHERICAL | DIEFF_OBJECTIDS,
         .cAxes = 4,
         .rgdwAxes = axes,
@@ -6158,7 +6318,7 @@ static void test_condition_effect( IDirectInputDevice8W *device, HANDLE file )
     ok( IsEqualGUID( &guid, &GUID_Spring ), "got guid %s, expected %s\n", debugstr_guid( &guid ),
         debugstr_guid( &GUID_Spring ) );
 
-    hr = IDirectInputEffect_GetParameters( effect, &desc, DIEP_ALLPARAMS );
+    hr = IDirectInputEffect_GetParameters( effect, &desc, version >= 0x700 ? DIEP_ALLPARAMS : DIEP_ALLPARAMS_DX5 );
     ok( hr == DI_OK, "GetParameters returned %#x\n", hr );
     check_member( desc, expect_desc, "%u", dwDuration );
     check_member( desc, expect_desc, "%u", dwSamplePeriod );
@@ -6171,7 +6331,8 @@ static void test_condition_effect( IDirectInputDevice8W *device, HANDLE file )
     check_member( desc, expect_desc, "%d", rglDirection[0] );
     check_member( desc, expect_desc, "%d", rglDirection[1] );
     check_member( desc, expect_desc, "%u", cbTypeSpecificParams );
-    check_member( desc, expect_desc, "%u", dwStartDelay );
+    if (version >= 0x700) check_member( desc, expect_desc, "%u", dwStartDelay );
+    else ok( desc.dwStartDelay == 0, "got dwStartDelay %#x\n", desc.dwStartDelay );
     check_member( envelope, expect_envelope, "%u", dwAttackLevel );
     check_member( envelope, expect_envelope, "%u", dwAttackTime );
     check_member( envelope, expect_envelope, "%u", dwFadeLevel );
@@ -6225,7 +6386,7 @@ static void test_condition_effect( IDirectInputDevice8W *device, HANDLE file )
     set_hid_expect( file, NULL, 0 );
 }
 
-static void test_force_feedback_joystick( void )
+static void test_force_feedback_joystick( DWORD version )
 {
 #include "psh_hid_macros.h"
     const unsigned char report_descriptor[] = {
@@ -6553,12 +6714,13 @@ static void test_force_feedback_joystick( void )
     {
         .InputReportByteLength = 5,
     };
-    static const DIDEVCAPS expect_caps =
+    const DIDEVCAPS expect_caps =
     {
         .dwSize = sizeof(DIDEVCAPS),
         .dwFlags = DIDC_FORCEFEEDBACK | DIDC_ATTACHED | DIDC_EMULATED | DIDC_STARTDELAY |
                    DIDC_FFFADE | DIDC_FFATTACK | DIDC_DEADBAND | DIDC_SATURATION,
-        .dwDevType = DIDEVTYPE_HID | (DI8DEVTYPEJOYSTICK_LIMITED << 8) | DI8DEVTYPE_JOYSTICK,
+        .dwDevType = version >= 0x800 ? DIDEVTYPE_HID | (DI8DEVTYPEJOYSTICK_LIMITED << 8) | DI8DEVTYPE_JOYSTICK
+                                      : DIDEVTYPE_HID | (DIDEVTYPEJOYSTICK_UNKNOWN << 8) | DIDEVTYPE_JOYSTICK,
         .dwAxes = 3,
         .dwButtons = 2,
         .dwFFSamplePeriod = 1000000,
@@ -6579,12 +6741,75 @@ static void test_force_feedback_joystick( void )
         .dwSize = sizeof(DIDEVICEINSTANCEW),
         .guidInstance = expect_guid_product,
         .guidProduct = expect_guid_product,
-        .dwDevType = DIDEVTYPE_HID | (DI8DEVTYPEJOYSTICK_LIMITED << 8) | DI8DEVTYPE_JOYSTICK,
+        .dwDevType = version >= 0x800 ? DIDEVTYPE_HID | (DI8DEVTYPEJOYSTICK_LIMITED << 8) | DI8DEVTYPE_JOYSTICK
+                                      : DIDEVTYPE_HID | (DIDEVTYPEJOYSTICK_UNKNOWN << 8) | DIDEVTYPE_JOYSTICK,
         .tszInstanceName = L"Wine test root driver",
         .tszProductName = L"Wine test root driver",
         .guidFFDriver = IID_IDirectInputPIDDriver,
         .wUsagePage = HID_USAGE_PAGE_GENERIC,
         .wUsage = HID_USAGE_GENERIC_JOYSTICK,
+    };
+    const DIDEVICEOBJECTINSTANCEW expect_objects_5[] =
+    {
+        {
+            .dwSize = sizeof(DIDEVICEOBJECTINSTANCEW),
+            .guidType = GUID_XAxis,
+            .dwType = DIDFT_ABSAXIS|DIDFT_MAKEINSTANCE(0)|DIDFT_FFACTUATOR,
+            .dwFlags = DIDOI_ASPECTPOSITION|DIDOI_FFACTUATOR,
+            .tszName = L"X Axis",
+            .wCollectionNumber = 1,
+            .wUsagePage = HID_USAGE_PAGE_GENERIC,
+            .wUsage = HID_USAGE_GENERIC_X,
+            .wReportId = 1,
+        },
+        {
+            .dwSize = sizeof(DIDEVICEOBJECTINSTANCEW),
+            .guidType = GUID_YAxis,
+            .dwOfs = 0x4,
+            .dwType = DIDFT_ABSAXIS|DIDFT_MAKEINSTANCE(1)|DIDFT_FFACTUATOR,
+            .dwFlags = DIDOI_ASPECTPOSITION|DIDOI_FFACTUATOR,
+            .tszName = L"Y Axis",
+            .wCollectionNumber = 1,
+            .wUsagePage = HID_USAGE_PAGE_GENERIC,
+            .wUsage = HID_USAGE_GENERIC_Y,
+            .wReportId = 1,
+        },
+        {
+            .dwSize = sizeof(DIDEVICEOBJECTINSTANCEW),
+            .guidType = GUID_ZAxis,
+            .dwOfs = 0x8,
+            .dwType = DIDFT_ABSAXIS|DIDFT_MAKEINSTANCE(2)|DIDFT_FFACTUATOR,
+            .dwFlags = DIDOI_ASPECTPOSITION|DIDOI_FFACTUATOR,
+            .tszName = L"Z Axis",
+            .wCollectionNumber = 1,
+            .wUsagePage = HID_USAGE_PAGE_GENERIC,
+            .wUsage = HID_USAGE_GENERIC_Z,
+            .wReportId = 1,
+        },
+        {
+            .dwSize = sizeof(DIDEVICEOBJECTINSTANCEW),
+            .guidType = GUID_Button,
+            .dwOfs = 0x30,
+            .dwType = DIDFT_PSHBUTTON|DIDFT_MAKEINSTANCE(0)|DIDFT_FFEFFECTTRIGGER,
+            .dwFlags = DIDOI_FFEFFECTTRIGGER,
+            .tszName = L"Button 0",
+            .wCollectionNumber = 1,
+            .wUsagePage = HID_USAGE_PAGE_BUTTON,
+            .wUsage = 0x1,
+            .wReportId = 1,
+        },
+        {
+            .dwSize = sizeof(DIDEVICEOBJECTINSTANCEW),
+            .guidType = GUID_Button,
+            .dwOfs = 0x31,
+            .dwType = DIDFT_PSHBUTTON|DIDFT_MAKEINSTANCE(1)|DIDFT_FFEFFECTTRIGGER,
+            .dwFlags = DIDOI_FFEFFECTTRIGGER,
+            .tszName = L"Button 1",
+            .wCollectionNumber = 1,
+            .wUsagePage = HID_USAGE_PAGE_BUTTON,
+            .wUsage = 0x2,
+            .wReportId = 1,
+        },
     };
     const DIDEVICEOBJECTINSTANCEW expect_objects[] =
     {
@@ -6626,7 +6851,7 @@ static void test_force_feedback_joystick( void )
         {
             .dwSize = sizeof(DIDEVICEOBJECTINSTANCEW),
             .guidType = GUID_Button,
-            .dwOfs = 0x64,
+            .dwOfs = version >= 0x800 ? 0x64 : 0x10,
             .dwType = DIDFT_PSHBUTTON|DIDFT_MAKEINSTANCE(0)|DIDFT_FFEFFECTTRIGGER,
             .dwFlags = DIDOI_FFEFFECTTRIGGER,
             .tszName = L"Button 0",
@@ -6638,7 +6863,7 @@ static void test_force_feedback_joystick( void )
         {
             .dwSize = sizeof(DIDEVICEOBJECTINSTANCEW),
             .guidType = GUID_Button,
-            .dwOfs = 0x65,
+            .dwOfs = version >= 0x800 ? 0x65 : 0x11,
             .dwType = DIDFT_PSHBUTTON|DIDFT_MAKEINSTANCE(1)|DIDFT_FFEFFECTTRIGGER,
             .dwFlags = DIDOI_FFEFFECTTRIGGER,
             .tszName = L"Button 1",
@@ -6650,7 +6875,7 @@ static void test_force_feedback_joystick( void )
         {
             .dwSize = sizeof(DIDEVICEOBJECTINSTANCEW),
             .guidType = GUID_Unknown,
-            .dwOfs = 0x6c,
+            .dwOfs = version >= 0x800 ? 0x6c : 0,
             .dwType = DIDFT_NODATA|DIDFT_MAKEINSTANCE(12)|DIDFT_OUTPUT,
             .dwFlags = 0x80008000,
             .tszName = L"DC Device Reset",
@@ -6662,7 +6887,7 @@ static void test_force_feedback_joystick( void )
         {
             .dwSize = sizeof(DIDEVICEOBJECTINSTANCEW),
             .guidType = GUID_Unknown,
-            .dwOfs = 0x10,
+            .dwOfs = version >= 0x800 ? 0x10 : 0,
             .dwType = DIDFT_NODATA|DIDFT_MAKEINSTANCE(13)|DIDFT_OUTPUT,
             .dwFlags = 0x80008000,
             .tszName = L"Effect Block Index",
@@ -6674,7 +6899,7 @@ static void test_force_feedback_joystick( void )
         {
             .dwSize = sizeof(DIDEVICEOBJECTINSTANCEW),
             .guidType = GUID_Unknown,
-            .dwOfs = 0x6d,
+            .dwOfs = version >= 0x800 ? 0x6d : 0,
             .dwType = DIDFT_NODATA|DIDFT_MAKEINSTANCE(14)|DIDFT_OUTPUT,
             .dwFlags = 0x80008000,
             .tszName = L"Op Effect Start",
@@ -6686,7 +6911,7 @@ static void test_force_feedback_joystick( void )
         {
             .dwSize = sizeof(DIDEVICEOBJECTINSTANCEW),
             .guidType = GUID_Unknown,
-            .dwOfs = 0x6e,
+            .dwOfs = version >= 0x800 ? 0x6e : 0,
             .dwType = DIDFT_NODATA|DIDFT_MAKEINSTANCE(15)|DIDFT_OUTPUT,
             .dwFlags = 0x80008000,
             .tszName = L"Op Effect Start Solo",
@@ -6698,7 +6923,7 @@ static void test_force_feedback_joystick( void )
         {
             .dwSize = sizeof(DIDEVICEOBJECTINSTANCEW),
             .guidType = GUID_Unknown,
-            .dwOfs = 0x6f,
+            .dwOfs = version >= 0x800 ? 0x6f : 0,
             .dwType = DIDFT_NODATA|DIDFT_MAKEINSTANCE(16)|DIDFT_OUTPUT,
             .dwFlags = 0x80008000,
             .tszName = L"Op Effect Stop",
@@ -6710,7 +6935,7 @@ static void test_force_feedback_joystick( void )
         {
             .dwSize = sizeof(DIDEVICEOBJECTINSTANCEW),
             .guidType = GUID_Unknown,
-            .dwOfs = 0x14,
+            .dwOfs = version >= 0x800 ? 0x14 : 0,
             .dwType = DIDFT_NODATA|DIDFT_MAKEINSTANCE(17)|DIDFT_OUTPUT,
             .dwFlags = 0x80008000,
             .tszName = L"Loop Count",
@@ -6722,7 +6947,7 @@ static void test_force_feedback_joystick( void )
         {
             .dwSize = sizeof(DIDEVICEOBJECTINSTANCEW),
             .guidType = GUID_Unknown,
-            .dwOfs = 0x18,
+            .dwOfs = version >= 0x800 ? 0x18 : 0,
             .dwType = DIDFT_NODATA|DIDFT_MAKEINSTANCE(18)|DIDFT_OUTPUT,
             .dwFlags = 0x80008000,
             .tszName = L"Effect Block Index",
@@ -6734,7 +6959,7 @@ static void test_force_feedback_joystick( void )
         {
             .dwSize = sizeof(DIDEVICEOBJECTINSTANCEW),
             .guidType = GUID_Unknown,
-            .dwOfs = 0x70,
+            .dwOfs = version >= 0x800 ? 0x70 : 0,
             .dwType = DIDFT_NODATA|DIDFT_MAKEINSTANCE(19)|DIDFT_OUTPUT,
             .dwFlags = 0x80008000,
             .tszName = L"ET Square",
@@ -6746,7 +6971,7 @@ static void test_force_feedback_joystick( void )
         {
             .dwSize = sizeof(DIDEVICEOBJECTINSTANCEW),
             .guidType = GUID_Unknown,
-            .dwOfs = 0x71,
+            .dwOfs = version >= 0x800 ? 0x71 : 0,
             .dwType = DIDFT_NODATA|DIDFT_MAKEINSTANCE(20)|DIDFT_OUTPUT,
             .dwFlags = 0x80008000,
             .tszName = L"ET Sine",
@@ -6758,7 +6983,7 @@ static void test_force_feedback_joystick( void )
         {
             .dwSize = sizeof(DIDEVICEOBJECTINSTANCEW),
             .guidType = GUID_Unknown,
-            .dwOfs = 0x72,
+            .dwOfs = version >= 0x800 ? 0x72 : 0,
             .dwType = DIDFT_NODATA|DIDFT_MAKEINSTANCE(21)|DIDFT_OUTPUT,
             .dwFlags = 0x80008000,
             .tszName = L"ET Spring",
@@ -6770,7 +6995,7 @@ static void test_force_feedback_joystick( void )
         {
             .dwSize = sizeof(DIDEVICEOBJECTINSTANCEW),
             .guidType = GUID_Unknown,
-            .dwOfs = 0x73,
+            .dwOfs = version >= 0x800 ? 0x73 : 0,
             .dwType = DIDFT_NODATA|DIDFT_MAKEINSTANCE(22)|DIDFT_OUTPUT,
             .dwFlags = 0x80008000,
             .tszName = L"Z Axis",
@@ -6782,7 +7007,7 @@ static void test_force_feedback_joystick( void )
         {
             .dwSize = sizeof(DIDEVICEOBJECTINSTANCEW),
             .guidType = GUID_Unknown,
-            .dwOfs = 0x74,
+            .dwOfs = version >= 0x800 ? 0x74 : 0,
             .dwType = DIDFT_NODATA|DIDFT_MAKEINSTANCE(23)|DIDFT_OUTPUT,
             .dwFlags = 0x80008000,
             .tszName = L"Y Axis",
@@ -6794,7 +7019,7 @@ static void test_force_feedback_joystick( void )
         {
             .dwSize = sizeof(DIDEVICEOBJECTINSTANCEW),
             .guidType = GUID_Unknown,
-            .dwOfs = 0x75,
+            .dwOfs = version >= 0x800 ? 0x75 : 0,
             .dwType = DIDFT_NODATA|DIDFT_MAKEINSTANCE(24)|DIDFT_OUTPUT,
             .dwFlags = 0x80008000,
             .tszName = L"X Axis",
@@ -6806,7 +7031,7 @@ static void test_force_feedback_joystick( void )
         {
             .dwSize = sizeof(DIDEVICEOBJECTINSTANCEW),
             .guidType = GUID_Unknown,
-            .dwOfs = 0x76,
+            .dwOfs = version >= 0x800 ? 0x76 : 0,
             .dwType = DIDFT_NODATA|DIDFT_MAKEINSTANCE(25)|DIDFT_OUTPUT,
             .dwFlags = 0x80008000,
             .tszName = L"Direction Enable",
@@ -6818,7 +7043,7 @@ static void test_force_feedback_joystick( void )
         {
             .dwSize = sizeof(DIDEVICEOBJECTINSTANCEW),
             .guidType = GUID_Unknown,
-            .dwOfs = 0x1c,
+            .dwOfs = version >= 0x800 ? 0x1c : 0,
             .dwType = DIDFT_NODATA|DIDFT_MAKEINSTANCE(26)|DIDFT_OUTPUT,
             .dwFlags = 0x80008000,
             .tszName = L"Start Delay",
@@ -6832,7 +7057,7 @@ static void test_force_feedback_joystick( void )
         {
             .dwSize = sizeof(DIDEVICEOBJECTINSTANCEW),
             .guidType = GUID_Unknown,
-            .dwOfs = 0x20,
+            .dwOfs = version >= 0x800 ? 0x20 : 0,
             .dwType = DIDFT_NODATA|DIDFT_MAKEINSTANCE(27)|DIDFT_OUTPUT,
             .dwFlags = 0x80008000,
             .tszName = L"Duration",
@@ -6846,7 +7071,7 @@ static void test_force_feedback_joystick( void )
         {
             .dwSize = sizeof(DIDEVICEOBJECTINSTANCEW),
             .guidType = GUID_Unknown,
-            .dwOfs = 0x24,
+            .dwOfs = version >= 0x800 ? 0x24 : 0,
             .dwType = DIDFT_NODATA|DIDFT_MAKEINSTANCE(28)|DIDFT_OUTPUT,
             .dwFlags = 0x80008000,
             .tszName = L"Trigger Button",
@@ -6858,7 +7083,7 @@ static void test_force_feedback_joystick( void )
         {
             .dwSize = sizeof(DIDEVICEOBJECTINSTANCEW),
             .guidType = GUID_Unknown,
-            .dwOfs = 0x28,
+            .dwOfs = version >= 0x800 ? 0x28 : 0,
             .dwType = DIDFT_NODATA|DIDFT_MAKEINSTANCE(29)|DIDFT_OUTPUT,
             .dwFlags = 0x80008000,
             .tszName = L"Unknown 29",
@@ -6871,7 +7096,7 @@ static void test_force_feedback_joystick( void )
         {
             .dwSize = sizeof(DIDEVICEOBJECTINSTANCEW),
             .guidType = GUID_Unknown,
-            .dwOfs = 0x2c,
+            .dwOfs = version >= 0x800 ? 0x2c : 0,
             .dwType = DIDFT_NODATA|DIDFT_MAKEINSTANCE(30)|DIDFT_OUTPUT,
             .dwFlags = 0x80008000,
             .tszName = L"Unknown 30",
@@ -6884,7 +7109,7 @@ static void test_force_feedback_joystick( void )
         {
             .dwSize = sizeof(DIDEVICEOBJECTINSTANCEW),
             .guidType = GUID_Unknown,
-            .dwOfs = 0x30,
+            .dwOfs = version >= 0x800 ? 0x30 : 0,
             .dwType = DIDFT_NODATA|DIDFT_MAKEINSTANCE(31)|DIDFT_OUTPUT,
             .dwFlags = 0x80008000,
             .tszName = L"Magnitude",
@@ -6896,7 +7121,7 @@ static void test_force_feedback_joystick( void )
         {
             .dwSize = sizeof(DIDEVICEOBJECTINSTANCEW),
             .guidType = GUID_Unknown,
-            .dwOfs = 0x34,
+            .dwOfs = version >= 0x800 ? 0x34 : 0,
             .dwType = DIDFT_NODATA|DIDFT_MAKEINSTANCE(32)|DIDFT_OUTPUT,
             .dwFlags = 0x80008000,
             .tszName = L"Fade Level",
@@ -6908,7 +7133,7 @@ static void test_force_feedback_joystick( void )
         {
             .dwSize = sizeof(DIDEVICEOBJECTINSTANCEW),
             .guidType = GUID_Unknown,
-            .dwOfs = 0x38,
+            .dwOfs = version >= 0x800 ? 0x38 : 0,
             .dwType = DIDFT_NODATA|DIDFT_MAKEINSTANCE(33)|DIDFT_OUTPUT,
             .dwFlags = 0x80008000,
             .tszName = L"Attack Level",
@@ -6920,7 +7145,7 @@ static void test_force_feedback_joystick( void )
         {
             .dwSize = sizeof(DIDEVICEOBJECTINSTANCEW),
             .guidType = GUID_Unknown,
-            .dwOfs = 0x3c,
+            .dwOfs = version >= 0x800 ? 0x3c : 0,
             .dwType = DIDFT_NODATA|DIDFT_MAKEINSTANCE(34)|DIDFT_OUTPUT,
             .dwFlags = 0x80008000,
             .tszName = L"Fade Time",
@@ -6934,7 +7159,7 @@ static void test_force_feedback_joystick( void )
         {
             .dwSize = sizeof(DIDEVICEOBJECTINSTANCEW),
             .guidType = GUID_Unknown,
-            .dwOfs = 0x40,
+            .dwOfs = version >= 0x800 ? 0x40 : 0,
             .dwType = DIDFT_NODATA|DIDFT_MAKEINSTANCE(35)|DIDFT_OUTPUT,
             .dwFlags = 0x80008000,
             .tszName = L"Attack Time",
@@ -6948,7 +7173,7 @@ static void test_force_feedback_joystick( void )
         {
             .dwSize = sizeof(DIDEVICEOBJECTINSTANCEW),
             .guidType = GUID_Unknown,
-            .dwOfs = 0x44,
+            .dwOfs = version >= 0x800 ? 0x44 : 0,
             .dwType = DIDFT_NODATA|DIDFT_MAKEINSTANCE(36)|DIDFT_OUTPUT,
             .dwFlags = 0x80008000,
             .tszName = L"Unknown 36",
@@ -6960,7 +7185,7 @@ static void test_force_feedback_joystick( void )
         {
             .dwSize = sizeof(DIDEVICEOBJECTINSTANCEW),
             .guidType = GUID_Unknown,
-            .dwOfs = 0x48,
+            .dwOfs = version >= 0x800 ? 0x48 : 0,
             .dwType = DIDFT_NODATA|DIDFT_MAKEINSTANCE(37)|DIDFT_OUTPUT,
             .dwFlags = 0x80008000,
             .tszName = L"Unknown 37",
@@ -6972,7 +7197,7 @@ static void test_force_feedback_joystick( void )
         {
             .dwSize = sizeof(DIDEVICEOBJECTINSTANCEW),
             .guidType = GUID_Unknown,
-            .dwOfs = 0x4c,
+            .dwOfs = version >= 0x800 ? 0x4c : 0,
             .dwType = DIDFT_NODATA|DIDFT_MAKEINSTANCE(38)|DIDFT_OUTPUT,
             .dwFlags = 0x80008000,
             .tszName = L"CP Offset",
@@ -6984,7 +7209,7 @@ static void test_force_feedback_joystick( void )
         {
             .dwSize = sizeof(DIDEVICEOBJECTINSTANCEW),
             .guidType = GUID_Unknown,
-            .dwOfs = 0x50,
+            .dwOfs = version >= 0x800 ? 0x50 : 0,
             .dwType = DIDFT_NODATA|DIDFT_MAKEINSTANCE(39)|DIDFT_OUTPUT,
             .dwFlags = 0x80008000,
             .tszName = L"Negative Coefficient",
@@ -6996,7 +7221,7 @@ static void test_force_feedback_joystick( void )
         {
             .dwSize = sizeof(DIDEVICEOBJECTINSTANCEW),
             .guidType = GUID_Unknown,
-            .dwOfs = 0x54,
+            .dwOfs = version >= 0x800 ? 0x54 : 0,
             .dwType = DIDFT_NODATA|DIDFT_MAKEINSTANCE(40)|DIDFT_OUTPUT,
             .dwFlags = 0x80008000,
             .tszName = L"Positive Coefficient",
@@ -7008,7 +7233,7 @@ static void test_force_feedback_joystick( void )
         {
             .dwSize = sizeof(DIDEVICEOBJECTINSTANCEW),
             .guidType = GUID_Unknown,
-            .dwOfs = 0x58,
+            .dwOfs = version >= 0x800 ? 0x58 : 0,
             .dwType = DIDFT_NODATA|DIDFT_MAKEINSTANCE(41)|DIDFT_OUTPUT,
             .dwFlags = 0x80008000,
             .tszName = L"Negative Saturation",
@@ -7020,7 +7245,7 @@ static void test_force_feedback_joystick( void )
         {
             .dwSize = sizeof(DIDEVICEOBJECTINSTANCEW),
             .guidType = GUID_Unknown,
-            .dwOfs = 0x5c,
+            .dwOfs = version >= 0x800 ? 0x5c : 0,
             .dwType = DIDFT_NODATA|DIDFT_MAKEINSTANCE(42)|DIDFT_OUTPUT,
             .dwFlags = 0x80008000,
             .tszName = L"Positive Saturation",
@@ -7032,7 +7257,7 @@ static void test_force_feedback_joystick( void )
         {
             .dwSize = sizeof(DIDEVICEOBJECTINSTANCEW),
             .guidType = GUID_Unknown,
-            .dwOfs = 0x60,
+            .dwOfs = version >= 0x800 ? 0x60 : 0,
             .dwType = DIDFT_NODATA|DIDFT_MAKEINSTANCE(43)|DIDFT_OUTPUT,
             .dwFlags = 0x80008000,
             .tszName = L"Dead Band",
@@ -7202,10 +7427,19 @@ static void test_force_feedback_joystick( void )
         }
     };
 
+    struct check_objects_todos todo_objects_5[ARRAY_SIZE(expect_objects_5)] =
+    {
+        {.guid = TRUE, .type = TRUE, .usage = TRUE},
+        {0},
+        {.guid = TRUE, .type = TRUE, .usage = TRUE},
+    };
     struct check_objects_params check_objects_params =
     {
-        .expect_count = ARRAY_SIZE(expect_objects),
-        .expect_objs = expect_objects,
+        .version = version,
+        .expect_count = version < 0x700 ? ARRAY_SIZE(expect_objects_5) : ARRAY_SIZE(expect_objects),
+        .expect_objs = version < 0x700 ? expect_objects_5 : expect_objects,
+        .todo_objs = version < 0x700 ? todo_objects_5 : NULL,
+        .todo_extra = version < 0x700 ? TRUE : FALSE,
     };
     struct check_effects_params check_effects_params =
     {
@@ -7237,12 +7471,15 @@ static void test_force_feedback_joystick( void )
     IDirectInputDevice8W *device;
     DIEFFESCAPE escape = {0};
     DIDEVCAPS caps = {0};
-    IDirectInput8W *di;
-    char buffer[1024];
+    IDirectInput8W *di8;
+    IDirectInputW *di;
     ULONG res, ref;
+    char buffer[1024];
     HANDLE file;
     HRESULT hr;
     HWND hwnd;
+
+    winetest_push_context( "version %#x", version );
 
     GetCurrentDirectoryW( ARRAY_SIZE(cwd), cwd );
     GetTempPathW( ARRAY_SIZE(tempdir), tempdir );
@@ -7251,24 +7488,59 @@ static void test_force_feedback_joystick( void )
     cleanup_registry_keys();
     if (!dinput_driver_start( report_descriptor, sizeof(report_descriptor), &hid_caps )) goto done;
 
-    hr = DirectInput8Create( instance, DIRECTINPUT_VERSION, &IID_IDirectInput8W, (void **)&di, NULL );
-    if (FAILED(hr))
+    if (version >= 0x800)
     {
-        win_skip( "DirectInput8Create returned %#x\n", hr );
-        goto done;
-    }
+        hr = DirectInput8Create( instance, version, &IID_IDirectInput8W, (void **)&di8, NULL );
+        if (FAILED(hr))
+        {
+            win_skip( "DirectInput8Create returned %#x\n", hr );
+            goto done;
+        }
 
-    hr = IDirectInput8_EnumDevices( di, DI8DEVCLASS_ALL, find_test_device, &devinst, DIEDFL_ALLDEVICES );
-    ok( hr == DI_OK, "EnumDevices returned: %#x\n", hr );
-    if (!IsEqualGUID( &devinst.guidProduct, &expect_guid_product ))
+        hr = IDirectInput8_EnumDevices( di8, DI8DEVCLASS_ALL, find_test_device, &devinst, DIEDFL_ALLDEVICES );
+        ok( hr == DI_OK, "EnumDevices returned: %#x\n", hr );
+        if (!IsEqualGUID( &devinst.guidProduct, &expect_guid_product ))
+        {
+            win_skip( "device not found, skipping tests\n" );
+            ref = IDirectInput8_Release( di8 );
+            ok( ref == 0, "Release returned %d\n", ref );
+            goto done;
+        }
+
+        hr = IDirectInput8_CreateDevice( di8, &expect_guid_product, &device, NULL );
+        ok( hr == DI_OK, "CreateDevice returned %#x\n", hr );
+
+        ref = IDirectInput8_Release( di8 );
+        todo_wine
+        ok( ref == 0, "Release returned %d\n", ref );
+    }
+    else
     {
-        win_skip( "device not found, skipping tests\n" );
-        IDirectInput8_Release( di );
-        goto done;
-    }
+        hr = DirectInputCreateEx( instance, version, &IID_IDirectInput2W, (void **)&di, NULL );
+        if (FAILED(hr))
+        {
+            win_skip( "DirectInputCreateEx returned %#x\n", hr );
+            goto done;
+        }
 
-    hr = IDirectInput8_CreateDevice( di, &expect_guid_product, &device, NULL );
-    ok( hr == DI_OK, "CreateDevice returned %#x\n", hr );
+        hr = IDirectInput_EnumDevices( di, 0, find_test_device, &devinst, DIEDFL_ALLDEVICES );
+        ok( hr == DI_OK, "EnumDevices returned: %#x\n", hr );
+        if (!IsEqualGUID( &devinst.guidProduct, &expect_guid_product ))
+        {
+            win_skip( "device not found, skipping tests\n" );
+
+            ref = IDirectInput_Release( di );
+            ok( ref == 0, "Release returned %d\n", ref );
+            goto done;
+        }
+
+        hr = IDirectInput_CreateDevice( di, &expect_guid_product, (IDirectInputDeviceW **)&device, NULL );
+        ok( hr == DI_OK, "CreateDevice returned %#x\n", hr );
+
+        ref = IDirectInput_Release( di );
+        todo_wine
+        ok( ref == 0, "Release returned %d\n", ref );
+    }
 
     hr = IDirectInputDevice8_GetDeviceInfo( device, &devinst );
     ok( hr == DI_OK, "GetDeviceInfo returned %#x\n", hr );
@@ -7289,7 +7561,6 @@ static void test_force_feedback_joystick( void )
     hr = IDirectInputDevice8_GetCapabilities( device, &caps );
     ok( hr == DI_OK, "GetCapabilities returned %#x\n", hr );
     check_member( caps, expect_caps, "%d", dwSize );
-    todo_wine
     check_member( caps, expect_caps, "%#x", dwFlags );
     check_member( caps, expect_caps, "%#x", dwDevType );
     check_member( caps, expect_caps, "%d", dwAxes );
@@ -7332,11 +7603,8 @@ static void test_force_feedback_joystick( void )
     hr = IDirectInputDevice8_GetEffectInfo( device, &effectinfo, &GUID_Sine );
     ok( hr == DI_OK, "GetEffectInfo returned %#x\n", hr );
     check_member_guid( effectinfo, expect_effects[1], guid );
-    todo_wine
     check_member( effectinfo, expect_effects[1], "%#x", dwEffType );
-    todo_wine
     check_member( effectinfo, expect_effects[1], "%#x", dwStaticParams );
-    todo_wine
     check_member( effectinfo, expect_effects[1], "%#x", dwDynamicParams );
     check_member_wstr( effectinfo, expect_effects[1], tszName );
 
@@ -7356,11 +7624,15 @@ static void test_force_feedback_joystick( void )
     hr = IDirectInputDevice8_SetCooperativeLevel( device, hwnd, DISCL_BACKGROUND | DISCL_NONEXCLUSIVE );
     ok( hr == DI_OK, "SetCooperativeLevel returned: %#x\n", hr );
 
+    prop_dword.diph.dwHow = DIPH_DEVICE;
+    prop_dword.diph.dwObj = 0;
+    prop_dword.dwData = DIPROPAUTOCENTER_ON;
+    hr = IDirectInputDevice8_SetProperty( device, DIPROP_AUTOCENTER, &prop_dword.diph );
+    ok( hr == DI_OK, "SetProperty DIPROP_AUTOCENTER returned %#x\n", hr );
+
     hr = IDirectInputDevice8_Acquire( device );
     ok( hr == DI_OK, "Acquire returned: %#x\n", hr );
 
-    prop_dword.diph.dwHow = DIPH_DEVICE;
-    prop_dword.diph.dwObj = 0;
     prop_dword.dwData = 0xdeadbeef;
     hr = IDirectInputDevice8_SetProperty( device, DIPROP_FFGAIN, &prop_dword.diph );
     todo_wine
@@ -7438,11 +7710,11 @@ static void test_force_feedback_joystick( void )
     objdata.dwData = 0x80;
     res = 1;
     hr = IDirectInputDevice8_SendDeviceData( device, sizeof(DIDEVICEOBJECTDATA), &objdata, &res, 0 );
-    todo_wine
-    ok( hr == DIERR_INVALIDPARAM, "SendDeviceData returned %#x\n", hr );
+    if (version < 0x800) ok( hr == DI_OK, "SendDeviceData returned %#x\n", hr );
+    else todo_wine ok( hr == DIERR_INVALIDPARAM, "SendDeviceData returned %#x\n", hr );
 
-    test_periodic_effect( device, file );
-    test_condition_effect( device, file );
+    test_periodic_effect( device, file, version );
+    test_condition_effect( device, file, version );
 
     set_hid_expect( file, &expect_dc_reset, sizeof(expect_dc_reset) );
     hr = IDirectInputDevice8_Unacquire( device );
@@ -7455,13 +7727,11 @@ static void test_force_feedback_joystick( void )
     DestroyWindow( hwnd );
     CloseHandle( file );
 
-    ref = IDirectInput8_Release( di );
-    ok( ref == 0, "Release returned %d\n", ref );
-
 done:
     pnp_driver_stop();
     cleanup_registry_keys();
     SetCurrentDirectoryW( cwd );
+    winetest_pop_context();
 }
 
 START_TEST( hid )
@@ -7507,7 +7777,9 @@ START_TEST( hid )
     if (test_device_types())
     {
         test_simple_joystick();
-        test_force_feedback_joystick();
+        test_force_feedback_joystick( 0x500 );
+        test_force_feedback_joystick( 0x700 );
+        test_force_feedback_joystick( 0x800 );
     }
     CoUninitialize();
 

@@ -803,7 +803,7 @@
 @ stub NtUserConsoleControl
 @ stub NtUserConvertMemHandle
 @ stub NtUserCopyAcceleratorTable
-@ stub NtUserCountClipboardFormats
+@ stdcall NtUserCountClipboardFormats()
 @ stub NtUserCreateAcceleratorTable
 @ stub NtUserCreateActivationGroup
 @ stub NtUserCreateActivationObject
@@ -950,7 +950,7 @@
 @ stub NtUserGetKeyboardLayoutList
 @ stub NtUserGetKeyboardLayoutName
 @ stub NtUserGetKeyboardState
-@ stub NtUserGetLayeredWindowAttributes
+@ stdcall -syscall NtUserGetLayeredWindowAttributes(long ptr ptr ptr)
 @ stub NtUserGetListBoxInfo
 @ stub NtUserGetMenuBarInfo
 @ stub NtUserGetMenuIndex
@@ -980,7 +980,7 @@
 @ stub NtUserGetProcessDpiAwarenessContext
 @ stub NtUserGetProcessUIContextInformation
 @ stdcall -syscall NtUserGetProcessWindowStation()
-@ stub NtUserGetProp
+@ stdcall -syscall NtUserGetProp(long wstr)
 @ stub NtUserGetQueueStatus
 @ stub NtUserGetQueueStatusReadonly
 @ stub NtUserGetRawInputBuffer
@@ -1148,7 +1148,7 @@
 @ stub NtUserRemoveClipboardFormatListener
 @ stub NtUserRemoveInjectionDevice
 @ stub NtUserRemoveMenu
-@ stub NtUserRemoveProp
+@ stdcall -syscall NtUserRemoveProp(long wstr)
 @ stub NtUserRemoveVisualIdentifier
 @ stub NtUserReportInertia
 @ stub NtUserRequestMoveSizeOperation
@@ -1222,7 +1222,7 @@
 @ stub NtUserSetProcessRestrictionExemption
 @ stub NtUserSetProcessUIAccessZorder
 @ stdcall -syscall NtUserSetProcessWindowStation(long)
-@ stub NtUserSetProp
+@ stdcall -syscall NtUserSetProp(long wstr ptr)
 @ stub NtUserSetScrollInfo
 @ stub NtUserSetSensorPresence
 @ stub NtUserSetSharedWindowData

@@ -740,10 +740,6 @@ void dinput_device_destroy( IDirectInputDevice8W *iface )
 
     TRACE( "iface %p.\n", iface );
 
-    IDirectInputDevice_Unacquire(iface);
-    /* Reset the FF state, free all effects, etc */
-    IDirectInputDevice8_SendForceFeedbackCommand(iface, DISFFC_RESET);
-
     free( This->data_queue );
 
     /* Free data format */
@@ -770,6 +766,7 @@ static ULONG WINAPI dinput_device_Release( IDirectInputDevice8W *iface )
 
     if (!ref)
     {
+        IDirectInputDevice_Unacquire( iface );
         if (impl->vtbl->release) impl->vtbl->release( iface );
         else dinput_device_destroy( iface );
     }
@@ -1082,7 +1079,8 @@ static HRESULT WINAPI dinput_device_SetProperty( IDirectInputDevice8W *iface, co
         EnterCriticalSection( &impl->crit );
         if (impl->acquired) hr = DIERR_ACQUIRED;
         else if (value->dwData > DIPROPAUTOCENTER_ON) hr = DIERR_INVALIDPARAM;
-        else hr = DIERR_UNSUPPORTED;
+        else if (!(impl->caps.dwFlags & DIDC_FORCEFEEDBACK)) hr = DIERR_UNSUPPORTED;
+        else hr = DI_OK;
         LeaveCriticalSection( &impl->crit );
         return hr;
     }
@@ -1356,7 +1354,7 @@ static HRESULT WINAPI dinput_device_CreateEffect( IDirectInputDevice8W *iface, c
                                                   IUnknown *outer )
 {
     struct dinput_device *impl = impl_from_IDirectInputDevice8W( iface );
-    DWORD flags = DIEP_ALLPARAMS;
+    DWORD flags;
     HRESULT hr;
 
     TRACE( "iface %p, guid %s, params %p, out %p, outer %p\n", iface, debugstr_guid( guid ),
@@ -1371,8 +1369,9 @@ static HRESULT WINAPI dinput_device_CreateEffect( IDirectInputDevice8W *iface, c
 
     hr = IDirectInputEffect_Initialize( *out, DINPUT_instance, impl->dinput->dwVersion, guid );
     if (FAILED(hr)) goto failed;
-
     if (!params) return DI_OK;
+
+    flags = params->dwSize == sizeof(DIEFFECT_DX6) ? DIEP_ALLPARAMS : DIEP_ALLPARAMS_DX5;
     if (!impl->acquired || !(impl->dwCoopLevel & DISCL_EXCLUSIVE)) flags |= DIEP_NODOWNLOAD;
     hr = IDirectInputEffect_SetParameters( *out, params, flags );
     if (FAILED(hr)) goto failed;
@@ -1481,7 +1480,7 @@ static HRESULT WINAPI dinput_device_SendForceFeedbackCommand( IDirectInputDevice
     struct dinput_device *impl = impl_from_IDirectInputDevice8W( iface );
     HRESULT hr;
 
-    TRACE( "iface %p, flags %x.\n", iface, command );
+    TRACE( "iface %p, command %#x.\n", iface, command );
 
     switch (command)
     {
@@ -1535,10 +1534,10 @@ static HRESULT WINAPI dinput_device_Poll( IDirectInputDevice8W *iface )
     EnterCriticalSection( &impl->crit );
     if (!impl->acquired) hr = DIERR_NOTACQUIRED;
     LeaveCriticalSection( &impl->crit );
-    if (hr != DI_OK) return hr;
+    if (FAILED(hr)) return hr;
 
     if (impl->vtbl->poll) return impl->vtbl->poll( iface );
-    return DI_OK;
+    return hr;
 }
 
 static HRESULT WINAPI dinput_device_SendDeviceData( IDirectInputDevice8W *iface, DWORD size,

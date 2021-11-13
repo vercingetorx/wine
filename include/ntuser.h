@@ -25,20 +25,25 @@
 
 BOOL    WINAPI NtUserCloseDesktop( HDESK handle );
 BOOL    WINAPI NtUserCloseWindowStation( HWINSTA handle );
+INT     WINAPI NtUserCountClipboardFormats(void);
 HDESK   WINAPI NtUserCreateDesktopEx( OBJECT_ATTRIBUTES *attr, UNICODE_STRING *device,
                                       DEVMODEW *devmode, DWORD flags, ACCESS_MASK access,
                                       ULONG heap_size );
 HWINSTA WINAPI NtUserCreateWindowStation( OBJECT_ATTRIBUTES *attr, ACCESS_MASK mask, ULONG arg3,
                                           ULONG arg4, ULONG arg5, ULONG arg6, ULONG arg7 );
+BOOL    WINAPI NtUserGetLayeredWindowAttributes( HWND hwnd, COLORREF *key, BYTE *alpha, DWORD *flags );
 BOOL    WINAPI NtUserGetObjectInformation( HANDLE handle, INT index, void *info,
                                            DWORD len, DWORD *needed );
 HWINSTA WINAPI NtUserGetProcessWindowStation(void);
+HANDLE  WINAPI NtUserGetProp( HWND hwnd, const WCHAR *str );
 HDESK   WINAPI NtUserGetThreadDesktop( DWORD thread );
 HWINSTA WINAPI NtUserOpenWindowStation( OBJECT_ATTRIBUTES *attr, ACCESS_MASK access );
 BOOL    WINAPI NtUserSetObjectInformation( HANDLE handle, INT index, void *info, DWORD len );
 HDESK   WINAPI NtUserOpenDesktop( OBJECT_ATTRIBUTES *attr, DWORD flags, ACCESS_MASK access );
 HDESK   WINAPI NtUserOpenInputDesktop( DWORD flags, BOOL inherit, ACCESS_MASK access );
+HANDLE  WINAPI NtUserRemoveProp( HWND hwnd, const WCHAR *str );
 BOOL    WINAPI NtUserSetProcessWindowStation( HWINSTA handle );
+BOOL    WINAPI NtUserSetProp( HWND hwnd, const WCHAR *str, HANDLE handle );
 BOOL    WINAPI NtUserSetThreadDesktop( HDESK handle );
 
 #endif /* _NTUSER_ */

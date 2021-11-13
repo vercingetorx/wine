@@ -83,7 +83,7 @@
 @ stdcall CopyIcon(long)
 @ stdcall CopyImage(long long long long long)
 @ stdcall CopyRect(ptr ptr)
-@ stdcall CountClipboardFormats()
+@ stdcall CountClipboardFormats() NtUserCountClipboardFormats
 @ stdcall CreateAcceleratorTableA(ptr long)
 @ stdcall CreateAcceleratorTableW(ptr long)
 @ stdcall CreateCaret(long long long long)
@@ -325,7 +325,7 @@
 @ stdcall GetKeyboardType(long)
 @ stdcall GetLastActivePopup(long)
 @ stdcall GetLastInputInfo(ptr)
-@ stdcall GetLayeredWindowAttributes(long ptr ptr ptr)
+@ stdcall GetLayeredWindowAttributes(long ptr ptr ptr) NtUserGetLayeredWindowAttributes
 @ stdcall GetListBoxInfo(long)
 @ stdcall GetMenu(long)
 @ stdcall GetMenuBarInfo(long long long ptr)
@@ -838,3 +838,4 @@
 #
 @ cdecl __wine_send_input(long ptr ptr)
 @ cdecl __wine_set_pixel_format(long long)
+@ cdecl __wine_set_user_driver(ptr long)

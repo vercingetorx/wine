@@ -92,14 +92,18 @@
     SYSCALL_ENTRY( NtUserCloseWindowStation ) \
     SYSCALL_ENTRY( NtUserCreateDesktopEx ) \
     SYSCALL_ENTRY( NtUserCreateWindowStation ) \
+    SYSCALL_ENTRY( NtUserGetLayeredWindowAttributes ) \
     SYSCALL_ENTRY( NtUserGetObjectInformation ) \
     SYSCALL_ENTRY( NtUserGetProcessWindowStation ) \
+    SYSCALL_ENTRY( NtUserGetProp ) \
     SYSCALL_ENTRY( NtUserGetThreadDesktop ) \
     SYSCALL_ENTRY( NtUserOpenDesktop ) \
     SYSCALL_ENTRY( NtUserOpenInputDesktop ) \
     SYSCALL_ENTRY( NtUserOpenWindowStation ) \
+    SYSCALL_ENTRY( NtUserRemoveProp ) \
     SYSCALL_ENTRY( NtUserSetObjectInformation ) \
     SYSCALL_ENTRY( NtUserSetProcessWindowStation ) \
+    SYSCALL_ENTRY( NtUserSetProp ) \
     SYSCALL_ENTRY( NtUserSetThreadDesktop )
 
 #endif /* __WOW64WIN_SYSCALL_H */

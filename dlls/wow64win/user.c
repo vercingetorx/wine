@@ -155,3 +155,38 @@ NTSTATUS WINAPI wow64_NtUserSetObjectInformation( UINT *args )
 
     return NtUserSetObjectInformation( handle, index, info, len );
 }
+
+NTSTATUS WINAPI wow64_NtUserGetProp( UINT *args )
+{
+    HWND hwnd = get_handle( &args );
+    const WCHAR *str = get_ptr( &args );
+
+    return HandleToUlong( NtUserGetProp( hwnd, str ));
+}
+
+NTSTATUS WINAPI wow64_NtUserSetProp( UINT *args )
+{
+    HWND hwnd = get_handle( &args );
+    const WCHAR *str = get_ptr( &args );
+    HANDLE handle = get_handle( &args );
+
+    return NtUserSetProp( hwnd, str, handle );
+}
+
+NTSTATUS WINAPI wow64_NtUserRemoveProp( UINT *args )
+{
+    HWND hwnd = get_handle( &args );
+    const WCHAR *str = get_ptr( &args );
+
+    return HandleToUlong( NtUserRemoveProp( hwnd, str ));
+}
+
+NTSTATUS WINAPI wow64_NtUserGetLayeredWindowAttributes( UINT *args )
+{
+    HWND hwnd = get_handle( &args );
+    COLORREF *key = get_ptr( &args );
+    BYTE *alpha = get_ptr( &args );
+    DWORD *flags = get_ptr( &args );
+
+    return NtUserGetLayeredWindowAttributes( hwnd, key, alpha, flags );
+}

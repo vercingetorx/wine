@@ -2742,13 +2742,8 @@ static void wined3d_cs_exec_update_sub_resource(struct wined3d_cs *cs, const voi
 
     if (resource->type == WINED3D_RTYPE_BUFFER)
     {
-        struct wined3d_buffer *buffer = buffer_from_resource(resource);
-        size_t size = box->right - box->left;
-
-        if (op->bo.addr.buffer_object && op->bo.addr.buffer_object == buffer->buffer_object)
-            wined3d_context_flush_bo_address(context, &op->bo.addr, size);
-        else
-            wined3d_buffer_copy_bo_address(buffer, context, box->left, &op->bo.addr, size);
+        wined3d_buffer_update_sub_resource(buffer_from_resource(resource),
+                context, &op->bo, box->left, box->right - box->left);
         goto done;
     }
 
@@ -3119,11 +3114,19 @@ static bool wined3d_cs_map_upload_bo(struct wined3d_device_context *context, str
 {
     /* Limit NOOVERWRITE maps to buffers for now; there are too many ways that
      * a texture can be invalidated to even count. */
-    if (wined3d_map_persistent() && resource->type == WINED3D_RTYPE_BUFFER && (flags & WINED3D_MAP_NOOVERWRITE))
+    if (wined3d_map_persistent() && resource->type == WINED3D_RTYPE_BUFFER
+            && (flags & (WINED3D_MAP_DISCARD | WINED3D_MAP_NOOVERWRITE)))
     {
         struct wined3d_client_resource *client = &resource->client;
+        struct wined3d_device *device = context->device;
         const struct wined3d_bo *bo;
         uint8_t *map_ptr;
+
+        if (flags & WINED3D_MAP_DISCARD)
+        {
+            if (!device->adapter->adapter_ops->adapter_alloc_bo(device, resource, sub_resource_idx, &client->addr))
+                return false;
+        }
 
         bo = (const struct wined3d_bo *)client->addr.buffer_object;
         map_ptr = bo ? bo->map_ptr : NULL;
@@ -3147,6 +3150,9 @@ static bool wined3d_cs_map_upload_bo(struct wined3d_device_context *context, str
                 client->mapped_upload.flags |= UPLOAD_BO_UPLOAD_ON_UNMAP;
         }
         map_desc->data = resource_offset_map_pointer(resource, sub_resource_idx, map_ptr, box);
+
+        if (flags & WINED3D_MAP_DISCARD)
+            client->mapped_upload.flags |= UPLOAD_BO_UPLOAD_ON_UNMAP | UPLOAD_BO_RENAME_ON_UNMAP;
 
         client->mapped_box = *box;
 

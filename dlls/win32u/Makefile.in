@@ -11,6 +11,7 @@ C_SRCS = \
 	bitblt.c \
 	bitmap.c \
 	brush.c \
+	clipboard.c \
 	clipping.c \
 	dc.c \
 	dib.c \
@@ -37,6 +38,7 @@ C_SRCS = \
 	syscall.c \
 	vertical.c \
 	vulkan.c \
+	window.c \
 	winstation.c \
 	wrappers.c
 

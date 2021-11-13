@@ -230,6 +230,9 @@ struct module* module_new(struct process* pcs, const WCHAR* name,
     module->addr_sorttab      = NULL;
     module->num_sorttab       = 0;
     module->num_symbols       = 0;
+    module->cpu               = cpu_find(machine);
+    if (!module->cpu)
+        module->cpu = dbghelp_current_cpu;
 
     vector_init(&module->vsymt, sizeof(struct symt*), 128);
     vector_init(&module->vcustom_symt, sizeof(struct symt*), 16);
@@ -1477,11 +1480,11 @@ PVOID WINAPI SymFunctionTableAccess64(HANDLE hProcess, DWORD64 AddrBase)
     struct process*     pcs = process_find_by_handle(hProcess);
     struct module*      module;
 
-    if (!pcs || !dbghelp_current_cpu->find_runtime_function) return NULL;
+    if (!pcs) return NULL;
     module = module_find_by_addr(pcs, AddrBase, DMT_UNKNOWN);
-    if (!module) return NULL;
+    if (!module || !module->cpu->find_runtime_function) return NULL;
 
-    return dbghelp_current_cpu->find_runtime_function(module, AddrBase);
+    return module->cpu->find_runtime_function(module, AddrBase);
 }
 
 static BOOL native_synchronize_module_list(struct process* pcs)

@@ -102,6 +102,16 @@ static HRESULT WINAPI session_QueryInterface(IUnknown *iface, REFIID riid, void 
         TRACE("(%p)->(IDBCreateCommand_iface %p)\n", iface, ppv);
         *ppv = &session->IDBCreateCommand_iface;
     }
+    else if(IsEqualGUID(&IID_IBindResource, riid))
+    {
+        TRACE("(%p)->(IID_IBindResource not support)\n", iface);
+        return E_NOINTERFACE;
+    }
+    else if(IsEqualGUID(&IID_ICreateRow, riid))
+    {
+        TRACE("(%p)->(IID_ICreateRow not support)\n", iface);
+        return E_NOINTERFACE;
+    }
 
     if(*ppv)
     {
@@ -824,8 +834,11 @@ static HRESULT WINAPI command_GetCommandText(ICommandText *iface, GUID *dialect,
     if (!command->query)
         return DB_E_NOCOMMAND;
 
-    if (IsEqualGUID(&DBGUID_DEFAULT, dialect))
+    if (!IsEqualGUID(&DBGUID_DEFAULT, dialect))
+    {
+        *dialect = DBGUID_DEFAULT;
         hr = DB_S_DIALECTIGNORED;
+    }
 
     *commandstr = heap_alloc((lstrlenW(command->query)+1)*sizeof(WCHAR));
     wcscpy(*commandstr, command->query);
@@ -837,7 +850,7 @@ static HRESULT WINAPI command_SetCommandText(ICommandText *iface, REFGUID dialec
     struct command *command = impl_from_ICommandText( iface );
     TRACE("%p, %s, %s\n", command, debugstr_guid(dialect), debugstr_w(commandstr));
 
-    if (IsEqualGUID(&DBGUID_DEFAULT, dialect))
+    if (!IsEqualGUID(&DBGUID_DEFAULT, dialect))
         FIXME("Currently non Default Dialect isn't supported\n");
 
     heap_free(command->query);
@@ -1049,6 +1062,7 @@ static HRESULT WINAPI createcommand_CreateCommand(IDBCreateCommand *iface, IUnkn
     command->IConvertType_iface.lpVtbl = &converttypeVtbl;
     command->ICommandPrepare_iface.lpVtbl = &commandprepareVtbl;
     command->refs = 1;
+    command->query = NULL;
 
     IUnknown_QueryInterface(&session->session_iface, &IID_IUnknown, (void**)&command->session);
 

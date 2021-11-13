@@ -21,9 +21,14 @@
 #ifndef __WINE_WIN32U_PRIVATE
 #define __WINE_WIN32U_PRIVATE
 
-#include "winuser.h"
+#include <stdarg.h>
+#include "windef.h"
+#include "winbase.h"
+#include "ntgdi.h"
+#include "ntuser.h"
 #include "wine/gdi_driver.h"
 #include "wine/unixlib.h"
+#include "wine/debug.h"
 
 struct user_callbacks
 {
@@ -189,6 +194,7 @@ struct unix_funcs
     BOOL     (WINAPI *pNtGdiUnrealizeObject)( HGDIOBJ obj );
     BOOL     (WINAPI *pNtGdiUpdateColors)( HDC hdc );
     BOOL     (WINAPI *pNtGdiWidenPath)( HDC hdc );
+    INT      (WINAPI *pNtUserCountClipboardFormats)(void);
 
     /* Wine-specific functions */
     UINT (WINAPI *pGDIRealizePalette)( HDC hdc );
@@ -206,7 +212,7 @@ struct unix_funcs
     const struct vulkan_funcs * (CDECL *get_vulkan_driver)( HDC hdc, UINT version );
     struct opengl_funcs * (CDECL *get_wgl_driver)( HDC hdc, UINT version );
     void (CDECL *make_gdi_object_system)( HGDIOBJ handle, BOOL set );
-    void (CDECL *set_display_driver)( void *proc );
+    void (CDECL *set_display_driver)( struct user_driver_funcs *funcs, UINT version );
     void (CDECL *set_visible_region)( HDC hdc, HRGN hrgn, const RECT *vis_rect, const RECT *device_rect,
                                       struct window_surface *surface );
 };
@@ -223,6 +229,8 @@ extern HKEY reg_open_hkcu_key( const char *name ) DECLSPEC_HIDDEN;
 extern HKEY reg_open_key( HKEY root, const WCHAR *name, ULONG name_len ) DECLSPEC_HIDDEN;
 extern ULONG query_reg_ascii_value( HKEY hkey, const char *name,
                                     KEY_VALUE_PARTIAL_INFORMATION *info, ULONG size ) DECLSPEC_HIDDEN;
+
+extern const struct user_driver_funcs *user_driver DECLSPEC_HIDDEN;
 
 static inline WCHAR *win32u_wcsrchr( const WCHAR *str, WCHAR ch )
 {
