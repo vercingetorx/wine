@@ -1087,6 +1087,138 @@ sync_test("elem_attr", function() {
     ok(r === "cls2", "class attr = " + r);
     r = elem.getAttribute("className");
     ok(r === "cls3", "className attr = " + r);
+
+    var arr = [3];
+    elem.setAttribute("testattr", arr);
+    r = elem.getAttribute("testattr");
+    ok(r === (v < 8 ? arr : "3"), "testattr = " + r);
+    todo_wine_if(v === 8).
+    ok(elem.testattr === (v < 9 ? arr : undefined), "elem.testattr = " + elem.testattr);
+    r = elem.removeAttribute("testattr");
+    ok(r === (v < 9 ? true : undefined), "testattr removeAttribute returned " + r);
+    ok(elem.testattr === undefined, "removed testattr = " + elem.testattr);
+
+    arr[0] = 9;
+    elem.setAttribute("testattr", "string");
+    elem.testattr = arr;
+    r = elem.getAttribute("testattr");
+    todo_wine_if(v === 8).
+    ok(r === (v < 8 ? arr : (v < 9 ? "9" : "string")), "testattr = " + r);
+    ok(elem.testattr === arr, "elem.testattr = " + elem.testattr);
+    arr[0] = 3;
+    r = elem.getAttribute("testattr");
+    todo_wine_if(v === 8).
+    ok(r === (v < 8 ? arr : (v < 9 ? "3" : "string")), "testattr = " + r);
+    ok(elem.testattr === arr, "elem.testattr = " + elem.testattr);
+    r = elem.removeAttribute("testattr");
+    ok(r === (v < 9 ? true : undefined), "testattr removeAttribute returned " + r);
+    todo_wine_if(v === 8).
+    ok(elem.testattr === (v < 9 ? undefined : arr), "removed testattr = " + elem.testattr);
+
+    arr.toString = function() { return 42; }
+    elem.testattr = arr;
+    r = elem.getAttribute("testattr");
+    todo_wine_if(v === 8).
+    ok(r === (v < 8 ? arr : (v < 9 ? "42" : null)), "testattr with custom toString = " + r);
+    elem.setAttribute("testattr", arr);
+    r = elem.getAttribute("testattr");
+    ok(r === (v < 8 ? arr : "42"), "testattr after setAttribute with custom toString = " + r);
+    ok(elem.testattr === arr, "elem.testattr after setAttribute with custom toString = " + elem.testattr);
+    r = elem.removeAttribute("testattr");
+    ok(r === (v < 9 ? true : undefined), "testattr removeAttribute with custom toString returned " + r);
+    todo_wine_if(v === 8).
+    ok(elem.testattr === (v < 9 ? undefined : arr), "removed testattr with custom toString = " + elem.testattr);
+
+    arr.valueOf = function() { return "arrval"; }
+    elem.testattr = arr;
+    r = elem.getAttribute("testattr");
+    todo_wine_if(v === 8).
+    ok(r === (v < 8 ? arr : (v < 9 ? "arrval" : null)), "testattr with custom valueOf = " + r);
+    elem.setAttribute("testattr", arr);
+    r = elem.getAttribute("testattr");
+    todo_wine_if(v >= 10).
+    ok(r === (v < 8 ? arr : (v < 10 ? "arrval" : "42")), "testattr after setAttribute with custom valueOf = " + r);
+    ok(elem.testattr === arr, "elem.testattr after setAttribute with custom valueOf = " + elem.testattr);
+    r = elem.removeAttribute("testattr");
+    ok(r === (v < 9 ? true : undefined), "testattr removeAttribute with custom valueOf returned " + r);
+    todo_wine_if(v === 8).
+    ok(elem.testattr === (v < 9 ? undefined : arr), "removed testattr with custom valueOf = " + elem.testattr);
+    delete arr.valueOf;
+    delete arr.toString;
+
+    elem.setAttribute("id", arr);
+    r = elem.getAttribute("id");
+    todo_wine_if(v >= 8 && v < 10).
+    ok(r === (v < 8 || v >= 10 ? "3" : "[object]"), "id = " + r);
+    r = elem.removeAttribute("id");
+    ok(r === (v < 9 ? true : undefined), "id removeAttribute returned " + r);
+    ok(elem.id === "", "removed id = " + elem.id);
+
+    var func = function() { };
+    elem.onclick = func;
+    ok(elem.onclick === func, "onclick = " + elem.onclick);
+    r = elem.getAttribute("onclick");
+    ok(r === (v < 8 ? func : null), "onclick attr = " + r);
+    r = elem.removeAttribute("onclick");
+    ok(r === (v < 9 ? false : undefined), "removeAttribute returned " + r);
+    todo_wine_if(v === 8).
+    ok(elem.onclick === (v != 8 ? func : null), "removed onclick = " + elem.onclick);
+
+    elem.onclick_test = func;
+    ok(elem.onclick_test === func, "onclick_test = " + elem.onclick_test);
+    r = elem.getAttribute("onclick_test");
+    todo_wine_if(v === 8).
+    ok(r === (v < 8 ? func : (v < 9 ? func.toString() : null)), "onclick_test attr = " + r);
+
+    elem.setAttribute("onclick", "test");
+    r = elem.getAttribute("onclick");
+    ok(r === "test", "onclick attr after setAttribute = " + r);
+    r = elem.removeAttribute("onclick");
+    ok(r === (v < 9 ? true : undefined), "removeAttribute after setAttribute returned " + r);
+
+    /* IE11 returns an empty function, which we can't check directly */
+    todo_wine_if(v >= 8).
+    ok((v < 11) ? (elem.onclick === null) : (elem.onclick !== func), "removed onclick after setAttribute = " + elem.onclick);
+
+    r = Object.prototype.toString.call(elem.onclick);
+    todo_wine_if(v >= 8 && v < 11).
+    ok(r === (v < 9 ? "[object Object]" : (v < 11 ? "[object Null]" : "[object Function]")),
+        "removed onclick after setAttribute Object.toString returned " + r);
+
+    elem.setAttribute("onclick", "string");
+    r = elem.getAttribute("onclick");
+    ok(r === "string", "onclick attr after setAttribute = " + r);
+    elem.onclick = func;
+    ok(elem.onclick === func, "onclick = " + elem.onclick);
+    r = elem.getAttribute("onclick");
+    todo_wine_if(v === 8).
+    ok(r === (v < 8 ? func : (v < 9 ? null : "string")), "onclick attr = " + r);
+    elem.onclick = "test";
+    r = elem.getAttribute("onclick");
+    todo_wine_if(v === 8).
+    ok(r === (v < 9 ? "test" : "string"), "onclick attr = " + r);
+    r = elem.removeAttribute("onclick");
+    ok(r === (v < 9 ? true : undefined), "removeAttribute returned " + r);
+    todo_wine_if(v >= 8).
+    ok(elem.onclick === null, "removed onclick = " + elem.onclick);
+
+    elem.setAttribute("ondblclick", arr);
+    r = elem.getAttribute("ondblclick");
+    todo_wine_if(v >= 8 && v < 10).
+    ok(r === (v < 8 ? arr : (v < 10 ? "[object]" : "3")), "ondblclick = " + r);
+    r = elem.removeAttribute("ondblclick");
+    ok(r === (v < 8 ? false : (v < 9 ? true : undefined)), "ondblclick removeAttribute returned " + r);
+    r = Object.prototype.toString.call(elem.ondblclick);
+    todo_wine_if(v >= 9).
+    ok(r === (v < 8 ? "[object Array]" : (v < 9 ? "[object Object]" : (v < 11 ? "[object Null]" : "[object Function]"))),
+        "removed ondblclick Object.toString returned " + r);
+
+    elem.setAttribute("ondblclick", "string");
+    r = elem.getAttribute("ondblclick");
+    ok(r === "string", "ondblclick string = " + r);
+    r = elem.removeAttribute("ondblclick");
+    ok(r === (v < 9 ? true : undefined), "ondblclick string removeAttribute returned " + r);
+    ok(elem.ondblclick === null, "removed ondblclick string = " + elem.ondblclick);
 });
 
 sync_test("__proto__", function() {
@@ -1137,7 +1269,6 @@ sync_test("__proto__", function() {
     ok(obj.__proto__ === ctor.prototype, "obj.__proto__ !== ctor.prototype");
 
     r = (delete x.__proto__);
-    todo_wine.
     ok(r, "delete x.__proto__ returned " + r);
     ok(Object.prototype.hasOwnProperty("__proto__"), "__proto__ is not a property of Object.prototype after delete");
     r = Object.getPrototypeOf(x);

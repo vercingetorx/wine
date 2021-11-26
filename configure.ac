@@ -4,23 +4,14 @@ dnl For detailed change history, see the git commit logs.
 
 m4_define(WINE_VERSION,regexp(m4_include(VERSION),[version \([-.0-9A-Za-z]+\)],[\1]))
 
-dnl autoconf versions before 2.62 don't handle source dir symlinks correctly
-AC_PREREQ(2.62)
+dnl autoconf versions before 2.63b don't have AS_VAR_APPEND or AS_VAR_IF
+AC_PREREQ(2.63b)
 AC_INIT([Wine],[WINE_VERSION],[wine-devel@winehq.org],[wine],[https://www.winehq.org])
 AC_CONFIG_SRCDIR(server/atom.c)
 AC_CONFIG_HEADERS(include/config.h)
 AC_CONFIG_AUX_DIR(tools)
 
 libwine_version="1.0"
-
-dnl autoconf versions before 2.63b don't have AS_VAR_APPEND or AS_VAR_IF
-m4_ifdef([AS_VAR_APPEND],,[as_fn_append () { eval $[1]=\$$[1]\$[2]; }
-AC_DEFUN([AS_VAR_APPEND],[as_fn_append $1 $2])])dnl
-m4_ifdef([AS_VAR_IF],,[AC_DEFUN([AS_VAR_IF],
-[AS_LITERAL_IF([$1],
-  [AS_IF([test "x$$1" = x""$2], [$3], [$4])],
-  [eval as_val=\$$1
-   AS_IF([test "x$as_val" = x""$2], [$3], [$4])])])])dnl
 
 dnl **** Command-line arguments ****
 
@@ -48,7 +39,6 @@ AC_ARG_WITH(gphoto,    AS_HELP_STRING([--without-gphoto],[do not use gphoto (Dig
 AC_ARG_WITH(gnutls,    AS_HELP_STRING([--without-gnutls],[do not use GnuTLS (schannel support)]))
 AC_ARG_WITH(gssapi,    AS_HELP_STRING([--without-gssapi],[do not use GSSAPI (Kerberos SSP support)]))
 AC_ARG_WITH(gstreamer, AS_HELP_STRING([--without-gstreamer],[do not use GStreamer (codecs support)]))
-AC_ARG_WITH(hal,       AS_HELP_STRING([--without-hal],[do not use HAL (dynamic device support)]))
 AC_ARG_WITH(inotify,   AS_HELP_STRING([--without-inotify],[do not use inotify (filesystem change notifications)]))
 AC_ARG_WITH(krb5,      AS_HELP_STRING([--without-krb5],[do not use krb5 (Kerberos)]))
 AC_ARG_WITH(ldap,      AS_HELP_STRING([--without-ldap],[do not use LDAP]),
@@ -99,6 +89,8 @@ AC_ARG_WITH(xshm,      AS_HELP_STRING([--without-xshm],[do not use XShm (shared 
 AC_ARG_WITH(xxf86vm,   AS_HELP_STRING([--without-xxf86vm],[do not use XFree video mode extension]),
             [if test "x$withval" = "xno"; then ac_cv_header_X11_extensions_xf86vmode_h=no; ac_cv_header_X11_extensions_xf86vmproto_h=no; fi])
 
+AC_ARG_WITH(system-dllpath,AS_HELP_STRING([--with-system-dllpath=PATH],[load external PE dependencies from colon-separated path PATH]),
+            AC_SUBST(system_dllpath,[$withval]))
 AC_ARG_WITH(wine-tools,AS_HELP_STRING([--with-wine-tools=DIR],[use Wine tools from directory DIR]))
 AC_ARG_WITH(wine64,    AS_HELP_STRING([--with-wine64=DIR],[use the 64-bit Wine in DIR for a Wow64 build]))
 
@@ -1038,8 +1030,7 @@ then
         if test "x$ac_debug_format_seen" = x
         then
           case $CROSSDEBUG in
-            *dwarf)  WINE_TRY_CROSSCFLAGS([-gdwarf-2])
-                     WINE_TRY_CROSSCFLAGS([-gstrict-dwarf]) ;;
+            *dwarf)  WINE_TRY_CROSSCFLAGS([-gdwarf-4]) ;;
             pdb)     WINE_TRY_CROSSCFLAGS([-gcodeview]) ;;
           esac
         fi
@@ -1331,18 +1322,6 @@ fi
 WINE_NOTICE_WITH(dbus,[test "x$ac_cv_lib_soname_dbus_1" = "x" -a \
                             "x$ac_cv_header_DiskArbitration_DiskArbitration_h" != "xyes"],
                  [libdbus ${notice_platform}development files not found, no dynamic device support.])
-
-dnl **** Check for libhal ****
-if test "x$with_hal" != "xno" -a "x$ac_cv_lib_soname_dbus_1" != x
-then
-    WINE_PACKAGE_FLAGS(HAL,[hal],[-ldbus-1],,,
-        [AC_CHECK_HEADER([hal/libhal.h],
-            [WINE_CHECK_SONAME(hal, libhal_ctx_new,,[HAL_CFLAGS=""],[$HAL_LIBS])],
-            [HAL_CFLAGS=""])])
-    WINE_NOTICE_WITH(hal,[test "x$ac_cv_lib_soname_hal" = "x" -a \
-                               "x$ac_cv_header_DiskArbitration_DiskArbitration_h" != "xyes"],
-                     [libhal ${notice_platform}development files not found, no legacy dynamic device support.])
-fi
 
 dnl **** Check for libgnutls ****
 if test "x$with_gnutls" != "xno"
@@ -1852,8 +1831,7 @@ char*f(const char *h,char n) {return strchr(h,n);}]])],[ac_cv_c_logicalop_noisy=
   done
   if test "x$ac_debug_format_seen" = xdefault
   then
-    WINE_TRY_CFLAGS([-gdwarf-2])
-    WINE_TRY_CFLAGS([-gstrict-dwarf])
+    WINE_TRY_CFLAGS([-gdwarf-4])
   fi
 
   dnl Disable gcc builtins except for Mingw
@@ -1957,6 +1935,7 @@ AC_CHECK_FUNCS(\
 	posix_fallocate \
 	prctl \
 	proc_pidinfo \
+	sched_yield \
 	setproctitle \
 	setprogname \
 	sigprocmask \
@@ -3100,6 +3079,7 @@ WINE_CONFIG_MAKEFILE(dlls/mscoree/tests)
 WINE_CONFIG_MAKEFILE(dlls/mscorwks)
 WINE_CONFIG_MAKEFILE(dlls/msctf)
 WINE_CONFIG_MAKEFILE(dlls/msctf/tests)
+WINE_CONFIG_MAKEFILE(dlls/msctfmonitor)
 WINE_CONFIG_MAKEFILE(dlls/msctfp)
 WINE_CONFIG_MAKEFILE(dlls/msdaps)
 WINE_CONFIG_MAKEFILE(dlls/msdasql)
@@ -3159,6 +3139,7 @@ WINE_CONFIG_MAKEFILE(dlls/msvcp71)
 WINE_CONFIG_MAKEFILE(dlls/msvcp80)
 WINE_CONFIG_MAKEFILE(dlls/msvcp90)
 WINE_CONFIG_MAKEFILE(dlls/msvcp90/tests)
+WINE_CONFIG_MAKEFILE(dlls/msvcp_win)
 WINE_CONFIG_MAKEFILE(dlls/msvcr100)
 WINE_CONFIG_MAKEFILE(dlls/msvcr100/tests)
 WINE_CONFIG_MAKEFILE(dlls/msvcr110)

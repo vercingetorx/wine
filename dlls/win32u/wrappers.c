@@ -596,9 +596,66 @@ NTSTATUS WINAPI NtGdiDdDDISetVidPnSourceOwner( const D3DKMT_SETVIDPNSOURCEOWNER 
     return unix_funcs->pNtGdiDdDDISetVidPnSourceOwner( desc );
 }
 
+HKL WINAPI NtUserActivateKeyboardLayout( HKL layout, UINT flags )
+{
+    return unix_funcs->pNtUserActivateKeyboardLayout( layout, flags );
+}
+
 INT WINAPI NtUserCountClipboardFormats(void)
 {
     return unix_funcs->pNtUserCountClipboardFormats();
+}
+
+UINT WINAPI NtUserGetKeyboardLayoutList( INT size, HKL *layouts )
+{
+    return unix_funcs->pNtUserGetKeyboardLayoutList( size, layouts );
+}
+
+INT WINAPI NtUserGetKeyNameText( LONG lparam, WCHAR *buffer, INT size )
+{
+    return unix_funcs->pNtUserGetKeyNameText( lparam, buffer, size );
+}
+
+INT WINAPI NtUserGetPriorityClipboardFormat( UINT *list, INT count )
+{
+    return unix_funcs->pNtUserGetPriorityClipboardFormat( list, count );
+}
+
+BOOL WINAPI NtUserGetUpdatedClipboardFormats( UINT *formats, UINT size, UINT *out_size )
+{
+    return unix_funcs->pNtUserGetUpdatedClipboardFormats( formats, size, out_size );
+}
+
+BOOL WINAPI NtUserIsClipboardFormatAvailable( UINT format )
+{
+    return unix_funcs->pNtUserIsClipboardFormatAvailable( format );
+}
+
+UINT WINAPI NtUserMapVirtualKeyEx( UINT code, UINT type, HKL layout )
+{
+    return unix_funcs->pNtUserMapVirtualKeyEx( code, type, layout );
+}
+
+BOOL WINAPI NtUserScrollDC( HDC hdc, INT dx, INT dy, const RECT *scroll, const RECT *clip,
+                            HRGN ret_update_rgn, RECT *update_rect )
+{
+    return unix_funcs->pNtUserScrollDC( hdc, dx, dy, scroll, clip, ret_update_rgn, update_rect );
+}
+
+INT WINAPI NtUserToUnicodeEx( UINT virt, UINT scan, const BYTE *state,
+                              WCHAR *str, int size, UINT flags, HKL layout )
+{
+    return unix_funcs->pNtUserToUnicodeEx( virt, scan, state, str, size, flags, layout );
+}
+
+BOOL WINAPI NtUserUnregisterHotKey( HWND hwnd, INT id )
+{
+    return unix_funcs->pNtUserUnregisterHotKey( hwnd, id );
+}
+
+WORD WINAPI NtUserVkKeyScanEx( WCHAR chr, HKL layout )
+{
+    return unix_funcs->pNtUserVkKeyScanEx( chr, layout );
 }
 
 UINT WINAPI GDIRealizePalette( HDC hdc )

@@ -42,8 +42,6 @@
 #define USE_WS_PREFIX
 #include "winsock2.h"
 #include "ws2ipdef.h"
-#include "nldef.h"
-#include "netioapi.h"
 #include "dhcpcsdk.h"
 #include "wine/debug.h"
 
@@ -67,13 +65,11 @@ static void appeared_callback( DADiskRef disk, void *context )
     const void *ref;
     char device[64];
     char mount_point[PATH_MAX];
-    char model[64];
     size_t model_len = 0;
     GUID guid, *guid_ptr = NULL;
     enum device_type type = DEVICE_UNKNOWN;
-    UINT pdtype = 0;
-    SCSI_ADDRESS scsi_addr;
-    UNICODE_STRING devname;
+    struct scsi_info scsi_info = { 0 };
+    BOOL removable = FALSE;
     int fd;
 
     if (!dict) return;
@@ -100,13 +96,13 @@ static void appeared_callback( DADiskRef disk, void *context )
         if (!CFStringCompare( ref, CFSTR("IOCDMedia"), 0 ))
         {
             type = DEVICE_CDROM;
-            pdtype = 5;
+            scsi_info.type = 5;
         }
         if (!CFStringCompare( ref, CFSTR("IODVDMedia"), 0 ) ||
             !CFStringCompare( ref, CFSTR("IOBDMedia"), 0 ))
         {
             type = DEVICE_DVD;
-            pdtype = 5;
+            scsi_info.type = 5;
         }
         if (!CFStringCompare( ref, CFSTR("IOMedia"), 0 ))
             type = DEVICE_HARDDISK;
@@ -116,41 +112,38 @@ static void appeared_callback( DADiskRef disk, void *context )
     {
         CFIndex i;
 
-        CFStringGetCString( ref, model, sizeof(model), kCFStringEncodingASCII );
+        CFStringGetCString( ref, scsi_info.model, sizeof(scsi_info.model), kCFStringEncodingASCII );
         model_len += CFStringGetLength( ref );
         /* Pad to 8 characters */
         for (i = 0; i < (CFIndex)8 - CFStringGetLength( ref ); ++i)
-            model[model_len++] = ' ';
+            scsi_info.model[model_len++] = ' ';
     }
     if ((ref = CFDictionaryGetValue( dict, CFSTR("DADeviceModel") )))
     {
         CFIndex i;
 
-        CFStringGetCString( ref, model+model_len, sizeof(model)-model_len, kCFStringEncodingASCII );
+        CFStringGetCString( ref, scsi_info.model+model_len, sizeof(scsi_info.model)-model_len, kCFStringEncodingASCII );
         model_len += CFStringGetLength( ref );
         /* Pad to 16 characters */
         for (i = 0; i < (CFIndex)16 - CFStringGetLength( ref ); ++i)
-            model[model_len++] = ' ';
+            scsi_info.model[model_len++] = ' ';
     }
     if ((ref = CFDictionaryGetValue( dict, CFSTR("DADeviceRevision") )))
     {
         CFIndex i;
 
-        CFStringGetCString( ref, model+model_len, sizeof(model)-model_len, kCFStringEncodingASCII );
+        CFStringGetCString( ref, scsi_info.model+model_len, sizeof(scsi_info.model)-model_len, kCFStringEncodingASCII );
         model_len += CFStringGetLength( ref );
         /* Pad to 4 characters */
         for (i = 0; i < (CFIndex)4 - CFStringGetLength( ref ); ++i)
-            model[model_len++] = ' ';
+            scsi_info.model[model_len++] = ' ';
     }
 
     TRACE( "got mount notification for '%s' on '%s' uuid %s\n",
            device, mount_point, wine_dbgstr_guid(guid_ptr) );
 
-    devname.Buffer = NULL;
-    if ((ref = CFDictionaryGetValue( dict, CFSTR("DAMediaRemovable") )) && CFBooleanGetValue( ref ))
-        add_dos_device( -1, device, device, mount_point, type, guid_ptr, &devname );
-    else
-        if (guid_ptr) add_volume( device, device, mount_point, DEVICE_HARDDISK_VOL, guid_ptr, NULL );
+    if ((ref = CFDictionaryGetValue( dict, CFSTR("DAMediaRemovable") )))
+        removable = CFBooleanGetValue( ref );
 
     if (!access( device, R_OK ) &&
         (fd = open( device, O_RDONLY )) >= 0)
@@ -159,17 +152,20 @@ static void appeared_callback( DADiskRef disk, void *context )
 
         if (ioctl( fd, DKIOCSCSIIDENTIFY, &dsi ) >= 0)
         {
-            scsi_addr.PortNumber = dsi.bus;
-            scsi_addr.PathId = dsi.port;
-            scsi_addr.TargetId = dsi.target;
-            scsi_addr.Lun = dsi.lun;
-
-            /* FIXME: get real controller Id for SCSI */
-            /* FIXME: get real driver name */
-            create_scsi_entry( &scsi_addr, 255, "WINE SCSI", pdtype, model, &devname );
+            scsi_info.addr.PortNumber = dsi.bus;
+            scsi_info.addr.PathId = dsi.port;
+            scsi_info.addr.TargetId = dsi.target;
+            scsi_info.addr.Lun = dsi.lun;
+            scsi_info.init_id = 255; /* FIXME */
+            strcpy( scsi_info.driver, "WINE SCSI" ); /* FIXME */
         }
         close( fd );
     }
+
+    if (removable)
+        add_dos_device( -1, device, device, mount_point, type, guid_ptr, &scsi_info );
+    else
+        if (guid_ptr) add_volume( device, device, mount_point, DEVICE_HARDDISK_VOL, guid_ptr, NULL, &scsi_info );
 
 done:
     CFRelease( dict );
@@ -258,22 +254,14 @@ static UInt8 map_option( ULONG option )
     }
 }
 
-#define IF_NAMESIZE 16
-static BOOL map_adapter_name( const NET_LUID *luid, WCHAR *unix_name, DWORD len )
-{
-    return !ConvertInterfaceLuidToAlias( luid, unix_name, len );
-}
-
-static CFStringRef find_service_id( const NET_LUID *adapter )
+static CFStringRef find_service_id( const char *unix_name )
 {
     SCPreferencesRef prefs;
     SCNetworkSetRef set = NULL;
     CFArrayRef services = NULL;
     CFStringRef id, ret = NULL;
-    WCHAR unix_name[IF_NAMESIZE];
     CFIndex i;
 
-    if (!map_adapter_name( adapter, unix_name, ARRAY_SIZE(unix_name) )) return NULL;
     if (!(prefs = SCPreferencesCreate( NULL, CFSTR("mountmgr.sys"), NULL ))) return NULL;
     if (!(set = SCNetworkSetCopyCurrent( prefs ))) goto done;
     if (!(services = SCNetworkSetCopyServices( set ))) goto done;
@@ -281,15 +269,14 @@ static CFStringRef find_service_id( const NET_LUID *adapter )
     for (i = 0; i < CFArrayGetCount( services ); i++)
     {
         SCNetworkServiceRef service;
-        UniChar buf[IF_NAMESIZE] = {0};
+        char buf[16];
         CFStringRef name;
 
         service = CFArrayGetValueAtIndex( services, i );
         name = SCNetworkInterfaceGetBSDName( SCNetworkServiceGetInterface(service) );
-        if (name && CFStringGetLength( name ) < ARRAY_SIZE( buf ))
+        if (name && CFStringGetCString( name, buf, sizeof(buf), kCFStringEncodingUTF8 ))
         {
-            CFStringGetCharacters( name, CFRangeMake(0, CFStringGetLength(name)), buf );
-            if (!lstrcmpW( buf, unix_name ) && (id = SCNetworkServiceGetServiceID( service )))
+            if (!strcmp( buf, unix_name ) && (id = SCNetworkServiceGetServiceID( service )))
             {
                 ret = CFStringCreateCopy( NULL, id );
                 break;
@@ -304,10 +291,10 @@ done:
     return ret;
 }
 
-ULONG get_dhcp_request_param( const NET_LUID *adapter, struct mountmgr_dhcp_request_param *param, char *buf, ULONG offset,
+ULONG get_dhcp_request_param( const char *unix_name, struct mountmgr_dhcp_request_param *param, char *buf, ULONG offset,
                               ULONG size )
 {
-    CFStringRef service_id = find_service_id( adapter );
+    CFStringRef service_id = find_service_id( unix_name );
     CFDictionaryRef dict;
     CFDataRef value;
     DWORD ret = 0;
@@ -373,7 +360,7 @@ ULONG get_dhcp_request_param( const NET_LUID *adapter, struct mountmgr_dhcp_requ
 
 #elif !defined(SONAME_LIBDBUS_1)
 
-ULONG get_dhcp_request_param( const NET_LUID *adapter, struct mountmgr_dhcp_request_param *param, char *buf, ULONG offset,
+ULONG get_dhcp_request_param( const char *unix_name, struct mountmgr_dhcp_request_param *param, char *buf, ULONG offset,
                               ULONG size )
 {
     FIXME( "support not compiled in\n" );

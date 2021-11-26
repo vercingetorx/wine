@@ -1003,6 +1003,42 @@ static const struct user_driver_funcs *load_driver(void)
     return user_driver;
 }
 
+static BOOL CDECL loaderdrv_ActivateKeyboardLayout( HKL layout, UINT flags )
+{
+    return load_driver()->pActivateKeyboardLayout( layout, flags );
+}
+
+static INT CDECL loaderdrv_GetKeyNameText( LONG lparam, LPWSTR buffer, INT size )
+{
+    return load_driver()->pGetKeyNameText( lparam, buffer, size );
+}
+
+static UINT CDECL loaderdrv_GetKeyboardLayoutList( INT size, HKL *layouts )
+{
+    return load_driver()->pGetKeyboardLayoutList( size, layouts );
+}
+
+static UINT CDECL loaderdrv_MapVirtualKeyEx( UINT code, UINT type, HKL layout )
+{
+    return load_driver()->pMapVirtualKeyEx( code, type, layout );
+}
+
+static INT CDECL loaderdrv_ToUnicodeEx( UINT virt, UINT scan, const BYTE *state, LPWSTR str,
+                                        int size, UINT flags, HKL layout )
+{
+    return load_driver()->pToUnicodeEx( virt, scan, state, str, size, flags, layout );
+}
+
+static void CDECL loaderdrv_UnregisterHotKey( HWND hwnd, UINT modifiers, UINT vk )
+{
+    load_driver()->pUnregisterHotKey( hwnd, modifiers, vk );
+}
+
+static SHORT CDECL loaderdrv_VkKeyScanEx( WCHAR ch, HKL layout )
+{
+    return load_driver()->pVkKeyScanEx( ch, layout );
+}
+
 static void CDECL loaderdrv_UpdateClipboard(void)
 {
     load_driver()->pUpdateClipboard();
@@ -1010,7 +1046,15 @@ static void CDECL loaderdrv_UpdateClipboard(void)
 
 static const struct user_driver_funcs lazy_load_driver =
 {
+    .pActivateKeyboardLayout = loaderdrv_ActivateKeyboardLayout,
+    .pGetKeyNameText = loaderdrv_GetKeyNameText,
+    .pGetKeyboardLayoutList = loaderdrv_GetKeyboardLayoutList,
+    .pMapVirtualKeyEx = loaderdrv_MapVirtualKeyEx,
+    .pToUnicodeEx = loaderdrv_ToUnicodeEx,
+    .pUnregisterHotKey = loaderdrv_UnregisterHotKey,
+    .pVkKeyScanEx = loaderdrv_VkKeyScanEx,
     .pUpdateClipboard = loaderdrv_UpdateClipboard,
+    .pScrollDC = nulldrv_ScrollDC,
 };
 
 const struct user_driver_funcs *user_driver = &lazy_load_driver;

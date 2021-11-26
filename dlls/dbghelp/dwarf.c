@@ -1059,18 +1059,31 @@ static BOOL dwarf2_compute_location_attr(dwarf2_parse_context_t* ctx,
 
     switch (xloc.form)
     {
+    case DW_FORM_data4:
+        if (ctx->head.version < 4)
+        {
+            loc->kind = loc_dwarf2_location_list;
+            loc->reg = Wine_DW_no_register;
+            loc->offset = xloc.u.uvalue;
+            return TRUE;
+        }
+        /* fall through */
     case DW_FORM_data1: case DW_FORM_data2:
     case DW_FORM_udata: case DW_FORM_sdata:
         loc->kind = loc_absolute;
         loc->reg = 0;
         loc->offset = xloc.u.uvalue;
         return TRUE;
-    case DW_FORM_data4:
-        loc->kind = loc_dwarf2_location_list;
-        loc->reg = Wine_DW_no_register;
-        loc->offset = xloc.u.uvalue;
-        return TRUE;
-    case DW_FORM_data8: case DW_FORM_sec_offset:
+    case DW_FORM_data8:
+        if (ctx->head.version >= 4)
+        {
+            loc->kind = loc_absolute;
+            loc->reg = 0;
+            loc->offset = xloc.u.lluvalue;
+            return TRUE;
+        }
+        /* fall through */
+    case DW_FORM_sec_offset:
         loc->kind = loc_dwarf2_location_list;
         loc->reg = Wine_DW_no_register;
         loc->offset = xloc.u.lluvalue;
@@ -1701,8 +1714,9 @@ static void dwarf2_parse_udt_member(dwarf2_debug_info_t* di,
     {
         if (loc.kind != loc_absolute)
         {
-           FIXME("Found register, while not expecting it\n");
-           loc.offset = 0;
+            FIXME("Unexpected offset computation for member %s in %ls!%s\n",
+                  name.u.string, di->unit_ctx->module_ctx->module->modulename, parent->hash_elt.name);
+            loc.offset = 0;
         }
         else
             TRACE("found member_location at %s -> %lu\n",
@@ -1835,8 +1849,9 @@ static void dwarf2_parse_enumerator(dwarf2_debug_info_t* di,
 static struct symt* dwarf2_parse_enumeration_type(dwarf2_debug_info_t* di)
 {
     struct attribute    name;
-    struct attribute    size;
-    struct symt_basic*  basetype;
+    struct attribute    attrtype;
+    dwarf2_debug_info_t*ditype;
+    struct symt*        type;
     struct vector*      children;
     dwarf2_debug_info_t*child;
     unsigned int        i;
@@ -1846,20 +1861,28 @@ static struct symt* dwarf2_parse_enumeration_type(dwarf2_debug_info_t* di)
     TRACE("%s\n", dwarf2_debug_di(di));
 
     if (!dwarf2_find_attribute(di, DW_AT_name, &name)) name.u.string = NULL;
-    if (!dwarf2_find_attribute(di, DW_AT_byte_size, &size)) size.u.uvalue = 4;
-
-    switch (size.u.uvalue) /* FIXME: that's wrong */
+    if (dwarf2_find_attribute(di, DW_AT_type, &attrtype) && (ditype = dwarf2_jump_to_debug_info(&attrtype)) != NULL)
+         type = ditype->symt;
+    else /* no type found for this enumeration, construct it from size */
     {
-    case 1: basetype = symt_new_basic(di->unit_ctx->module_ctx->module, btInt, "char", 1); break;
-    case 2: basetype = symt_new_basic(di->unit_ctx->module_ctx->module, btInt, "short", 2); break;
-    default:
-    case 4: basetype = symt_new_basic(di->unit_ctx->module_ctx->module, btInt, "int", 4); break;
+        struct attribute    size;
+        struct symt_basic*  basetype;
+
+        if (!dwarf2_find_attribute(di, DW_AT_byte_size, &size)) size.u.uvalue = 4;
+
+        switch (size.u.uvalue) /* FIXME: that's wrong */
+        {
+        case 1: basetype = symt_new_basic(di->unit_ctx->module_ctx->module, btInt, "char", 1); break;
+        case 2: basetype = symt_new_basic(di->unit_ctx->module_ctx->module, btInt, "short", 2); break;
+        default:
+        case 4: basetype = symt_new_basic(di->unit_ctx->module_ctx->module, btInt, "int", 4); break;
+        }
+        type = &basetype->symt;
     }
 
-    di->symt = &symt_new_enum(di->unit_ctx->module_ctx->module, name.u.string, &basetype->symt)->symt;
-
+    di->symt = &symt_new_enum(di->unit_ctx->module_ctx->module, name.u.string, type)->symt;
     children = dwarf2_get_di_children(di);
-    /* FIXME: should we use the sibling stuff ?? */
+
     if (children) for (i = 0; i < vector_length(children); i++)
     {
         child = *(dwarf2_debug_info_t**)vector_at(children, i);
@@ -2056,14 +2079,18 @@ static void dwarf2_parse_subprogram_label(dwarf2_subprogram_t* subpgm,
 
     TRACE("%s\n", dwarf2_debug_di(di));
 
-    if (!dwarf2_find_attribute(di, DW_AT_low_pc, &low_pc)) low_pc.u.uvalue = 0;
     if (!dwarf2_find_attribute(di, DW_AT_name, &name))
         name.u.string = NULL;
-
-    loc.kind = loc_absolute;
-    loc.offset = subpgm->ctx->module_ctx->load_offset + low_pc.u.uvalue - subpgm->top_func->address;
-    symt_add_function_point(subpgm->ctx->module_ctx->module, subpgm->top_func, SymTagLabel,
-                            &loc, name.u.string);
+    if (dwarf2_find_attribute(di, DW_AT_low_pc, &low_pc))
+    {
+        loc.kind = loc_absolute;
+        loc.offset = subpgm->ctx->module_ctx->load_offset + low_pc.u.uvalue - subpgm->top_func->address;
+        symt_add_function_point(subpgm->ctx->module_ctx->module, subpgm->top_func, SymTagLabel,
+                                &loc, name.u.string);
+    }
+    else
+        WARN("Label %s inside function %s doesn't have an address... don't register it\n",
+             name.u.string, subpgm->top_func->hash_elt.name);
 }
 
 static void dwarf2_parse_subprogram_block(dwarf2_subprogram_t* subpgm,
@@ -4104,7 +4131,6 @@ static void dwarf2_unload_dwz(dwarf2_dwz_alternate_t* dwz)
     image_unmap_section(&dwz->sectmap[section_line]);
     image_unmap_section(&dwz->sectmap[section_ranges]);
 
-    image_unmap_file(dwz->fmap);
     HeapFree(GetProcessHeap(), 0, dwz);
 }
 

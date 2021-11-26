@@ -1597,6 +1597,7 @@ struct wined3d_bo
 {
     struct list users;
     void *map_ptr;
+    size_t buffer_offset;
     size_t memory_offset;
     bool coherent;
 };
@@ -1619,9 +1620,9 @@ static inline struct wined3d_bo_gl *wined3d_bo_gl(struct wined3d_bo *bo)
     return CONTAINING_RECORD(bo, struct wined3d_bo_gl, b);
 }
 
-static inline GLuint wined3d_bo_gl_id(uintptr_t bo)
+static inline GLuint wined3d_bo_gl_id(struct wined3d_bo *bo)
 {
-    return bo ? ((struct wined3d_bo_gl *)bo)->id : 0;
+    return bo ? wined3d_bo_gl(bo)->id : 0;
 }
 
 struct wined3d_bo_user
@@ -1640,7 +1641,6 @@ struct wined3d_bo_vk
 
     VkDeviceMemory vk_memory;
 
-    VkDeviceSize buffer_offset;
     VkDeviceSize size;
     VkBufferUsageFlags usage;
     VkMemoryPropertyFlags memory_type;
@@ -1679,13 +1679,13 @@ void wined3d_bo_slab_vk_unmap(struct wined3d_bo_slab_vk *slab_vk,
 
 struct wined3d_bo_address
 {
-    UINT_PTR buffer_object;
+    struct wined3d_bo *buffer_object;
     BYTE *addr;
 };
 
 struct wined3d_const_bo_address
 {
-    UINT_PTR buffer_object;
+    struct wined3d_bo *buffer_object;
     const BYTE *addr;
 };
 
@@ -4409,6 +4409,7 @@ struct wined3d_texture
         DWORD locations;
         union
         {
+            struct wined3d_bo b;
             struct wined3d_bo_gl gl;
             struct wined3d_bo_vk vk;
         } bo;
@@ -4847,6 +4848,14 @@ struct wined3d_device_context_ops
     void (*flush)(struct wined3d_device_context *context);
     void (*acquire_resource)(struct wined3d_device_context *context, struct wined3d_resource *resource);
     void (*acquire_command_list)(struct wined3d_device_context *context, struct wined3d_command_list *list);
+    void (*acquire_blend_state)(struct wined3d_device_context *context, struct wined3d_blend_state *blend_state);
+    void (*acquire_rasterizer_state)(struct wined3d_device_context *context,
+            struct wined3d_rasterizer_state *rasterizer_state);
+    void (*acquire_depth_stencil_state)(struct wined3d_device_context *context,
+            struct wined3d_depth_stencil_state *depth_stencil_state);
+    void (*acquire_shader)(struct wined3d_device_context *context, struct wined3d_shader *shader);
+    void (*acquire_samplers)(struct wined3d_device_context *context, struct wined3d_sampler * const *samplers,
+            unsigned int count);
 };
 
 struct wined3d_device_context
@@ -5311,7 +5320,7 @@ struct wined3d_unordered_access_view
     const struct wined3d_format *format;
 
     struct wined3d_view_desc desc;
-    uintptr_t counter_bo;
+    struct wined3d_bo *counter_bo;
 };
 
 void wined3d_unordered_access_view_cleanup(struct wined3d_unordered_access_view *view) DECLSPEC_HIDDEN;

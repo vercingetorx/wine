@@ -4577,6 +4577,7 @@ static void state_cb(struct wined3d_context *context, const struct wined3d_state
     enum wined3d_shader_type shader_type;
     struct wined3d_buffer *buffer;
     unsigned int i, base, count;
+    struct wined3d_bo_gl *bo_gl;
 
     TRACE("context %p, state %p, state_id %#x.\n", context, state, state_id);
 
@@ -4597,8 +4598,9 @@ static void state_cb(struct wined3d_context *context, const struct wined3d_state
         }
 
         buffer = buffer_state->buffer;
+        bo_gl = wined3d_bo_gl(buffer->buffer_object);
         GL_EXTCALL(glBindBufferRange(GL_UNIFORM_BUFFER, base + i,
-                wined3d_bo_gl(buffer->buffer_object)->id, buffer_state->offset, buffer_state->size));
+                bo_gl->id, bo_gl->b.buffer_offset + buffer_state->offset, buffer_state->size));
         buffer->bo_user.valid = true;
     }
     checkGLcall("bind constant buffers");
@@ -4651,6 +4653,7 @@ static void state_so(struct wined3d_context *context, const struct wined3d_state
     const struct wined3d_gl_info *gl_info = context_gl->gl_info;
     struct wined3d_buffer *buffer;
     unsigned int offset, size, i;
+    struct wined3d_bo_gl *bo_gl;
 
     TRACE("context %p, state %p, state_id %#x.\n", context, state, state_id);
 
@@ -4666,6 +4669,7 @@ static void state_so(struct wined3d_context *context, const struct wined3d_state
 
         buffer = state->stream_output[i].buffer;
         offset = state->stream_output[i].offset;
+        bo_gl = wined3d_bo_gl(buffer->buffer_object);
         if (offset == ~0u)
         {
             FIXME("Appending to stream output buffers not implemented.\n");
@@ -4673,7 +4677,7 @@ static void state_so(struct wined3d_context *context, const struct wined3d_state
         }
         size = buffer->resource.size - offset;
         GL_EXTCALL(glBindBufferRange(GL_TRANSFORM_FEEDBACK_BUFFER, i,
-                wined3d_bo_gl(buffer->buffer_object)->id, offset, size));
+                bo_gl->id, bo_gl->b.buffer_offset + offset, size));
         buffer->bo_user.valid = true;
     }
     checkGLcall("bind transform feedback buffers");

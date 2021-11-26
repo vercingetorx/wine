@@ -1935,6 +1935,7 @@ BOOL codeview_dump_symbols(const void* root, unsigned long start, unsigned long 
                    sym->sepcode_v3.pParent, sym->sepcode_v3.pEnd,
                    sym->sepcode_v3.sect, sym->sepcode_v3.off, sym->sepcode_v3.length,
                    sym->sepcode_v3.sectParent, sym->sepcode_v3.offParent);
+            push_symbol_dumper(&sd, sym, sym->sepcode_v3.pEnd);
             break;
 
         case S_ANNOTATION:
@@ -1946,6 +1947,12 @@ BOOL codeview_dump_symbols(const void* root, unsigned long start, unsigned long 
                 for (; ptr < last; ptr += strlen(ptr) + 1)
                     printf("%*s| %s\n", indent, "", ptr);
             }
+            break;
+
+        case S_POGODATA:
+            printf("PogoData V3 inv:%d dynCnt:%lld inst:%d staInst:%d\n",
+                   sym->pogoinfo_v3.invocations, (long long)sym->pogoinfo_v3.dynCount,
+                   sym->pogoinfo_v3.numInstrs, sym->pogoinfo_v3.staInstLive);
             break;
 
         default:

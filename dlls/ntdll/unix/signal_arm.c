@@ -229,7 +229,7 @@ extern void raise_func_trampoline( EXCEPTION_RECORD *rec, CONTEXT *context, void
 NTSTATUS CDECL unwind_builtin_dll( ULONG type, struct _DISPATCHER_CONTEXT *dispatch, CONTEXT *context )
 {
 #ifdef HAVE_LIBUNWIND
-    DWORD ip = context->Pc;
+    DWORD ip = context->Pc - (dispatch->ControlPcIsUnwound ? 2 : 0);
     unw_context_t unw_context;
     unw_cursor_t cursor;
     unw_proc_info_t info;
@@ -255,13 +255,16 @@ NTSTATUS CDECL unwind_builtin_dll( ULONG type, struct _DISPATCHER_CONTEXT *dispa
     }
     if (rc == -UNW_ENOINFO || ip < info.start_ip || ip > info.end_ip)
     {
-        TRACE( "no info found for %x ip %x-%x, assuming leaf function\n",
-               ip, info.start_ip, info.end_ip );
+        NTSTATUS status = context->Pc != context->Lr ?
+                          STATUS_SUCCESS : STATUS_INVALID_DISPOSITION;
+        TRACE( "no info found for %x ip %x-%x, %s\n",
+               ip, info.start_ip, info.end_ip, status == STATUS_SUCCESS ?
+               "assuming leaf function" : "error, stuck" );
         dispatch->LanguageHandler = NULL;
         dispatch->EstablisherFrame = context->Sp;
         context->Pc = context->Lr;
         context->ContextFlags |= CONTEXT_UNWOUND_TO_CALL;
-        return STATUS_SUCCESS;
+        return status;
     }
 
     TRACE( "ip %#x function %#lx-%#lx personality %#lx lsda %#lx fde %#lx\n",

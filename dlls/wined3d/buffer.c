@@ -665,7 +665,7 @@ DWORD wined3d_buffer_get_memory(struct wined3d_buffer *buffer, struct wined3d_co
     }
     if (locations & WINED3D_LOCATION_BUFFER)
     {
-        data->buffer_object = (uintptr_t)buffer->buffer_object;
+        data->buffer_object = buffer->buffer_object;
         data->addr = NULL;
         return WINED3D_LOCATION_BUFFER;
     }
@@ -977,7 +977,7 @@ static HRESULT buffer_resource_sub_resource_map(struct wined3d_resource *resourc
 
             if (count == 1)
             {
-                addr.buffer_object = (uintptr_t)buffer->buffer_object;
+                addr.buffer_object = buffer->buffer_object;
                 addr.addr = 0;
                 buffer->map_ptr = wined3d_context_map_bo_address(context, &addr, resource->size, flags);
                 /* We are accessing buffer->resource.client from the CS thread,
@@ -1057,7 +1057,7 @@ static HRESULT buffer_resource_sub_resource_unmap(struct wined3d_resource *resou
 
     context = context_acquire(device, NULL, 0);
 
-    addr.buffer_object = (uintptr_t)buffer->buffer_object;
+    addr.buffer_object = buffer->buffer_object;
     addr.addr = 0;
     wined3d_context_unmap_bo_address(context, &addr, range_count, buffer->maps);
 
@@ -1132,12 +1132,12 @@ void wined3d_buffer_update_sub_resource(struct wined3d_buffer *buffer, struct wi
 {
     if (upload_bo->flags & UPLOAD_BO_RENAME_ON_UNMAP)
     {
-        wined3d_buffer_set_bo(buffer, context, (struct wined3d_bo *)upload_bo->addr.buffer_object);
+        wined3d_buffer_set_bo(buffer, context, upload_bo->addr.buffer_object);
         wined3d_buffer_validate_location(buffer, WINED3D_LOCATION_BUFFER);
         wined3d_buffer_invalidate_location(buffer, ~WINED3D_LOCATION_BUFFER);
     }
 
-    if (upload_bo->addr.buffer_object && upload_bo->addr.buffer_object == (uintptr_t)buffer->buffer_object)
+    if (upload_bo->addr.buffer_object && upload_bo->addr.buffer_object == buffer->buffer_object)
         wined3d_context_flush_bo_address(context, &upload_bo->addr, size);
     else
         wined3d_buffer_copy_bo_address(buffer, context, offset, &upload_bo->addr, size);
@@ -1387,8 +1387,8 @@ static void wined3d_buffer_gl_upload_ranges(struct wined3d_buffer *buffer, struc
     while (range_count--)
     {
         range = &ranges[range_count];
-        GL_EXTCALL(glBufferSubData(bo_gl->binding,
-                range->offset, range->size, (BYTE *)data + range->offset - data_offset));
+        GL_EXTCALL(glBufferSubData(bo_gl->binding, bo_gl->b.buffer_offset + range->offset,
+                range->size, (BYTE *)data + range->offset - data_offset));
     }
     wined3d_context_gl_reference_bo(context_gl, bo_gl);
     checkGLcall("buffer upload");
@@ -1412,8 +1412,8 @@ static void wined3d_buffer_gl_download_ranges(struct wined3d_buffer *buffer, str
     while (range_count--)
     {
         range = &ranges[range_count];
-        GL_EXTCALL(glGetBufferSubData(bo_gl->binding,
-                range->offset, range->size, (BYTE *)data + range->offset - data_offset));
+        GL_EXTCALL(glGetBufferSubData(bo_gl->binding, bo_gl->b.buffer_offset + range->offset,
+                range->size, (BYTE *)data + range->offset - data_offset));
     }
     checkGLcall("buffer download");
 }
@@ -1521,7 +1521,7 @@ const VkDescriptorBufferInfo *wined3d_buffer_vk_get_buffer_info(struct wined3d_b
         return &buffer_vk->buffer_info;
 
     buffer_vk->buffer_info.buffer = bo->vk_buffer;
-    buffer_vk->buffer_info.offset = bo->buffer_offset;
+    buffer_vk->buffer_info.offset = bo->b.buffer_offset;
     buffer_vk->buffer_info.range = buffer_vk->b.resource.size;
     buffer_vk->b.bo_user.valid = true;
 
@@ -1587,7 +1587,7 @@ static void wined3d_buffer_vk_upload_ranges(struct wined3d_buffer *buffer, struc
     if (!range_count)
         return;
 
-    dst.buffer_object = (uintptr_t)buffer->buffer_object;
+    dst.buffer_object = buffer->buffer_object;
     dst.addr = NULL;
 
     flags = WINED3D_MAP_WRITE;
@@ -1702,7 +1702,7 @@ void wined3d_buffer_vk_barrier(struct wined3d_buffer_vk *buffer_vk,
         vk_barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
         vk_barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
         vk_barrier.buffer = bo->vk_buffer;
-        vk_barrier.offset = bo->buffer_offset;
+        vk_barrier.offset = bo->b.buffer_offset;
         vk_barrier.size = buffer_vk->b.resource.size;
         VK_CALL(vkCmdPipelineBarrier(wined3d_context_vk_get_command_buffer(context_vk),
                 vk_pipeline_stage_mask_from_bind_flags(src_bind_mask),

@@ -257,15 +257,16 @@ static void create_buffer_texture(struct wined3d_gl_view *view, struct wined3d_c
         return;
     }
 
+    wined3d_buffer_load_location(buffer, &context_gl->c, WINED3D_LOCATION_BUFFER);
+    bo_gl = wined3d_bo_gl(buffer->buffer_object);
+    offset += bo_gl->b.buffer_offset;
+
     if ((offset & (gl_info->limits.texture_buffer_offset_alignment - 1)))
     {
         FIXME("Buffer offset %u is not %u byte aligned.\n",
                 offset, gl_info->limits.texture_buffer_offset_alignment);
         return;
     }
-
-    wined3d_buffer_load_location(buffer, &context_gl->c, WINED3D_LOCATION_BUFFER);
-    bo_gl = wined3d_bo_gl(buffer->buffer_object);
 
     view->target = GL_TEXTURE_BUFFER;
     if (!view->name)
@@ -685,7 +686,7 @@ static VkBufferView wined3d_view_vk_create_vk_buffer_view(struct wined3d_context
     create_info.flags = 0;
     create_info.buffer = bo->vk_buffer;
     create_info.format = view_format_vk->vk_format;
-    create_info.offset = bo->buffer_offset + offset;
+    create_info.offset = bo->b.buffer_offset + offset;
     create_info.range = size;
 
     device_vk = wined3d_device_vk(buffer_vk->b.resource.device);
@@ -1597,7 +1598,7 @@ void wined3d_unordered_access_view_gl_clear(struct wined3d_unordered_access_view
     get_buffer_view_range(buffer, &view_gl->v.desc, &format_gl->f, &offset, &size);
     wined3d_context_gl_bind_bo(context_gl, bo_gl->binding, bo_gl->id);
     GL_EXTCALL(glClearBufferSubData(bo_gl->binding, format_gl->internal,
-            offset, size, format_gl->format, format_gl->type, clear_value));
+            bo_gl->b.buffer_offset + offset, size, format_gl->format, format_gl->type, clear_value));
     wined3d_context_gl_reference_bo(context_gl, bo_gl);
     checkGLcall("clear unordered access view");
 }
@@ -1670,7 +1671,7 @@ static void wined3d_unordered_access_view_gl_cs_init(void *object)
         {
             struct wined3d_bo_gl *bo = &view_gl->counter_bo;
 
-            view_gl->v.counter_bo = (uintptr_t)bo;
+            view_gl->v.counter_bo = &bo->b;
             wined3d_context_gl_create_bo(context_gl, sizeof(uint32_t), GL_ATOMIC_COUNTER_BUFFER,
                     GL_STATIC_DRAW, true, GL_MAP_READ_BIT | GL_MAP_WRITE_BIT | GL_CLIENT_STORAGE_BIT, bo);
             wined3d_unordered_access_view_set_counter(&view_gl->v, 0);
@@ -2092,16 +2093,16 @@ void wined3d_unordered_access_view_vk_clear(struct wined3d_unordered_access_view
         goto out;
     }
 
-    cb_source_address.buffer_object = 0;
+    cb_source_address.buffer_object = NULL;
     cb_source_address.addr = (BYTE *)&constants;
-    cb_destination_address.buffer_object = (UINT_PTR)&constants_bo;
+    cb_destination_address.buffer_object = &constants_bo.b;
     cb_destination_address.addr = 0;
 
     adapter_vk_copy_bo_address(&context_vk->c, &cb_destination_address, &cb_source_address, sizeof(constants));
 
     buffer_info.buffer = constants_bo.vk_buffer;
     buffer_info.range = constants_bo.size;
-    buffer_info.offset = constants_bo.buffer_offset;
+    buffer_info.offset = constants_bo.b.buffer_offset;
 
     vk_info = context_vk->vk_info;
 
@@ -2234,7 +2235,7 @@ static void wined3d_unordered_access_view_vk_cs_init(void *object)
 
             wined3d_context_vk_end_current_render_pass(context_vk);
             VK_CALL(vkCmdFillBuffer(wined3d_context_vk_get_command_buffer(context_vk),
-                    uav_vk->counter_bo.vk_buffer, uav_vk->counter_bo.buffer_offset, sizeof(uint32_t), 0));
+                    uav_vk->counter_bo.vk_buffer, uav_vk->counter_bo.b.buffer_offset, sizeof(uint32_t), 0));
             wined3d_context_vk_reference_bo(context_vk, &uav_vk->counter_bo);
 
             create_info.sType = VK_STRUCTURE_TYPE_BUFFER_VIEW_CREATE_INFO;
@@ -2242,7 +2243,7 @@ static void wined3d_unordered_access_view_vk_cs_init(void *object)
             create_info.flags = 0;
             create_info.buffer = uav_vk->counter_bo.vk_buffer;
             create_info.format = VK_FORMAT_R32_UINT;
-            create_info.offset = uav_vk->counter_bo.buffer_offset;
+            create_info.offset = uav_vk->counter_bo.b.buffer_offset;
             create_info.range = sizeof(uint32_t);
             if ((vr = VK_CALL(vkCreateBufferView(device_vk->vk_device,
                     &create_info, NULL, &uav_vk->vk_counter_view))) < 0)
@@ -2253,7 +2254,7 @@ static void wined3d_unordered_access_view_vk_cs_init(void *object)
             {
                 TRACE("Created counter buffer view 0x%s.\n", wine_dbgstr_longlong(uav_vk->vk_counter_view));
 
-                uav_vk->v.counter_bo = (uintptr_t)&uav_vk->counter_bo;
+                uav_vk->v.counter_bo = &uav_vk->counter_bo.b;
             }
         }
 

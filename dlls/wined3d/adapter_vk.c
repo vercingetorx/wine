@@ -960,8 +960,9 @@ static void *adapter_vk_map_bo_address(struct wined3d_context *context,
     VkMappedMemoryRange range;
     void *map_ptr;
 
-    if (!(bo = (struct wined3d_bo_vk *)data->buffer_object))
+    if (!data->buffer_object)
         return data->addr;
+    bo = wined3d_bo_vk(data->buffer_object);
 
     vk_info = context_vk->vk_info;
     device_vk = wined3d_device_vk(context->device);
@@ -1010,7 +1011,7 @@ static void *adapter_vk_map_bo_address(struct wined3d_context *context,
             vk_barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
             vk_barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
             vk_barrier.buffer = bo->vk_buffer;
-            vk_barrier.offset = bo->buffer_offset + (uintptr_t)data->addr;
+            vk_barrier.offset = bo->b.buffer_offset + (uintptr_t)data->addr;
             vk_barrier.size = size;
             VK_CALL(vkCmdPipelineBarrier(vk_command_buffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
                     VK_PIPELINE_STAGE_HOST_BIT, 0, 0, NULL, 1, &vk_barrier, 0, NULL));
@@ -1065,8 +1066,9 @@ static void adapter_vk_unmap_bo_address(struct wined3d_context *context,
     struct wined3d_bo_vk *bo;
     unsigned int i;
 
-    if (!(bo = (struct wined3d_bo_vk *)data->buffer_object))
+    if (!data->buffer_object)
         return;
+    bo = wined3d_bo_vk(data->buffer_object);
 
     if (!bo->b.coherent)
     {
@@ -1092,8 +1094,8 @@ void adapter_vk_copy_bo_address(struct wined3d_context *context,
     void *dst_ptr, *src_ptr;
     VkBufferCopy region;
 
-    src_bo = (struct wined3d_bo_vk *)src->buffer_object;
-    dst_bo = (struct wined3d_bo_vk *)dst->buffer_object;
+    src_bo = src->buffer_object ? wined3d_bo_vk(src->buffer_object) : NULL;
+    dst_bo = dst->buffer_object ? wined3d_bo_vk(dst->buffer_object) : NULL;
 
     if (dst_bo && !dst->addr && size == dst_bo->size)
         map_flags |= WINED3D_MAP_DISCARD;
@@ -1111,8 +1113,8 @@ void adapter_vk_copy_bo_address(struct wined3d_context *context,
         src_access_mask = vk_access_mask_from_buffer_usage(src_bo->usage);
         dst_access_mask = vk_access_mask_from_buffer_usage(dst_bo->usage);
 
-        region.srcOffset = src_bo->buffer_offset + (uintptr_t)src->addr;
-        region.dstOffset = dst_bo->buffer_offset + (uintptr_t)dst->addr;
+        region.srcOffset = src_bo->b.buffer_offset + (uintptr_t)src->addr;
+        region.dstOffset = dst_bo->b.buffer_offset + (uintptr_t)dst->addr;
         region.size = size;
 
         vk_barrier[0].sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
@@ -1164,7 +1166,7 @@ void adapter_vk_copy_bo_address(struct wined3d_context *context,
             return;
         }
 
-        staging.buffer_object = (uintptr_t)&staging_bo;
+        staging.buffer_object = &staging_bo.b;
         staging.addr = NULL;
         adapter_vk_copy_bo_address(context, &staging, src, size);
         adapter_vk_copy_bo_address(context, dst, &staging, size);
@@ -1184,7 +1186,7 @@ void adapter_vk_copy_bo_address(struct wined3d_context *context,
             return;
         }
 
-        staging.buffer_object = (uintptr_t)&staging_bo;
+        staging.buffer_object = &staging_bo.b;
         staging.addr = NULL;
         adapter_vk_copy_bo_address(context, &staging, src, size);
         adapter_vk_copy_bo_address(context, dst, &staging, size);
@@ -1209,12 +1211,12 @@ static void adapter_vk_flush_bo_address(struct wined3d_context *context,
         const struct wined3d_const_bo_address *data, size_t size)
 {
     struct wined3d_context_vk *context_vk = wined3d_context_vk(context);
-    struct wined3d_bo_vk *bo;
+    struct wined3d_bo *bo;
 
-    if (!(bo = (struct wined3d_bo_vk *)data->buffer_object))
+    if (!(bo = data->buffer_object))
         return;
 
-    flush_bo_range(context_vk, bo, (uintptr_t)data->addr, size);
+    flush_bo_range(context_vk, wined3d_bo_vk(bo), (uintptr_t)data->addr, size);
 }
 
 static bool adapter_vk_alloc_bo(struct wined3d_device *device, struct wined3d_resource *resource,
@@ -1251,7 +1253,7 @@ static bool adapter_vk_alloc_bo(struct wined3d_device *device, struct wined3d_re
                 ERR("Failed to map bo.\n");
         }
 
-        addr->buffer_object = (uintptr_t)bo_vk;
+        addr->buffer_object = &bo_vk->b;
         addr->addr = NULL;
         return true;
     }
@@ -1779,7 +1781,7 @@ static void adapter_vk_draw_primitive(struct wined3d_device *device,
             for (i = 0; i < ARRAY_SIZE(context_vk->vk_so_counters); ++i)
             {
                 context_vk->vk_so_counters[i] = bo->vk_buffer;
-                context_vk->vk_so_offsets[i] = bo->buffer_offset + i * sizeof(uint32_t) * 2;
+                context_vk->vk_so_offsets[i] = bo->b.buffer_offset + i * sizeof(uint32_t) * 2;
             }
         }
 
@@ -1803,13 +1805,13 @@ static void adapter_vk_draw_primitive(struct wined3d_device *device,
         {
             stride = sizeof(VkDrawIndexedIndirectCommand);
             VK_CALL(vkCmdDrawIndexedIndirect(vk_command_buffer, bo->vk_buffer,
-                    bo->buffer_offset + parameters->u.indirect.offset, size / stride, stride));
+                    bo->b.buffer_offset + parameters->u.indirect.offset, size / stride, stride));
         }
         else
         {
             stride = sizeof(VkDrawIndirectCommand);
             VK_CALL(vkCmdDrawIndirect(vk_command_buffer, bo->vk_buffer,
-                    bo->buffer_offset + parameters->u.indirect.offset, size / stride, stride));
+                    bo->b.buffer_offset + parameters->u.indirect.offset, size / stride, stride));
         }
     }
     else
@@ -1869,7 +1871,7 @@ static void adapter_vk_dispatch_compute(struct wined3d_device *device,
 
         wined3d_context_vk_reference_bo(context_vk, bo);
         VK_CALL(vkCmdDispatchIndirect(vk_command_buffer, bo->vk_buffer,
-                bo->buffer_offset + parameters->u.indirect.offset));
+                bo->b.buffer_offset + parameters->u.indirect.offset));
     }
     else
     {

@@ -31,6 +31,7 @@
 #include "win.h"
 #include "controls.h"
 #include "winerror.h"
+#include "wine/exception.h"
 #include "wine/debug.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(win);
@@ -252,6 +253,7 @@ static WND *create_window_handle( HWND parent, HWND owner, LPCWSTR name,
             else assert( full_parent == thread_info->top_window );
             if (full_parent && !USER_Driver->pCreateDesktopWindow( thread_info->top_window ))
                 ERR( "failed to create desktop window\n" );
+            register_builtin_classes();
         }
         else  /* HWND_MESSAGE parent */
         {
@@ -1949,7 +1951,7 @@ static void WIN_SendDestroyMsg( HWND hwnd )
         if (hwnd == info.hwndActive) WINPOS_ActivateOtherWindow( hwnd );
     }
 
-    if (hwnd == GetClipboardOwner()) CLIPBOARD_ReleaseOwner( hwnd );
+    if (hwnd == NtUserGetClipboardOwner()) CLIPBOARD_ReleaseOwner( hwnd );
 
     /*
      * Send the WM_DESTROY to the window.
@@ -2282,6 +2284,7 @@ HWND WINAPI GetDesktopWindow(void)
     if (!thread_info->top_window || !USER_Driver->pCreateDesktopWindow( thread_info->top_window ))
         ERR( "failed to create desktop window\n" );
 
+    register_builtin_classes();
     return thread_info->top_window;
 }
 
@@ -2997,22 +3000,35 @@ LONG WINAPI DECLSPEC_HOTPATCH SetWindowLongW(
 INT WINAPI GetWindowTextA( HWND hwnd, LPSTR lpString, INT nMaxCount )
 {
     WCHAR *buffer;
+    int ret = 0;
 
     if (!lpString || nMaxCount <= 0) return 0;
 
-    if (WIN_IsCurrentProcess( hwnd ))
+    __TRY
     {
         lpString[0] = 0;
-        return (INT)SendMessageA( hwnd, WM_GETTEXT, nMaxCount, (LPARAM)lpString );
-    }
 
-    /* when window belongs to other process, don't send a message */
-    if (!(buffer = HeapAlloc( GetProcessHeap(), 0, nMaxCount * sizeof(WCHAR) ))) return 0;
-    get_server_window_text( hwnd, buffer, nMaxCount );
-    if (!WideCharToMultiByte( CP_ACP, 0, buffer, -1, lpString, nMaxCount, NULL, NULL ))
-        lpString[nMaxCount-1] = 0;
-    HeapFree( GetProcessHeap(), 0, buffer );
-    return strlen(lpString);
+        if (WIN_IsCurrentProcess( hwnd ))
+        {
+            ret = (INT)SendMessageA( hwnd, WM_GETTEXT, nMaxCount, (LPARAM)lpString );
+        }
+        else if ((buffer = HeapAlloc( GetProcessHeap(), 0, nMaxCount * sizeof(WCHAR) )))
+        {
+            /* when window belongs to other process, don't send a message */
+            get_server_window_text( hwnd, buffer, nMaxCount );
+            if (!WideCharToMultiByte( CP_ACP, 0, buffer, -1, lpString, nMaxCount, NULL, NULL ))
+                lpString[nMaxCount-1] = 0;
+            HeapFree( GetProcessHeap(), 0, buffer );
+            ret = strlen(lpString);
+        }
+    }
+    __EXCEPT_PAGE_FAULT
+    {
+        ret = 0;
+    }
+    __ENDTRY
+
+    return ret;
 }
 
 
@@ -3045,17 +3061,32 @@ INT WINAPI InternalGetWindowText(HWND hwnd,LPWSTR lpString,INT nMaxCount )
  */
 INT WINAPI GetWindowTextW( HWND hwnd, LPWSTR lpString, INT nMaxCount )
 {
+    int ret;
+
     if (!lpString || nMaxCount <= 0) return 0;
 
-    if (WIN_IsCurrentProcess( hwnd ))
+    __TRY
     {
         lpString[0] = 0;
-        return (INT)SendMessageW( hwnd, WM_GETTEXT, nMaxCount, (LPARAM)lpString );
-    }
 
-    /* when window belongs to other process, don't send a message */
-    get_server_window_text( hwnd, lpString, nMaxCount );
-    return lstrlenW(lpString);
+        if (WIN_IsCurrentProcess( hwnd ))
+        {
+            ret = (INT)SendMessageW( hwnd, WM_GETTEXT, nMaxCount, (LPARAM)lpString );
+        }
+        else
+        {
+            /* when window belongs to other process, don't send a message */
+            get_server_window_text( hwnd, lpString, nMaxCount );
+            ret = lstrlenW(lpString);
+        }
+    }
+    __EXCEPT_PAGE_FAULT
+    {
+        ret = 0;
+    }
+    __ENDTRY
+
+    return ret;
 }
 
 
@@ -3893,7 +3924,7 @@ BOOL WINAPI DragDetect( HWND hWnd, POINT pt )
 
     TRACE( "%p,%s\n", hWnd, wine_dbgstr_point( &pt ) );
 
-    if (!(GetKeyState( VK_LBUTTON ) & 0x8000))
+    if (!(NtUserGetKeyState( VK_LBUTTON ) & 0x8000))
         return FALSE;
 
     wDragWidth = GetSystemMetrics(SM_CXDRAG);

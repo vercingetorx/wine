@@ -193,11 +193,16 @@ static void test_command_interfaces(IUnknown *cmd)
     ICommandStream *commandstream;
     IColumnsInfo *colinfo;
     IMultipleResults *multiple;
+    ICommandWithParameters *cmdwithparams;
     IUnknown *unk;
 
     hr = IUnknown_QueryInterface(cmd, &IID_ICommandProperties, (void**)&commandProp);
     ok(hr == S_OK, "got 0x%08x\n", hr);
     ICommandProperties_Release(commandProp);
+
+    hr = IUnknown_QueryInterface(cmd, &IID_ICommandWithParameters, (void**)&cmdwithparams);
+    ok(hr == S_OK, "got 0x%08x\n", hr);
+    ICommandWithParameters_Release(cmdwithparams);
 
     hr = IUnknown_QueryInterface(cmd, &IID_ICommandText, (void**)&comand_text);
     ok(hr == S_OK, "got 0x%08x\n", hr);
@@ -260,6 +265,12 @@ if (0)
     hr = ICommandText_SetCommandText(comand_text, &DBGUID_DEFAULT, L"select * from testing");
     ok(hr == S_OK, "got 0x%08x\n", hr);
 
+
+    hr = ICommandText_GetCommandText(comand_text, NULL, &str);
+    ok(hr == S_OK, "got 0x%08x\n", hr);
+    ok (!lstrcmpW(L"select * from testing", str), "got %s\n", debugstr_w(str));
+    HeapFree(GetProcessHeap(), 0, str);
+
     /* dialect empty value */
     hr = ICommandText_GetCommandText(comand_text, &dialect, &str);
     ok(hr == DB_S_DIALECTIGNORED, "got 0x%08x\n", hr);
@@ -293,17 +304,29 @@ static void test_command_dbsession(IUnknown *cmd, IUnknown *session)
     ICommandText_Release(comand_text);
 }
 
-static void test_rowset_interfaces(IRowset *rowset)
+static void test_rowset_interfaces(IRowset *rowset, ICommandText *commandtext)
 {
     IRowsetInfo *info;
     IColumnsInfo *col_info;
     IColumnsRowset *col_rs;
     IAccessor *accessor;
+    ICommandText *specification = NULL;
     IUnknown *unk;
     HRESULT hr;
 
     hr = IRowset_QueryInterface(rowset, &IID_IRowsetInfo, (void**)&info);
     ok(hr == S_OK, "got 0x%08x\n", hr);
+
+    hr = IRowsetInfo_GetSpecification(info, &IID_ICommandText, NULL);
+    ok(hr == E_INVALIDARG, "got 0x%08x\n", hr);
+
+    hr = IRowsetInfo_GetSpecification(info, &IID_ICommandText, (IUnknown**)&specification);
+    ok(hr == S_OK, "got 0x%08x\n", hr);
+    if (specification)
+    {
+        ok(commandtext == specification, "got 0x%08x\n", hr);
+        ICommandText_Release(specification);
+    }
     IRowsetInfo_Release(info);
 
     hr = IRowset_QueryInterface(rowset, &IID_IColumnsInfo, (void**)&col_info);
@@ -364,7 +387,7 @@ static void test_command_rowset(IUnknown *cmd)
         hr = IUnknown_QueryInterface(unk, &IID_IRowset, (void**)&rowset);
         ok(hr == S_OK, "got 0x%08x\n", hr);
 
-        test_rowset_interfaces(rowset);
+        test_rowset_interfaces(rowset, comand_text);
 
         IRowset_Release(rowset);
         IUnknown_Release(unk);
@@ -376,7 +399,7 @@ static void test_command_rowset(IUnknown *cmd)
 
 static void test_sessions(void)
 {
-    IDBProperties *props;
+    IDBProperties *props, *dsource = NULL;
     IDBInitialize *dbinit = NULL;
     IDataInitialize *datainit;
     IDBCreateSession *dbsession = NULL;
@@ -433,6 +456,11 @@ static void test_sessions(void)
 
     hr = IUnknown_QueryInterface(session, &IID_IGetDataSource, (void**)&datasource);
     ok(hr == S_OK, "got 0x%08x\n", hr);
+
+    hr = IGetDataSource_GetDataSource(datasource, &IID_IDBProperties, (IUnknown**)&dsource);
+    ok(hr == S_OK, "got 0x%08x\n", hr);
+    ok(dsource == props, "different pointers\n");
+    IDBProperties_Release(dsource);
     IGetDataSource_Release(datasource);
 
     hr = IUnknown_QueryInterface(session, &IID_ITransactionJoin, (void**)&join);

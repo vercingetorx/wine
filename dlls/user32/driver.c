@@ -98,7 +98,6 @@ static const struct user_driver_funcs *load_driver(void)
         __wine_set_user_driver( &driver, WINE_GDI_DRIVER_VERSION );
     }
 
-    register_builtin_classes();
     return USER_Driver;
 }
 
@@ -152,15 +151,6 @@ static DWORD CDECL nulldrv_MsgWaitForMultipleObjectsEx( DWORD count, const HANDL
 
 static void CDECL nulldrv_ReleaseDC( HWND hwnd, HDC hdc )
 {
-}
-
-static BOOL CDECL nulldrv_ScrollDC( HDC hdc, INT dx, INT dy, HRGN update )
-{
-    RECT rect;
-
-    GetClipBox( hdc, &rect );
-    return BitBlt( hdc, rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top,
-                   hdc, rect.left - dx, rect.top - dy, SRCCOPY );
 }
 
 static void CDECL nulldrv_SetCapture( HWND hwnd, UINT flags )
@@ -233,29 +223,9 @@ static void CDECL nulldrv_ThreadDetach( void )
  * Each entry point simply loads the real driver and chains to it.
  */
 
-static BOOL CDECL loaderdrv_ActivateKeyboardLayout( HKL layout, UINT flags )
-{
-    return load_driver()->pActivateKeyboardLayout( layout, flags );
-}
-
 static void CDECL loaderdrv_Beep(void)
 {
     load_driver()->pBeep();
-}
-
-static INT CDECL loaderdrv_GetKeyNameText( LONG lparam, LPWSTR buffer, INT size )
-{
-    return load_driver()->pGetKeyNameText( lparam, buffer, size );
-}
-
-static UINT CDECL loaderdrv_GetKeyboardLayoutList( INT size, HKL *layouts )
-{
-    return load_driver()->pGetKeyboardLayoutList( size, layouts );
-}
-
-static UINT CDECL loaderdrv_MapVirtualKeyEx( UINT code, UINT type, HKL layout )
-{
-    return load_driver()->pMapVirtualKeyEx( code, type, layout );
 }
 
 static BOOL CDECL loaderdrv_RegisterHotKey( HWND hwnd, UINT modifiers, UINT vk )
@@ -263,20 +233,9 @@ static BOOL CDECL loaderdrv_RegisterHotKey( HWND hwnd, UINT modifiers, UINT vk )
     return load_driver()->pRegisterHotKey( hwnd, modifiers, vk );
 }
 
-static INT CDECL loaderdrv_ToUnicodeEx( UINT virt, UINT scan, const BYTE *state, LPWSTR str,
-                                  int size, UINT flags, HKL layout )
-{
-    return load_driver()->pToUnicodeEx( virt, scan, state, str, size, flags, layout );
-}
-
 static void CDECL loaderdrv_UnregisterHotKey( HWND hwnd, UINT modifiers, UINT vk )
 {
     load_driver()->pUnregisterHotKey( hwnd, modifiers, vk );
-}
-
-static SHORT CDECL loaderdrv_VkKeyScanEx( WCHAR ch, HKL layout )
-{
-    return load_driver()->pVkKeyScanEx( ch, layout );
 }
 
 static void CDECL loaderdrv_SetCursor( HCURSOR cursor )
@@ -366,15 +325,15 @@ static struct user_driver_funcs lazy_load_driver =
 {
     { NULL },
     /* keyboard functions */
-    loaderdrv_ActivateKeyboardLayout,
+    NULL,
     loaderdrv_Beep,
-    loaderdrv_GetKeyNameText,
-    loaderdrv_GetKeyboardLayoutList,
-    loaderdrv_MapVirtualKeyEx,
+    NULL,
+    NULL,
+    NULL,
     loaderdrv_RegisterHotKey,
-    loaderdrv_ToUnicodeEx,
+    NULL,
     loaderdrv_UnregisterHotKey,
-    loaderdrv_VkKeyScanEx,
+    NULL,
     /* cursor/icon functions */
     nulldrv_DestroyCursorIcon,
     loaderdrv_SetCursor,
@@ -396,7 +355,7 @@ static struct user_driver_funcs lazy_load_driver =
     loaderdrv_GetDC,
     nulldrv_MsgWaitForMultipleObjectsEx,
     nulldrv_ReleaseDC,
-    nulldrv_ScrollDC,
+    NULL,
     nulldrv_SetCapture,
     nulldrv_SetFocus,
     loaderdrv_SetLayeredWindowAttributes,
