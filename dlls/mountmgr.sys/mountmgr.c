@@ -408,7 +408,11 @@ static void WINAPI query_dhcp_request_params( TP_CALLBACK_INSTANCE *instance, vo
     offset = FIELD_OFFSET(struct mountmgr_dhcp_request_params, params[query->count]);
     for (i = 0; i < query->count; i++)
     {
-        offset += get_dhcp_request_param( query->unix_name, &query->params[i], (char *)query, offset, outsize - offset );
+        ULONG ret_size;
+        struct dhcp_request_params params = { query->unix_name, &query->params[i],
+                                              (char *)query, offset, outsize - offset, &ret_size };
+        MOUNTMGR_CALL( dhcp_request, &params );
+        offset += ret_size;
         if (offset > outsize)
         {
             if (offset >= sizeof(query->size)) query->size = offset;
@@ -436,6 +440,30 @@ static void WINAPI query_symbol_file_callback( TP_CALLBACK_INSTANCE *instance, v
     irp->IoStatus.Information = info;
     irp->IoStatus.u.Status = status;
     IoCompleteRequest( irp, IO_NO_INCREMENT );
+}
+
+/* NT APC called from Unix side to add/remove devices */
+static void CALLBACK device_op( ULONG_PTR arg1, ULONG_PTR arg2, ULONG_PTR arg3 )
+{
+    struct device_info info;
+    struct dequeue_device_op_params params = { arg1, &info };
+
+    if (MOUNTMGR_CALL( dequeue_device_op, &params )) return;
+
+    switch (info.op)
+    {
+    case ADD_DOS_DEVICE:
+        add_dos_device( -1, info.udi, info.device, info.mount_point,
+                        info.type, info.guid, info.scsi_info );
+        break;
+    case ADD_VOLUME:
+        add_volume( info.udi, info.device, info.mount_point, DEVICE_HARDDISK_VOL,
+                    info.guid, info.serial, info.scsi_info );
+        break;
+    case REMOVE_DEVICE:
+        if (!remove_dos_device( -1, info.udi )) remove_volume( info.udi );
+        break;
+    }
 }
 
 /* handler for ioctls on the mount manager device */
@@ -512,8 +540,7 @@ static NTSTATUS WINAPI mountmgr_ioctl( DEVICE_OBJECT *device, IRP *irp )
         status = STATUS_NO_MEMORY;
         break;
     case IOCTL_MOUNTMGR_QUERY_SYMBOL_FILE:
-        if (irpsp->Parameters.DeviceIoControl.InputBufferLength != sizeof(GUID)
-            || irpsp->Parameters.DeviceIoControl.OutputBufferLength < sizeof(MOUNTMGR_TARGET_NAME))
+        if (irpsp->Parameters.DeviceIoControl.InputBufferLength != sizeof(GUID))
         {
             status = STATUS_INVALID_PARAMETER;
             break;
@@ -580,6 +607,18 @@ static NTSTATUS WINAPI mountmgr_ioctl( DEVICE_OBJECT *device, IRP *irp )
     return status;
 }
 
+static DWORD WINAPI device_op_thread( void *arg )
+{
+    for (;;) SleepEx( INFINITE, TRUE );  /* wait for APCs */
+    return 0;
+}
+
+static DWORD WINAPI run_loop_thread( void *arg )
+{
+    return MOUNTMGR_CALL( run_loop, arg );
+}
+
+
 /* main entry point for the mount point manager driver */
 NTSTATUS WINAPI DriverEntry( DRIVER_OBJECT *driver, UNICODE_STRING *path )
 {
@@ -607,6 +646,7 @@ NTSTATUS WINAPI DriverEntry( DRIVER_OBJECT *driver, UNICODE_STRING *path )
     DEVICE_OBJECT *device;
     HKEY devicemap_key;
     NTSTATUS status;
+    struct run_loop_params params;
 
     TRACE( "%s\n", debugstr_w(path->Buffer) );
 
@@ -637,8 +677,9 @@ NTSTATUS WINAPI DriverEntry( DRIVER_OBJECT *driver, UNICODE_STRING *path )
     RtlInitUnicodeString( &nameW, harddiskW );
     status = IoCreateDriver( &nameW, harddisk_driver_entry );
 
-    initialize_dbus();
-    initialize_diskarbitration();
+    params.op_thread = CreateThread( NULL, 0, device_op_thread, NULL, 0, NULL );
+    params.op_apc = device_op;
+    CloseHandle( CreateThread( NULL, 0, run_loop_thread, &params, 0, NULL ));
 
 #ifdef _WIN64
     /* create a symlink so that the Wine port overrides key can be edited with 32-bit reg or regedit */

@@ -1629,4 +1629,7 @@ unixlib_entry_t __wine_unix_call_funcs[] =
     get_frequency,
     is_started,
     set_volumes,
+    midi_init,
+    midi_release,
+    midi_out_message,
 };

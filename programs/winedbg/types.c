@@ -83,7 +83,7 @@ LONGLONG types_extract_as_longlong(const struct dbg_lvalue* lvalue,
         }
         if (size > sizeof(rtn))
         {
-            WINE_ERR("Size too large (%s)\n", wine_dbgstr_longlong(size));
+            WINE_ERR("Size too large (%I64x)\n", size);
             RaiseException(DEBUG_STATUS_NOT_AN_INTEGER, 0, 0, NULL);
             return rtn;
         }
@@ -105,7 +105,8 @@ LONGLONG types_extract_as_longlong(const struct dbg_lvalue* lvalue,
         if (issigned) *issigned = s;
         break;
     case SymTagPointerType:
-        if (!dbg_curr_process->be_cpu->fetch_integer(lvalue, sizeof(void*), s = FALSE, &rtn))
+        if (!types_get_info(&type, TI_GET_LENGTH, &size) ||
+            !dbg_curr_process->be_cpu->fetch_integer(lvalue, (unsigned)size, s = FALSE, &rtn))
             RaiseException(DEBUG_STATUS_INTERNAL_ERROR, 0, 0, NULL);
         break;
     case SymTagArrayType:
@@ -114,8 +115,8 @@ LONGLONG types_extract_as_longlong(const struct dbg_lvalue* lvalue,
             RaiseException(DEBUG_STATUS_INTERNAL_ERROR, 0, 0, NULL);
         break;
     case SymTagEnum:
-        /* FIXME: we don't handle enum size */
-        if (!dbg_curr_process->be_cpu->fetch_integer(lvalue, sizeof(unsigned), s = FALSE, &rtn))
+        if (!types_get_info(&type, TI_GET_LENGTH, &size) ||
+            !dbg_curr_process->be_cpu->fetch_integer(lvalue, (unsigned)size, s = FALSE, &rtn))
             RaiseException(DEBUG_STATUS_INTERNAL_ERROR, 0, 0, NULL);
         break;
     case SymTagFunctionType:
@@ -571,7 +572,7 @@ static BOOL CALLBACK print_types_cb(PSYMBOL_INFO sym, ULONG size, void* ctx)
     struct dbg_type     type;
     type.module = sym->ModBase;
     type.id = sym->TypeIndex;
-    dbg_printf("Mod: %0*lx ID: %08x\n", ADDRWIDTH, type.module, type.id);
+    dbg_printf("Mod: %0*Ix ID: %08x\n", ADDRWIDTH, type.module, type.id);
     types_print_type(&type, TRUE);
     dbg_printf("\n");
     return TRUE;
@@ -755,30 +756,20 @@ BOOL types_get_info(const struct dbg_type* type, IMAGEHLP_SYMBOL_TYPE_INFO ti, v
             tag == SymTagBaseType &&
             SymGetTypeInfo(dbg_curr_process->handle, type->module, type->id, TI_GET_BASETYPE, &bt))
         {
-            static const WCHAR voidW[] = {'v','o','i','d','\0'};
-            static const WCHAR charW[] = {'c','h','a','r','\0'};
-            static const WCHAR wcharW[] = {'W','C','H','A','R','\0'};
-            static const WCHAR intW[] = {'i','n','t','\0'};
-            static const WCHAR uintW[] = {'u','n','s','i','g','n','e','d',' ','i','n','t','\0'};
-            static const WCHAR floatW[] = {'f','l','o','a','t','\0'};
-            static const WCHAR boolW[] = {'b','o','o','l','\0'};
-            static const WCHAR longW[] = {'l','o','n','g',' ','i','n','t','\0'};
-            static const WCHAR ulongW[] = {'u','n','s','i','g','n','e','d',' ','l','o','n','g',' ','i','n','t','\0'};
-            static const WCHAR complexW[] = {'c','o','m','p','l','e','x','\0'};
             const WCHAR* name = NULL;
 
             switch (bt)
             {
-            case btVoid:        name = voidW; break;
-            case btChar:        name = charW; break;
-            case btWChar:       name = wcharW; break;
-            case btInt:         name = intW; break;
-            case btUInt:        name = uintW; break;
-            case btFloat:       name = floatW; break;
-            case btBool:        name = boolW; break;
-            case btLong:        name = longW; break;
-            case btULong:       name = ulongW; break;
-            case btComplex:     name = complexW; break;
+            case btVoid:        name = L"void"; break;
+            case btChar:        name = L"char"; break;
+            case btWChar:       name = L"WCHAR"; break;
+            case btInt:         name = L"int"; break;
+            case btUInt:        name = L"unsigned int"; break;
+            case btFloat:       name = L"float"; break;
+            case btBool:        name = L"bool"; break;
+            case btLong:        name = L"long int"; break;
+            case btULong:       name = L"unsigned long int"; break;
+            case btComplex:     name = L"complex"; break;
             default:            WINE_FIXME("Unsupported basic type %u\n", bt); return FALSE;
             }
             X(WCHAR*) = HeapAlloc(GetProcessHeap(), 0, (lstrlenW(name) + 1) * sizeof(WCHAR));

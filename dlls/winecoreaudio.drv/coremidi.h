@@ -23,6 +23,8 @@
 
 #include <CoreFoundation/CoreFoundation.h>
 
+#define MAX_MIDI_SYNTHS 1
+
 #ifdef WINE_DEFINITIONS
 /*
  * Due to CoreMIDI headers conflict redefine some types for Wine
@@ -59,20 +61,26 @@ typedef void *AUGraph;
 
 extern OSStatus MusicDeviceMIDIEvent(AudioUnit au, UInt32 inStatus, UInt32 inData1, UInt32 inData2, UInt32 inOffsetSampleFrame);
 extern OSStatus MusicDeviceSysEx(AudioUnit au, const UInt8 *inData, UInt32 inLength);
-
-/* audiounit.c */
-extern int AudioUnit_SetVolume(AudioUnit au, float left, float right);
-extern int AudioUnit_GetVolume(AudioUnit au, float *left, float *right);
 #endif
 
-/* coremidi.c */
-extern MIDIClientRef CoreMIDI_CreateClient(CFStringRef name);
-extern void CoreMIDI_GetObjectName(MIDIObjectRef obj, char *name, int size);
-extern void MIDIIn_ReadProc(const MIDIPacketList *pktlist, void *refCon, void *connRefCon);
-
-extern void MIDIOut_Send(MIDIPortRef port, MIDIEndpointRef dest, UInt8 *buffer, unsigned length);
-
 /* midi.c */
-void MIDIIn_SendMessage(UInt16 devID, const void *buffer, UInt16 length);
+typedef struct midi_src
+{
+    MIDIEndpointRef source;
+
+    WORD wDevID;
+    int state; /* 0 is no recording started, 1 in recording, bit 2 set if in sys exclusive recording */
+    MIDIINCAPSW caps;
+    MIDIOPENDESC midiDesc;
+    LPMIDIHDR lpQueueHdr;
+    WORD wFlags;
+    DWORD startTime;
+} MIDISource;
+
+typedef struct {
+    UInt16 devID;
+    UInt16 length;
+    Byte data[];
+} MIDIMessage;
 
 #endif
