@@ -66,9 +66,6 @@ extern const struct user_driver_funcs *USER_Driver DECLSPEC_HIDDEN;
 
 extern void USER_unload_driver(void) DECLSPEC_HIDDEN;
 
-extern BOOL CDECL nulldrv_EnumDisplayMonitors( HDC hdc, RECT *rect, MONITORENUMPROC proc, LPARAM lp ) DECLSPEC_HIDDEN;
-extern BOOL CDECL nulldrv_GetMonitorInfo( HMONITOR handle, MONITORINFO *info ) DECLSPEC_HIDDEN;
-
 struct received_message_info;
 
 enum user_obj_type
@@ -164,7 +161,6 @@ extern BOOL rawinput_from_hardware_message(RAWINPUT *rawinput, const struct hard
 extern BOOL rawinput_device_get_usages(HANDLE handle, USAGE *usage_page, USAGE *usage);
 extern struct rawinput_thread_data *rawinput_thread_data(void);
 
-extern void keyboard_init(void) DECLSPEC_HIDDEN;
 extern void create_offscreen_window_surface( const RECT *visible_rect, struct window_surface **surface ) DECLSPEC_HIDDEN;
 
 extern void CLIPBOARD_ReleaseOwner( HWND hwnd ) DECLSPEC_HIDDEN;
@@ -219,6 +215,10 @@ extern BOOL WINPROC_call_window( HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
 
 extern const WCHAR *CLASS_GetVersionedName(const WCHAR *classname, UINT *basename_offset,
         WCHAR *combined, BOOL register_class) DECLSPEC_HIDDEN;
+
+/* kernel callbacks */
+
+BOOL WINAPI User32CallEnumDisplayMonitor( struct enum_display_monitor_params *params, ULONG size );
 
 /* message spy definitions */
 
@@ -302,7 +302,6 @@ extern BOOL get_icon_size( HICON handle, SIZE *size ) DECLSPEC_HIDDEN;
 #endif
 
 extern struct user_api_hook *user_api DECLSPEC_HIDDEN;
-LRESULT WINAPI USER_DefDlgProc(HWND, UINT, WPARAM, LPARAM, BOOL) DECLSPEC_HIDDEN;
 LRESULT WINAPI USER_ScrollBarProc(HWND, UINT, WPARAM, LPARAM, BOOL) DECLSPEC_HIDDEN;
 void WINAPI USER_ScrollBarDraw(HWND, HDC, INT, enum SCROLL_HITTEST,
                                const struct SCROLL_TRACKING_INFO *, BOOL, BOOL, RECT *, INT, INT,

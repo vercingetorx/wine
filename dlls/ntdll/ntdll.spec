@@ -157,6 +157,7 @@
 @ stdcall -syscall NtClose(long)
 # @ stub NtCloseObjectAuditAlarm
 # @ stub NtCompactKeys
+@ stdcall -syscall NtCompareObjects(ptr ptr)
 # @ stub NtCompareTokens
 @ stdcall -syscall NtCompleteConnectPort(ptr)
 # @ stub NtCompressKey
@@ -707,7 +708,7 @@
 @ stdcall RtlGetCurrentProcessorNumberEx(ptr)
 @ stdcall RtlGetCurrentTransaction()
 @ stdcall RtlGetDaclSecurityDescriptor(ptr ptr ptr ptr)
-@ stub RtlGetElementGenericTable
+@ stdcall RtlGetElementGenericTable(ptr long)
 # @ stub RtlGetElementGenericTableAvl
 @ stdcall RtlGetEnabledExtendedFeatures(int64)
 @ stdcall RtlGetExePath(wstr ptr)
@@ -852,7 +853,7 @@
 # @ stub RtlLockMemoryStreamRegion
 # @ stub RtlLogStackBackTrace
 @ stdcall RtlLookupAtomInAtomTable(ptr wstr ptr)
-@ stub RtlLookupElementGenericTable
+@ stdcall RtlLookupElementGenericTable(ptr ptr)
 # @ stub RtlLookupElementGenericTableAvl
 @ stdcall -arch=arm,arm64,x86_64 RtlLookupFunctionEntry(long ptr ptr)
 @ stdcall RtlMakeSelfRelativeSD(ptr ptr ptr)
@@ -1180,6 +1181,7 @@
 @ stdcall -private -syscall ZwClose(long) NtClose
 # @ stub ZwCloseObjectAuditAlarm
 # @ stub ZwCompactKeys
+@ stdcall -private -syscall ZwCompareObjects(ptr ptr) NtCompareObjects
 # @ stub ZwCompareTokens
 @ stdcall -private -syscall ZwCompleteConnectPort(ptr) NtCompleteConnectPort
 # @ stub ZwCompressKey
@@ -1631,7 +1633,6 @@
 @ stdcall -syscall __wine_unix_call(int64 long ptr)
 @ stdcall -syscall __wine_unix_spawnvp(long ptr)
 @ cdecl __wine_set_unix_funcs(long ptr)
-@ cdecl __wine_init_unix_lib(long long ptr ptr)
 @ stdcall __wine_ctrl_routine(ptr)
 @ extern __wine_syscall_dispatcher
 @ extern -arch=i386 __wine_ldt_copy

@@ -774,7 +774,7 @@ static void d3d10_effect_update_dependent_props(struct d3d10_effect_prop_depende
                 {
                     WARN("Expression evaluated to invalid index value %u, array %s of size %u.\n",
                             variable_idx, debugstr_a(v->name), v->type->element_count);
-                    return;
+                    variable_idx = 0;
                 }
 
                 /* Ignoring destination index here, there are no object typed array properties. */
@@ -2632,6 +2632,12 @@ static HRESULT parse_fx10_property_assignment(const char *data, size_t data_size
 
             data_ptr = data + code_offset;
             read_dword(&data_ptr, &blob_size);
+
+            if (!require_space(code_offset, 1, sizeof(uint32_t) + blob_size, data_size))
+            {
+                WARN("Invalid offset %#x (data size %#lx).\n", code_offset, (long)data_size);
+                return E_FAIL;
+            }
 
             dep.id = id;
             dep.idx = idx;

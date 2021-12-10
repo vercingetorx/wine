@@ -31,9 +31,7 @@
 #include <stdlib.h>
 #include <sys/types.h>
 #include <sys/time.h>
-#ifdef HAVE_SYS_SOCKET_H
-# include <sys/socket.h>
-#endif
+#include <sys/socket.h>
 #include <unistd.h>
 #include <poll.h>
 #ifdef HAVE_SYS_PARAM_H
@@ -1528,7 +1526,7 @@ DECL_HANDLER(get_process_debug_info)
 
     reply->debug_children = process->debug_children;
     if (!process->debug_obj) set_error( STATUS_PORT_NOT_SET );
-    else reply->debug = alloc_handle( current->process, process->debug_obj, DEBUG_ALL_ACCESS, 0 );
+    else reply->debug = alloc_handle( current->process, process->debug_obj, MAXIMUM_ALLOWED, 0 );
     release_object( process );
 }
 

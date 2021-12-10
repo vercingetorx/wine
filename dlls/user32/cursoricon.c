@@ -76,6 +76,7 @@ struct cursoricon_object
     HMODULE                 module;     /* module for icons loaded from resources */
     LPWSTR                  resname;    /* resource name for icons loaded from resources */
     HRSRC                   rsrc;       /* resource for shared icons */
+    BOOL                    is_shared;  /* whether this object is shared */
     BOOL                    is_icon;    /* whether icon or cursor */
     BOOL                    is_ani;     /* whether this object is a static cursor or an animated cursor */
     UINT                    delay;      /* delay between this frame and the next (in jiffies) */
@@ -1224,10 +1225,14 @@ done:
         }
         else info->resname = MAKEINTRESOURCEW( LOWORD(resname) );
 
-        if (module && (cFlag & LR_SHARED))
+        if (cFlag & LR_SHARED)
         {
-            info->rsrc = rsrc;
-            list_add_head( &icon_cache, &info->entry );
+            info->is_shared = TRUE;
+            if (module)
+            {
+                info->rsrc = rsrc;
+                list_add_head( &icon_cache, &info->entry );
+            }
         }
         release_user_handle_ptr( info );
     }
@@ -1587,7 +1592,7 @@ HICON WINAPI CreateIconFromResourceEx( LPBYTE bits, UINT cbSize,
 HICON WINAPI CreateIconFromResource( LPBYTE bits, UINT cbSize,
                                            BOOL bIcon, DWORD dwVersion)
 {
-    return CreateIconFromResourceEx( bits, cbSize, bIcon, dwVersion, 0,0,0);
+    return CreateIconFromResourceEx( bits, cbSize, bIcon, dwVersion, 0, 0, LR_DEFAULTSIZE | LR_SHARED );
 }
 
 
@@ -1871,9 +1876,9 @@ BOOL WINAPI DestroyIcon( HICON hIcon )
 
     if (obj)
     {
-        BOOL shared = (obj->rsrc != NULL);
+        BOOL shared = obj->is_shared;
         release_user_handle_ptr( obj );
-        ret = (GetCursor() != hIcon);
+        ret = (NtUserGetCursor() != hIcon);
         if (!shared) free_icon_handle( hIcon );
     }
     return ret;
@@ -1931,50 +1936,6 @@ HCURSOR WINAPI DECLSPEC_HOTPATCH SetCursor( HCURSOR hCursor /* [in] Handle of cu
     if (!(obj = get_icon_ptr( hOldCursor ))) return 0;
     release_user_handle_ptr( obj );
     return hOldCursor;
-}
-
-/***********************************************************************
- *		ShowCursor (USER32.@)
- */
-INT WINAPI DECLSPEC_HOTPATCH ShowCursor( BOOL bShow )
-{
-    HCURSOR cursor;
-    int increment = bShow ? 1 : -1;
-    int count;
-
-    SERVER_START_REQ( set_cursor )
-    {
-        req->flags = SET_CURSOR_COUNT;
-        req->show_count = increment;
-        wine_server_call( req );
-        cursor = wine_server_ptr_handle( reply->prev_handle );
-        count = reply->prev_count + increment;
-    }
-    SERVER_END_REQ;
-
-    TRACE("%d, count=%d\n", bShow, count );
-
-    if (bShow && !count) USER_Driver->pSetCursor( cursor );
-    else if (!bShow && count == -1) USER_Driver->pSetCursor( 0 );
-
-    return count;
-}
-
-/***********************************************************************
- *		GetCursor (USER32.@)
- */
-HCURSOR WINAPI GetCursor(void)
-{
-    HCURSOR ret;
-
-    SERVER_START_REQ( set_cursor )
-    {
-        req->flags = 0;
-        wine_server_call( req );
-        ret = wine_server_ptr_handle( reply->prev_handle );
-    }
-    SERVER_END_REQ;
-    return ret;
 }
 
 

@@ -83,28 +83,6 @@ const struct gdi_dc_funcs *get_display_driver(void)
     return &user_driver->dc_funcs;
 }
 
-struct monitor_info
-{
-    const WCHAR *name;
-    RECT rect;
-};
-
-static BOOL CALLBACK monitor_enum_proc( HMONITOR monitor, HDC hdc, LPRECT rect, LPARAM lparam )
-{
-    struct monitor_info *info = (struct monitor_info *)lparam;
-    MONITORINFOEXW mi;
-
-    mi.cbSize = sizeof(mi);
-    user_callbacks->pGetMonitorInfoW( monitor, (MONITORINFO *)&mi );
-    if (!wcsicmp( info->name, mi.szDevice ))
-    {
-        info->rect = mi.rcMonitor;
-        return FALSE;
-    }
-
-    return TRUE;
-}
-
 static INT CDECL nulldrv_AbortDoc( PHYSDEV dev )
 {
     return 0;
@@ -224,57 +202,47 @@ static INT CDECL nulldrv_GetDeviceCaps( PHYSDEV dev, INT cap )
     case HORZRES:
     {
         DC *dc = get_nulldrv_dc( dev );
-        struct monitor_info info;
+        RECT rect;
         int ret;
-
-        if (!user_callbacks) return 640;
 
         if (dc->display[0])
         {
-            info.name = dc->display;
-            SetRectEmpty( &info.rect );
-            user_callbacks->pEnumDisplayMonitors( NULL, NULL, monitor_enum_proc, (LPARAM)&info );
-            if (!IsRectEmpty( &info.rect ))
-                return info.rect.right - info.rect.left;
+            rect = get_display_rect( dc->display );
+            if (!IsRectEmpty( &rect )) return rect.right - rect.left;
         }
 
-        ret = user_callbacks->pGetSystemMetrics( SM_CXSCREEN );
+        ret = get_system_metrics( SM_CXSCREEN );
         return ret ? ret : 640;
     }
     case VERTRES:
     {
         DC *dc = get_nulldrv_dc( dev );
-        struct monitor_info info;
+        RECT rect;
         int ret;
 
-        if (!user_callbacks) return 480;
-
-        if (dc->display[0] && user_callbacks)
+        if (dc->display[0])
         {
-            info.name = dc->display;
-            SetRectEmpty( &info.rect );
-            user_callbacks->pEnumDisplayMonitors( NULL, NULL, monitor_enum_proc, (LPARAM)&info );
-            if (!IsRectEmpty( &info.rect ))
-                return info.rect.bottom - info.rect.top;
+            rect = get_display_rect( dc->display );
+            if (!IsRectEmpty( &rect )) return rect.bottom - rect.top;
         }
 
-        ret = user_callbacks->pGetSystemMetrics( SM_CYSCREEN );
+        ret = get_system_metrics( SM_CYSCREEN );
         return ret ? ret : 480;
     }
     case BITSPIXEL:
     {
+        UNICODE_STRING display;
         DEVMODEW devmode;
-        WCHAR *display;
         DC *dc;
 
-        if (NtGdiGetDeviceCaps( dev->hdc, TECHNOLOGY ) == DT_RASDISPLAY && user_callbacks)
+        if (NtGdiGetDeviceCaps( dev->hdc, TECHNOLOGY ) == DT_RASDISPLAY)
         {
             dc = get_nulldrv_dc( dev );
-            display = dc->display[0] ? dc->display : NULL;
             memset( &devmode, 0, sizeof(devmode) );
             devmode.dmSize = sizeof(devmode);
-            if (user_callbacks->pEnumDisplaySettingsW( display, ENUM_CURRENT_SETTINGS, &devmode )
-                && devmode.dmFields & DM_BITSPERPEL && devmode.dmBitsPerPel)
+            init_unicode_string( &display, dc->display );
+            if (NtUserEnumDisplaySettings( &display, ENUM_CURRENT_SETTINGS, &devmode, 0 ) &&
+                (devmode.dmFields & DM_BITSPERPEL) && devmode.dmBitsPerPel)
                 return devmode.dmBitsPerPel;
         }
         return 32;
@@ -313,46 +281,35 @@ static INT CDECL nulldrv_GetDeviceCaps( PHYSDEV dev, INT cap )
     case SCALINGFACTORY:  return 0;
     case VREFRESH:
     {
+        UNICODE_STRING display;
         DEVMODEW devmode;
-        WCHAR *display;
         DC *dc;
 
         if (NtGdiGetDeviceCaps( dev->hdc, TECHNOLOGY ) != DT_RASDISPLAY)
             return 0;
 
-        if (user_callbacks)
-        {
-            dc = get_nulldrv_dc( dev );
+        dc = get_nulldrv_dc( dev );
 
-            memset( &devmode, 0, sizeof(devmode) );
-            devmode.dmSize = sizeof(devmode);
-            display = dc->display[0] ? dc->display : NULL;
-            if (user_callbacks->pEnumDisplaySettingsW( display, ENUM_CURRENT_SETTINGS, &devmode ))
-                return devmode.dmDisplayFrequency ? devmode.dmDisplayFrequency : 1;
-        }
-
+        memset( &devmode, 0, sizeof(devmode) );
+        devmode.dmSize = sizeof(devmode);
+        init_unicode_string( &display, dc->display );
+        if (NtUserEnumDisplaySettings( &display, ENUM_CURRENT_SETTINGS, &devmode, 0 ) &&
+            devmode.dmDisplayFrequency)
+            return devmode.dmDisplayFrequency;
         return 1;
     }
     case DESKTOPHORZRES:
-        if (NtGdiGetDeviceCaps( dev->hdc, TECHNOLOGY ) == DT_RASDISPLAY && user_callbacks)
+        if (NtGdiGetDeviceCaps( dev->hdc, TECHNOLOGY ) == DT_RASDISPLAY)
         {
-            DPI_AWARENESS_CONTEXT context;
-            UINT ret;
-            context = user_callbacks->pSetThreadDpiAwarenessContext( DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE );
-            ret = user_callbacks->pGetSystemMetrics( SM_CXVIRTUALSCREEN );
-            user_callbacks->pSetThreadDpiAwarenessContext( context );
-            if (ret) return ret;
+            RECT rect = get_virtual_screen_rect( 0 );
+            return rect.right - rect.left;
         }
         return NtGdiGetDeviceCaps( dev->hdc, HORZRES );
     case DESKTOPVERTRES:
-        if (NtGdiGetDeviceCaps( dev->hdc, TECHNOLOGY ) == DT_RASDISPLAY && user_callbacks)
+        if (NtGdiGetDeviceCaps( dev->hdc, TECHNOLOGY ) == DT_RASDISPLAY)
         {
-            DPI_AWARENESS_CONTEXT context;
-            UINT ret;
-            context = user_callbacks->pSetThreadDpiAwarenessContext( DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE );
-            ret = user_callbacks->pGetSystemMetrics( SM_CYVIRTUALSCREEN );
-            user_callbacks->pSetThreadDpiAwarenessContext( context );
-            if (ret) return ret;
+            RECT rect = get_virtual_screen_rect( 0 );
+            return rect.bottom - rect.top;
         }
         return NtGdiGetDeviceCaps( dev->hdc, VERTRES );
     case BLTALIGNMENT:    return 0;
@@ -627,11 +584,6 @@ static struct opengl_funcs * CDECL nulldrv_wine_get_wgl_driver( PHYSDEV dev, UIN
     return (void *)-1;
 }
 
-static const struct vulkan_funcs * CDECL nulldrv_wine_get_vulkan_driver( PHYSDEV dev, UINT version )
-{
-    return NULL;
-}
-
 const struct gdi_dc_funcs null_driver =
 {
     nulldrv_AbortDoc,                   /* pAbortDoc */
@@ -726,7 +678,6 @@ const struct gdi_dc_funcs null_driver =
     nulldrv_D3DKMTCheckVidPnExclusiveOwnership, /* pD3DKMTCheckVidPnExclusiveOwnership */
     nulldrv_D3DKMTSetVidPnSourceOwner,  /* pD3DKMTSetVidPnSourceOwner */
     nulldrv_wine_get_wgl_driver,        /* wine_get_wgl_driver */
-    nulldrv_wine_get_vulkan_driver,     /* wine_get_vulkan_driver */
 
     GDI_PRIORITY_NULL_DRV               /* priority */
 };
@@ -810,15 +761,9 @@ static void CDECL nulldrv_UpdateClipboard(void)
 }
 
 static LONG CDECL nulldrv_ChangeDisplaySettingsEx( LPCWSTR name, LPDEVMODEW mode, HWND hwnd,
-                                             DWORD flags, LPVOID lparam )
+                                                   DWORD flags, LPVOID lparam )
 {
     return DISP_CHANGE_FAILED;
-}
-
-static BOOL CDECL nulldrv_EnumDisplayMonitors( HDC hdc, RECT *rect, MONITORENUMPROC proc, LPARAM lp )
-{
-    /* FIXME: move from user32 */
-    return FALSE;
 }
 
 static BOOL CDECL nulldrv_EnumDisplaySettingsEx( LPCWSTR name, DWORD num, LPDEVMODEW mode, DWORD flags )
@@ -826,10 +771,9 @@ static BOOL CDECL nulldrv_EnumDisplaySettingsEx( LPCWSTR name, DWORD num, LPDEVM
     return FALSE;
 }
 
-static BOOL CDECL nulldrv_GetMonitorInfo( HMONITOR handle, MONITORINFO *info )
+static void CDECL nulldrv_UpdateDisplayDevices( const struct gdi_device_manager *manager,
+                                                BOOL force, void *param )
 {
-    /* FIXME: move from user32 */
-    return FALSE;
 }
 
 static BOOL CDECL nulldrv_CreateDesktopWindow( HWND hwnd )
@@ -986,6 +930,11 @@ static BOOL CDECL nulldrv_SystemParametersInfo( UINT action, UINT int_param, voi
     return FALSE;
 }
 
+static const struct vulkan_funcs * CDECL nulldrv_wine_get_vulkan_driver( UINT version )
+{
+    return NULL;
+}
+
 static void CDECL nulldrv_ThreadDetach( void )
 {
 }
@@ -1039,9 +988,36 @@ static SHORT CDECL loaderdrv_VkKeyScanEx( WCHAR ch, HKL layout )
     return load_driver()->pVkKeyScanEx( ch, layout );
 }
 
+static LONG CDECL loaderdrv_ChangeDisplaySettingsEx( LPCWSTR name, LPDEVMODEW mode, HWND hwnd,
+                                                     DWORD flags, LPVOID lparam )
+{
+    return load_driver()->pChangeDisplaySettingsEx( name, mode, hwnd, flags, lparam );
+}
+
+static BOOL CDECL loaderdrv_EnumDisplaySettingsEx( LPCWSTR name, DWORD num, LPDEVMODEW mode, DWORD flags )
+{
+    return load_driver()->pEnumDisplaySettingsEx( name, num, mode, flags );
+}
+
+static void CDECL loaderdrv_SetCursor( HCURSOR cursor )
+{
+    load_driver()->pSetCursor( cursor );
+}
+
 static void CDECL loaderdrv_UpdateClipboard(void)
 {
     load_driver()->pUpdateClipboard();
+}
+
+static void CDECL loaderdrv_UpdateDisplayDevices( const struct gdi_device_manager *manager,
+                                                  BOOL force, void *param )
+{
+    load_driver()->pUpdateDisplayDevices( manager, force, param );
+}
+
+static const struct vulkan_funcs * CDECL loaderdrv_wine_get_vulkan_driver( UINT version )
+{
+    return load_driver()->pwine_get_vulkan_driver( version );
 }
 
 static const struct user_driver_funcs lazy_load_driver =
@@ -1053,8 +1029,14 @@ static const struct user_driver_funcs lazy_load_driver =
     .pToUnicodeEx = loaderdrv_ToUnicodeEx,
     .pUnregisterHotKey = loaderdrv_UnregisterHotKey,
     .pVkKeyScanEx = loaderdrv_VkKeyScanEx,
+    .pChangeDisplaySettingsEx = loaderdrv_ChangeDisplaySettingsEx,
+    .pEnumDisplaySettingsEx = loaderdrv_EnumDisplaySettingsEx,
+    .pUpdateDisplayDevices = loaderdrv_UpdateDisplayDevices,
+    .pSetCursor = loaderdrv_SetCursor,
     .pUpdateClipboard = loaderdrv_UpdateClipboard,
     .pScrollDC = nulldrv_ScrollDC,
+    .pSystemParametersInfo = nulldrv_SystemParametersInfo,
+    .pwine_get_vulkan_driver = loaderdrv_wine_get_vulkan_driver,
 };
 
 const struct user_driver_funcs *user_driver = &lazy_load_driver;
@@ -1090,9 +1072,8 @@ void CDECL __wine_set_display_driver( struct user_driver_funcs *driver, UINT ver
     SET_USER_FUNC(ClipCursor);
     SET_USER_FUNC(UpdateClipboard);
     SET_USER_FUNC(ChangeDisplaySettingsEx);
-    SET_USER_FUNC(EnumDisplayMonitors);
     SET_USER_FUNC(EnumDisplaySettingsEx);
-    SET_USER_FUNC(GetMonitorInfo);
+    SET_USER_FUNC(UpdateDisplayDevices);
     SET_USER_FUNC(CreateDesktopWindow);
     SET_USER_FUNC(CreateWindow);
     SET_USER_FUNC(DestroyWindow);
@@ -1116,6 +1097,7 @@ void CDECL __wine_set_display_driver( struct user_driver_funcs *driver, UINT ver
     SET_USER_FUNC(WindowPosChanging);
     SET_USER_FUNC(WindowPosChanged);
     SET_USER_FUNC(SystemParametersInfo);
+    SET_USER_FUNC(wine_get_vulkan_driver);
     SET_USER_FUNC(ThreadDetach);
 #undef SET_USER_FUNC
 

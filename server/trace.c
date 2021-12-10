@@ -1394,38 +1394,6 @@ static void dump_varargs_handle_infos( const char *prefix, data_size_t size )
     fputc( '}', stderr );
 }
 
-static void dump_varargs_poll_socket_input( const char *prefix, data_size_t size )
-{
-    const struct poll_socket_input *input;
-
-    fprintf( stderr, "%s{", prefix );
-    while (size >= sizeof(*input))
-    {
-        input = cur_data;
-        fprintf( stderr, "{socket=%04x,flags=%08x}", input->socket, input->flags );
-        size -= sizeof(*input);
-        remove_data( sizeof(*input) );
-        if (size) fputc( ',', stderr );
-    }
-    fputc( '}', stderr );
-}
-
-static void dump_varargs_poll_socket_output( const char *prefix, data_size_t size )
-{
-    const struct poll_socket_output *output;
-
-    fprintf( stderr, "%s{", prefix );
-    while (size >= sizeof(*output))
-    {
-        output = cur_data;
-        fprintf( stderr, "{flags=%08x,status=%s}", output->flags, get_status_name( output->status ) );
-        size -= sizeof(*output);
-        remove_data( sizeof(*output) );
-        if (size) fputc( ',', stderr );
-    }
-    fputc( '}', stderr );
-}
-
 typedef void (*dump_func)( const void *req );
 
 /* Everything below this line is generated automatically by tools/make_requests */
@@ -1472,7 +1440,7 @@ static void dump_new_thread_request( const struct new_thread_request *req )
 {
     fprintf( stderr, " process=%04x", req->process );
     fprintf( stderr, ", access=%08x", req->access );
-    fprintf( stderr, ", suspend=%d", req->suspend );
+    fprintf( stderr, ", flags=%08x", req->flags );
     fprintf( stderr, ", request_fd=%d", req->request_fd );
     dump_varargs_object_attributes( ", objattr=", cur_size );
 }
@@ -1747,6 +1715,12 @@ static void dump_dup_handle_request( const struct dup_handle_request *req )
 static void dump_dup_handle_reply( const struct dup_handle_reply *req )
 {
     fprintf( stderr, " handle=%04x", req->handle );
+}
+
+static void dump_compare_objects_request( const struct compare_objects_request *req )
+{
+    fprintf( stderr, " first=%04x", req->first );
+    fprintf( stderr, ", second=%04x", req->second );
 }
 
 static void dump_make_temporary_request( const struct make_temporary_request *req )
@@ -2111,21 +2085,6 @@ static void dump_recv_socket_reply( const struct recv_socket_reply *req )
 {
     fprintf( stderr, " wait=%04x", req->wait );
     fprintf( stderr, ", options=%08x", req->options );
-}
-
-static void dump_poll_socket_request( const struct poll_socket_request *req )
-{
-    fprintf( stderr, " exclusive=%d", req->exclusive );
-    dump_async_data( ", async=", &req->async );
-    dump_timeout( ", timeout=", &req->timeout );
-    dump_varargs_poll_socket_input( ", sockets=", cur_size );
-}
-
-static void dump_poll_socket_reply( const struct poll_socket_reply *req )
-{
-    fprintf( stderr, " wait=%04x", req->wait );
-    fprintf( stderr, ", options=%08x", req->options );
-    dump_varargs_poll_socket_output( ", sockets=", cur_size );
 }
 
 static void dump_send_socket_request( const struct send_socket_request *req )
@@ -4581,6 +4540,7 @@ static const dump_func req_dumpers[REQ_NB_REQUESTS] = {
     (dump_func)dump_close_handle_request,
     (dump_func)dump_set_handle_info_request,
     (dump_func)dump_dup_handle_request,
+    (dump_func)dump_compare_objects_request,
     (dump_func)dump_make_temporary_request,
     (dump_func)dump_open_process_request,
     (dump_func)dump_open_thread_request,
@@ -4611,7 +4571,6 @@ static const dump_func req_dumpers[REQ_NB_REQUESTS] = {
     (dump_func)dump_lock_file_request,
     (dump_func)dump_unlock_file_request,
     (dump_func)dump_recv_socket_request,
-    (dump_func)dump_poll_socket_request,
     (dump_func)dump_send_socket_request,
     (dump_func)dump_get_next_console_request_request,
     (dump_func)dump_read_directory_changes_request,
@@ -4859,6 +4818,7 @@ static const dump_func reply_dumpers[REQ_NB_REQUESTS] = {
     (dump_func)dump_set_handle_info_reply,
     (dump_func)dump_dup_handle_reply,
     NULL,
+    NULL,
     (dump_func)dump_open_process_reply,
     (dump_func)dump_open_thread_reply,
     (dump_func)dump_select_reply,
@@ -4888,7 +4848,6 @@ static const dump_func reply_dumpers[REQ_NB_REQUESTS] = {
     (dump_func)dump_lock_file_reply,
     NULL,
     (dump_func)dump_recv_socket_reply,
-    (dump_func)dump_poll_socket_reply,
     (dump_func)dump_send_socket_reply,
     (dump_func)dump_get_next_console_request_reply,
     NULL,
@@ -5135,6 +5094,7 @@ static const char * const req_names[REQ_NB_REQUESTS] = {
     "close_handle",
     "set_handle_info",
     "dup_handle",
+    "compare_objects",
     "make_temporary",
     "open_process",
     "open_thread",
@@ -5165,7 +5125,6 @@ static const char * const req_names[REQ_NB_REQUESTS] = {
     "lock_file",
     "unlock_file",
     "recv_socket",
-    "poll_socket",
     "send_socket",
     "get_next_console_request",
     "read_directory_changes",
@@ -5474,6 +5433,7 @@ static const struct
     { "NOT_MAPPED_VIEW",             STATUS_NOT_MAPPED_VIEW },
     { "NOT_REGISTRY_FILE",           STATUS_NOT_REGISTRY_FILE },
     { "NOT_SAME_DEVICE",             STATUS_NOT_SAME_DEVICE },
+    { "NOT_SAME_OBJECT",             STATUS_NOT_SAME_OBJECT },
     { "NOT_SUPPORTED",               STATUS_NOT_SUPPORTED },
     { "NO_DATA_DETECTED",            STATUS_NO_DATA_DETECTED },
     { "NO_IMPERSONATION_TOKEN",      STATUS_NO_IMPERSONATION_TOKEN },

@@ -1080,9 +1080,10 @@ typedef struct _TEB64
 } TEB64;
 
 /* reserved TEB64 TLS slots for Wow64 */
-#define WOW64_TLS_CPURESERVED  1
-#define WOW64_TLS_TEMPLIST     3
-#define WOW64_TLS_FILESYSREDIR 8
+#define WOW64_TLS_CPURESERVED      1
+#define WOW64_TLS_TEMPLIST         3
+#define WOW64_TLS_USERCALLBACKDATA 5
+#define WOW64_TLS_FILESYSREDIR     8
 
 
 /***********************************************************************
@@ -1868,8 +1869,23 @@ typedef enum _THREADINFOCLASS {
     ThreadUmsInformation,
     ThreadCounterProfiling,
     ThreadIdealProcessorEx,
-    ThreadSuspendCount = 35,
-    ThreadDescription = 38,
+    ThreadCpuAccountingInformation,
+    ThreadSuspendCount,
+    ThreadHeterogeneousCpuPolicy,
+    ThreadContainerId,
+    ThreadNameInformation,
+    ThreadSelectedCpuSets,
+    ThreadSystemThreadInformation,
+    ThreadActualGroupAffinity,
+    ThreadDynamicCodePolicyInfo,
+    ThreadExplicitCaseSensitivity,
+    ThreadWorkOnBehalfTicket,
+    ThreadSubsystemInformation,
+    ThreadDbgkWerReportActive,
+    ThreadAttachContainer,
+    ThreadManageWritesToExecutableMemory,
+    ThreadPowerThrottlingState,
+    ThreadWorkloadClass,
     MaxThreadInfoClass
 } THREADINFOCLASS;
 
@@ -1889,10 +1905,10 @@ typedef struct _THREAD_DESCRIPTOR_INFORMATION
     LDT_ENTRY   Entry;
 } THREAD_DESCRIPTOR_INFORMATION, *PTHREAD_DESCRIPTOR_INFORMATION;
 
-typedef struct _THREAD_DESCRIPTION_INFORMATION
+typedef struct _THREAD_NAME_INFORMATION
 {
-    UNICODE_STRING Description;
-} THREAD_DESCRIPTION_INFORMATION, *PTHREAD_DESCRIPTION_INFORMATION;
+    UNICODE_STRING ThreadName;
+} THREAD_NAME_INFORMATION, *PTHREAD_NAME_INFORMATION;
 
 typedef struct _KERNEL_USER_TIMES {
     LARGE_INTEGER  CreateTime;
@@ -2562,7 +2578,10 @@ typedef struct _SYSTEM_PROCESS_INFORMATION {
 #ifdef __WINESRC__                  /* win32/win64 */
     ULONG NextEntryOffset;             /* 00/00 */
     DWORD dwThreadCount;               /* 04/04 */
-    DWORD dwUnknown1[6];               /* 08/08 */
+    LARGE_INTEGER WorkingSetPrivateSize; /* 08/08 */
+    ULONG HardFaultCount;              /* 10/10 */
+    ULONG NumberOfThreadsHighWatermark;/* 14/14 */
+    ULONGLONG CycleTime;               /* 18/18 */
     LARGE_INTEGER CreationTime;        /* 20/20 */
     LARGE_INTEGER UserTime;            /* 28/28 */
     LARGE_INTEGER KernelTime;          /* 30/30 */
@@ -2572,7 +2591,7 @@ typedef struct _SYSTEM_PROCESS_INFORMATION {
     HANDLE ParentProcessId;            /* 48/58 */
     ULONG HandleCount;                 /* 4c/60 */
     ULONG SessionId;                   /* 50/64 */
-    DWORD dwUnknown4;                  /* 54/68 */
+    ULONG_PTR UniqueProcessKey;        /* 54/68 */
     VM_COUNTERS_EX vmCounters;         /* 58/70 */
     IO_COUNTERS ioCounters;            /* 88/d0 */
     SYSTEM_THREAD_INFORMATION ti[1];   /* b8/100 */
@@ -3872,6 +3891,7 @@ NTSYSAPI NTSTATUS  WINAPI NtCancelTimer(HANDLE, BOOLEAN*);
 NTSYSAPI NTSTATUS  WINAPI NtClearEvent(HANDLE);
 NTSYSAPI NTSTATUS  WINAPI NtClose(HANDLE);
 NTSYSAPI NTSTATUS  WINAPI NtCloseObjectAuditAlarm(PUNICODE_STRING,HANDLE,BOOLEAN);
+NTSYSAPI NTSTATUS  WINAPI NtCompareObjects(HANDLE,HANDLE);
 NTSYSAPI NTSTATUS  WINAPI NtCompleteConnectPort(HANDLE);
 NTSYSAPI NTSTATUS  WINAPI NtConnectPort(PHANDLE,PUNICODE_STRING,PSECURITY_QUALITY_OF_SERVICE,PLPC_SECTION_WRITE,PLPC_SECTION_READ,PULONG,PVOID,PULONG);
 NTSYSAPI NTSTATUS  WINAPI NtContinue(PCONTEXT,BOOLEAN);
@@ -4660,7 +4680,7 @@ static inline PLIST_ENTRY RemoveTailList(PLIST_ENTRY le)
 #ifdef __WINESRC__
 
 /* Wine internal functions */
-extern NTSTATUS CDECL __wine_init_unix_lib( HMODULE module, DWORD reason, const void *ptr_in, void *ptr_out );
+
 extern NTSTATUS WINAPI __wine_unix_spawnvp( char * const argv[], int wait );
 
 /* The thread information for 16-bit threads */

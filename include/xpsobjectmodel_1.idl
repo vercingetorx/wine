@@ -1,7 +1,5 @@
 /*
- * QuickTime Toolkit decoder header
- *
- * Copyright 2011 Aric Stewart, CodeWeavers
+ * Copyright 2021 Nikolay Sivov for CodeWeavers
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -18,11 +16,34 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-typedef struct WineDataRefRecordTag
-{
-    IAsyncReader* pReader;
-    GUID streamSubtype;
-} WineDataRefRecord;
+import "xpsobjectmodel.idl";
 
-HRESULT AccessPixelBufferPixels( CVPixelBufferRef pixelBuffer, LPBYTE pbDstStream);
-void RegisterWineDataHandler( void );
+typedef [v1_enum] enum
+{
+    XPS_DOCUMENT_TYPE_UNSPECIFIED = 1,
+    XPS_DOCUMENT_TYPE_XPS,
+    XPS_DOCUMENT_TYPE_OPENXPS
+} XPS_DOCUMENT_TYPE;
+
+[
+    object,
+    local,
+    pointer_default(ref),
+    uuid(3b0b6d38-53ad-41da-b212-d37637a6714e),
+]
+interface IXpsDocumentPackageTarget : IUnknown
+{
+    HRESULT GetXpsOMPackageWriter(
+        [in] IOpcPartUri *documentpart,
+        [in] IOpcPartUri *controlpart,
+        [out, retval] IXpsOMPackageWriter **writer
+    );
+
+    HRESULT GetXpsOMFactory(
+        [out, retval] IXpsOMObjectFactory **factory
+    );
+
+    HRESULT GetXpsType(
+        [out, retval] XPS_DOCUMENT_TYPE *document_type
+    );
+}

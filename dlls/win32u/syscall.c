@@ -111,15 +111,21 @@ static void * const syscalls[] =
     NtUserGetClipboardOwner,
     NtUserGetClipboardSequenceNumber,
     NtUserGetClipboardViewer,
+    NtUserGetCursor,
+    NtUserGetDoubleClickTime,
+    NtUserGetDpiForMonitor,
     NtUserGetKeyState,
     NtUserGetKeyboardLayout,
+    NtUserGetKeyboardLayoutName,
     NtUserGetKeyboardState,
     NtUserGetLayeredWindowAttributes,
     NtUserGetMouseMovePointsEx,
     NtUserGetObjectInformation,
     NtUserGetOpenClipboardWindow,
+    NtUserGetProcessDpiAwarenessContext,
     NtUserGetProcessWindowStation,
     NtUserGetProp,
+    NtUserGetSystemDpiForProcess,
     NtUserGetThreadDesktop,
     NtUserOpenDesktop,
     NtUserOpenInputDesktop,
@@ -128,6 +134,7 @@ static void * const syscalls[] =
     NtUserRemoveProp,
     NtUserSetKeyboardState,
     NtUserSetObjectInformation,
+    NtUserSetProcessDpiAwarenessContext,
     NtUserSetProcessWindowStation,
     NtUserSetProp,
     NtUserSetThreadDesktop,
@@ -149,6 +156,7 @@ static NTSTATUS init( void *dispatcher )
     if ((status = ntdll_init_syscalls( 1, &syscall_table, dispatcher ))) return status;
     if ((status = gdi_init())) return status;
     winstation_init();
+    sysparams_init();
     return STATUS_SUCCESS;
 }
 
@@ -157,3 +165,21 @@ unixlib_entry_t __wine_unix_call_funcs[] =
     init,
     callbacks_init,
 };
+
+#ifdef _WIN64
+
+WINE_DEFAULT_DEBUG_CHANNEL(win32u);
+
+static NTSTATUS wow64_init( void *args )
+{
+    FIXME( "\n" );
+    return STATUS_NOT_SUPPORTED;
+}
+
+const unixlib_entry_t __wine_unix_call_wow64_funcs[] =
+{
+    init,
+    wow64_init,
+};
+
+#endif /* _WIN64 */

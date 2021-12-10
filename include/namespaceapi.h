@@ -1,7 +1,5 @@
 /*
- * COM classes for wineqtdecoder
- *
- * Copyright 2019 Zebediah Figura
+ * Copyright (C) 2021 Mohamad Al-Jaf
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -18,20 +16,24 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#pragma makedep header
-#pragma makedep ident
-#pragma makedep register
+#ifndef _NAMESPACEAPI_H_
+#define _NAMESPACEAPI_H_
 
-[
-    helpstring("Wine QuickTime splitter"),
-    threading(both),
-    uuid(d0e70e49-5927-4894-a386-359460ee87c9)
-]
-coclass QTSplitter {}
+#ifdef __cplusplus
+extern "C" {
+#endif
 
-[
-    helpstring("Wine QuickTime video decoder"),
-    threading(both),
-    uuid(683ddacb-4354-490c-a058-e05ad0f20537)
-]
-coclass QTVDecoder {}
+#define PRIVATE_NAMESPACE_FLAG_DESTROY 0x00000001
+
+WINBASEAPI BOOL    WINAPI AddSIDToBoundaryDescriptor(HANDLE*,PSID);
+WINBASEAPI BOOLEAN WINAPI ClosePrivateNamespace(HANDLE,ULONG);
+WINBASEAPI HANDLE  WINAPI CreateBoundaryDescriptorW(LPCWSTR,ULONG);
+WINBASEAPI HANDLE  WINAPI CreatePrivateNamespaceW(LPSECURITY_ATTRIBUTES,LPVOID,LPCWSTR);
+WINBASEAPI void    WINAPI DeleteBoundaryDescriptor(HANDLE);
+WINBASEAPI HANDLE  WINAPI OpenPrivateNamespaceW(LPVOID,LPCWSTR);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif /* _NAMESPACEAPI_H_ */

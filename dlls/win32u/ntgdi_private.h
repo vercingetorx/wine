@@ -372,9 +372,9 @@ extern void GDI_ReleaseObj( HGDIOBJ ) DECLSPEC_HIDDEN;
 extern UINT GDI_get_ref_count( HGDIOBJ handle ) DECLSPEC_HIDDEN;
 extern HGDIOBJ GDI_inc_ref_count( HGDIOBJ handle ) DECLSPEC_HIDDEN;
 extern BOOL GDI_dec_ref_count( HGDIOBJ handle ) DECLSPEC_HIDDEN;
-extern DWORD get_system_dpi(void) DECLSPEC_HIDDEN;
 extern HGDIOBJ get_stock_object( INT obj ) DECLSPEC_HIDDEN;
 extern DWORD get_gdi_object_type( HGDIOBJ obj ) DECLSPEC_HIDDEN;
+extern void make_gdi_object_system( HGDIOBJ handle, BOOL set ) DECLSPEC_HIDDEN;
 
 /* mapping.c */
 extern BOOL dp_to_lp( DC *dc, POINT *points, INT count ) DECLSPEC_HIDDEN;
@@ -399,10 +399,10 @@ extern BOOL PATH_RestorePath( DC *dst, DC *src ) DECLSPEC_HIDDEN;
 extern POINT *GDI_Bezier( const POINT *Points, INT count, INT *nPtsOut ) DECLSPEC_HIDDEN;
 
 /* palette.c */
-extern HPALETTE WINAPI GDISelectPalette( HDC hdc, HPALETTE hpal, WORD wBkg) DECLSPEC_HIDDEN;
 extern HPALETTE PALETTE_Init(void) DECLSPEC_HIDDEN;
 extern UINT get_palette_entries( HPALETTE hpalette, UINT start, UINT count,
                                  PALETTEENTRY *entries ) DECLSPEC_HIDDEN;
+extern UINT realize_palette( HDC hdc ) DECLSPEC_HIDDEN;
 
 /* pen.c */
 extern HPEN create_pen( INT style, INT width, COLORREF color ) DECLSPEC_HIDDEN;
@@ -410,6 +410,7 @@ extern HPEN create_pen( INT style, INT width, COLORREF color ) DECLSPEC_HIDDEN;
 /* region.c */
 extern BOOL add_rect_to_region( HRGN rgn, const RECT *rect ) DECLSPEC_HIDDEN;
 extern INT mirror_region( HRGN dst, HRGN src, INT width ) DECLSPEC_HIDDEN;
+extern BOOL mirror_window_region( HWND hwnd, HRGN hrgn ) DECLSPEC_HIDDEN;
 extern BOOL REGION_FrameRgn( HRGN dest, HRGN src, INT x, INT y ) DECLSPEC_HIDDEN;
 extern HRGN create_polypolygon_region( const POINT *pts, const INT *count, INT nbpolygons,
                                        INT mode, const RECT *clip_rect ) DECLSPEC_HIDDEN;
@@ -594,6 +595,30 @@ static inline void reset_bounds( RECT *bounds )
     bounds->right = bounds->bottom = INT_MIN;
 }
 
+static inline void union_rect( RECT *dest, const RECT *src1, const RECT *src2 )
+{
+    if (is_rect_empty( src1 ))
+    {
+        if (is_rect_empty( src2 ))
+        {
+            reset_bounds( dest );
+            return;
+        }
+        else *dest = *src2;
+    }
+    else
+    {
+        if (is_rect_empty( src2 )) *dest = *src1;
+        else
+        {
+            dest->left   = min( src1->left, src2->left );
+            dest->right  = max( src1->right, src2->right );
+            dest->top    = min( src1->top, src2->top );
+            dest->bottom = max( src1->bottom, src2->bottom );
+        }
+    }
+}
+
 static inline void add_bounds_rect( RECT *bounds, const RECT *rect )
 {
     if (is_rect_empty( rect )) return;
@@ -640,6 +665,5 @@ extern void CDECL free_heap_bits( struct gdi_image_bits *bits ) DECLSPEC_HIDDEN;
 void set_gdi_client_ptr( HGDIOBJ handle, void *ptr ) DECLSPEC_HIDDEN;
 
 extern SYSTEM_BASIC_INFORMATION system_info DECLSPEC_HIDDEN;
-extern const struct user_callbacks *user_callbacks DECLSPEC_HIDDEN;
 
 #endif /* __WINE_NTGDI_PRIVATE_H */

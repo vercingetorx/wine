@@ -234,6 +234,11 @@ NTSTATUS WINAPI wow64_NtUserRemoveClipboardFormatListener( UINT *args )
     return NtUserRemoveClipboardFormatListener( hwnd );
 }
 
+NTSTATUS WINAPI wow64_NtUserGetCursor( UINT *args )
+{
+    return HandleToUlong( NtUserGetCursor() );
+}
+
 NTSTATUS WINAPI wow64_NtUserAttachThreadInput( UINT *args )
 {
     DWORD from = get_ulong( &args );
@@ -255,6 +260,13 @@ NTSTATUS WINAPI wow64_NtUserGetKeyboardLayout( UINT *args )
     DWORD tid = get_ulong( &args );
 
     return HandleToUlong( NtUserGetKeyboardLayout( tid ));
+}
+
+NTSTATUS WINAPI wow64_NtUserGetKeyboardLayoutName( UINT *args )
+{
+    WCHAR *name = get_ptr( &args );
+
+    return NtUserGetKeyboardLayoutName( name );
 }
 
 NTSTATUS WINAPI wow64_NtUserGetKeyboardState( UINT *args )
@@ -280,4 +292,41 @@ NTSTATUS WINAPI wow64_NtUserGetMouseMovePointsEx( UINT *args )
     DWORD resolution = get_ulong( &args );
 
     return NtUserGetMouseMovePointsEx( size, ptin, ptout, count, resolution );
+}
+
+NTSTATUS WINAPI wow64_NtUserSetProcessDpiAwarenessContext( UINT *args )
+{
+    ULONG awareness = get_ulong( &args );
+    ULONG unknown = get_ulong( &args );
+
+    return NtUserSetProcessDpiAwarenessContext( awareness, unknown );
+}
+
+NTSTATUS WINAPI wow64_NtUserGetProcessDpiAwarenessContext( UINT *args )
+{
+    HANDLE process = get_handle( &args );
+
+    return NtUserGetProcessDpiAwarenessContext( process );
+}
+
+NTSTATUS WINAPI wow64_NtUserGetSystemDpiForProcess( UINT *args )
+{
+    HANDLE process = get_handle( &args );
+
+    return NtUserGetSystemDpiForProcess( process );
+}
+
+NTSTATUS WINAPI wow64_NtUserGetDpiForMonitor( UINT *args )
+{
+    HMONITOR monitor = get_handle( &args );
+    UINT type = get_ulong( &args );
+    UINT *x = get_ptr( &args );
+    UINT *y = get_ptr( &args );
+
+    return NtUserGetDpiForMonitor( monitor, type, x, y );
+}
+
+NTSTATUS WINAPI wow64_NtUserGetDoubleClickTime( UINT *args )
+{
+    return NtUserGetDoubleClickTime();
 }

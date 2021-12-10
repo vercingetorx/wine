@@ -130,6 +130,8 @@ extern LONG CDECL macdrv_ChangeDisplaySettingsEx(LPCWSTR devname, LPDEVMODEW dev
                                                  HWND hwnd, DWORD flags, LPVOID lpvoid) DECLSPEC_HIDDEN;
 extern BOOL CDECL macdrv_EnumDisplaySettingsEx(LPCWSTR devname, DWORD mode,
                                                LPDEVMODEW devmode, DWORD flags) DECLSPEC_HIDDEN;
+extern void CDECL macdrv_UpdateDisplayDevices( const struct gdi_device_manager *device_manager,
+                                               BOOL force, void *param ) DECLSPEC_HIDDEN;
 extern BOOL CDECL macdrv_GetDeviceGammaRamp(PHYSDEV dev, LPVOID ramp) DECLSPEC_HIDDEN;
 extern BOOL CDECL macdrv_SetDeviceGammaRamp(PHYSDEV dev, LPVOID ramp) DECLSPEC_HIDDEN;
 extern BOOL CDECL macdrv_ClipCursor(LPCRECT clip) DECLSPEC_HIDDEN;
@@ -262,7 +264,7 @@ extern BOOL query_drag_exited(macdrv_query* query) DECLSPEC_HIDDEN;
 extern BOOL query_drag_drop(macdrv_query* query) DECLSPEC_HIDDEN;
 
 extern struct opengl_funcs * CDECL macdrv_wine_get_wgl_driver(PHYSDEV dev, UINT version) DECLSPEC_HIDDEN;
-extern const struct vulkan_funcs * CDECL macdrv_wine_get_vulkan_driver(PHYSDEV dev, UINT version) DECLSPEC_HIDDEN;
+extern const struct vulkan_funcs * CDECL macdrv_wine_get_vulkan_driver(UINT version) DECLSPEC_HIDDEN;
 extern void sync_gl_view(struct macdrv_win_data* data, const RECT* old_whole_rect, const RECT* old_client_rect) DECLSPEC_HIDDEN;
 
 extern CGImageRef create_cgimage_from_icon_bitmaps(HDC hdc, HANDLE icon, HBITMAP hbmColor,

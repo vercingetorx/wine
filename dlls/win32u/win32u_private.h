@@ -33,16 +33,13 @@
 struct user_callbacks
 {
     HWND (WINAPI *pGetDesktopWindow)(void);
-    UINT (WINAPI *pGetDpiForSystem)(void);
-    BOOL (WINAPI *pGetMonitorInfoW)( HMONITOR, LPMONITORINFO );
-    INT (WINAPI *pGetSystemMetrics)(INT);
     BOOL (WINAPI *pGetWindowRect)( HWND hwnd, LPRECT rect );
-    BOOL (WINAPI *pEnumDisplayMonitors)( HDC, LPRECT, MONITORENUMPROC, LPARAM );
-    BOOL (WINAPI *pEnumDisplaySettingsW)(LPCWSTR, DWORD, LPDEVMODEW );
     BOOL (WINAPI *pRedrawWindow)( HWND, const RECT*, HRGN, UINT );
-    DPI_AWARENESS_CONTEXT (WINAPI *pSetThreadDpiAwarenessContext)( DPI_AWARENESS_CONTEXT );
+    LRESULT (WINAPI *pSendMessageTimeoutW)( HWND, UINT, WPARAM, LPARAM, UINT, UINT, PDWORD_PTR );
     HWND (WINAPI *pWindowFromDC)( HDC );
 };
+
+extern const struct user_callbacks *user_callbacks DECLSPEC_HIDDEN;
 
 struct unix_funcs
 {
@@ -195,7 +192,18 @@ struct unix_funcs
     BOOL     (WINAPI *pNtGdiUpdateColors)( HDC hdc );
     BOOL     (WINAPI *pNtGdiWidenPath)( HDC hdc );
     HKL      (WINAPI *pNtUserActivateKeyboardLayout)( HKL layout, UINT flags );
+    ULONG_PTR (WINAPI *pNtUserCallOneParam)( ULONG_PTR arg, ULONG code );
+    ULONG_PTR (WINAPI *pNtUserCallTwoParam)( ULONG_PTR arg1, ULONG_PTR arg2, ULONG code );
+    LONG     (WINAPI *pNtUserChangeDisplaySettings)( UNICODE_STRING *devname, DEVMODEW *devmode, HWND hwnd,
+                                                     DWORD flags, void *lparam );
     INT      (WINAPI *pNtUserCountClipboardFormats)(void);
+    NTSTATUS (WINAPI *pNtUserEnumDisplayDevices)( UNICODE_STRING *device, DWORD index,
+                                                  DISPLAY_DEVICEW *info, DWORD flags );
+    BOOL     (WINAPI *pNtUserEnumDisplayMonitors)( HDC hdc, RECT *rect, MONITORENUMPROC proc, LPARAM lp );
+    BOOL     (WINAPI *pNtUserEnumDisplaySettings)( UNICODE_STRING *device, DWORD mode,
+                                                   DEVMODEW *dev_mode, DWORD flags );
+    LONG     (WINAPI *pNtUserGetDisplayConfigBufferSizes)( UINT32 flags, UINT32 *num_path_info,
+                                                           UINT32 *num_mode_info );
     INT      (WINAPI *pNtUserGetKeyNameText)( LONG lparam, WCHAR *buffer, INT size );
     UINT     (WINAPI *pNtUserGetKeyboardLayoutList)( INT size, HKL *layouts );
     INT      (WINAPI *pNtUserGetPriorityClipboardFormat)( UINT *list, INT count );
@@ -204,16 +212,19 @@ struct unix_funcs
     UINT     (WINAPI *pNtUserMapVirtualKeyEx)( UINT code, UINT type, HKL layout );
     BOOL     (WINAPI *pNtUserScrollDC)( HDC hdc, INT dx, INT dy, const RECT *scroll, const RECT *clip,
                                         HRGN ret_update_rgn, RECT *update_rect );
+    HPALETTE (WINAPI *pNtUserSelectPalette)( HDC hdc, HPALETTE hpal, WORD bkg );
+    BOOL     (WINAPI *pNtUserSetSysColors)( INT count, const INT *colors, const COLORREF *values );
+    INT      (WINAPI *pNtUserShowCursor)( BOOL show );
+    BOOL     (WINAPI *pNtUserSystemParametersInfo)( UINT action, UINT val, PVOID ptr, UINT winini );
+    BOOL     (WINAPI *pNtUserSystemParametersInfoForDpi)( UINT action, UINT val, PVOID ptr,
+                                                         UINT winini, UINT dpi );
     INT      (WINAPI *pNtUserToUnicodeEx)( UINT virt, UINT scan, const BYTE *state,
                                            WCHAR *str, int size, UINT flags, HKL layout );
     BOOL     (WINAPI *pNtUserUnregisterHotKey)( HWND hwnd, INT id );
     WORD     (WINAPI *pNtUserVkKeyScanEx)( WCHAR chr, HKL layout );
 
     /* Wine-specific functions */
-    UINT (WINAPI *pGDIRealizePalette)( HDC hdc );
-    HPALETTE (WINAPI *pGDISelectPalette)( HDC hdc, HPALETTE hpal, WORD bkg );
     DWORD_PTR (WINAPI *pGetDCHook)( HDC hdc, DCHOOKPROC *proc );
-    BOOL (WINAPI *pMirrorRgn)( HWND hwnd, HRGN hrgn );
     BOOL (WINAPI *pSetDCHook)( HDC hdc, DCHOOKPROC proc, DWORD_PTR data );
     INT (WINAPI *pSetDIBits)( HDC hdc, HBITMAP hbitmap, UINT startscan,
                               UINT lines, const void *bits, const BITMAPINFO *info,
@@ -222,26 +233,39 @@ struct unix_funcs
     BOOL (CDECL *get_brush_bitmap_info)( HBRUSH handle, BITMAPINFO *info, void *bits, UINT *usage );
     BOOL (CDECL *get_file_outline_text_metric)( const WCHAR *path, OUTLINETEXTMETRICW *otm );
     BOOL (CDECL *get_icm_profile)( HDC hdc, BOOL allow_default, DWORD *size, WCHAR *filename );
-    const struct vulkan_funcs * (CDECL *get_vulkan_driver)( HDC hdc, UINT version );
+    const struct vulkan_funcs * (CDECL *get_vulkan_driver)( UINT version );
     struct opengl_funcs * (CDECL *get_wgl_driver)( HDC hdc, UINT version );
-    void (CDECL *make_gdi_object_system)( HGDIOBJ handle, BOOL set );
     void (CDECL *set_display_driver)( struct user_driver_funcs *funcs, UINT version );
     void (CDECL *set_visible_region)( HDC hdc, HRGN hrgn, const RECT *vis_rect, const RECT *device_rect,
                                       struct window_surface *surface );
 };
 
-UINT WINAPI GDIRealizePalette( HDC hdc );
-HPALETTE WINAPI GDISelectPalette( HDC hdc, HPALETTE hpal, WORD wBkg );
+extern RECT get_display_rect( const WCHAR *display ) DECLSPEC_HIDDEN;
+extern UINT get_system_dpi(void) DECLSPEC_HIDDEN;
+extern int get_system_metrics( int index ) DECLSPEC_HIDDEN;
+extern RECT get_virtual_screen_rect( UINT dpi ) DECLSPEC_HIDDEN;
 
 extern void wrappers_init( unixlib_handle_t handle ) DECLSPEC_HIDDEN;
 extern NTSTATUS gdi_init(void) DECLSPEC_HIDDEN;
 extern NTSTATUS callbacks_init( void *args ) DECLSPEC_HIDDEN;
 extern void winstation_init(void) DECLSPEC_HIDDEN;
+extern void sysparams_init(void) DECLSPEC_HIDDEN;
 
+extern HKEY reg_create_key( HKEY root, const WCHAR *name, ULONG name_len,
+                            DWORD options, DWORD *disposition ) DECLSPEC_HIDDEN;
 extern HKEY reg_open_hkcu_key( const char *name ) DECLSPEC_HIDDEN;
 extern HKEY reg_open_key( HKEY root, const WCHAR *name, ULONG name_len ) DECLSPEC_HIDDEN;
+extern ULONG query_reg_value( HKEY hkey, const WCHAR *name,
+                              KEY_VALUE_PARTIAL_INFORMATION *info, ULONG size ) DECLSPEC_HIDDEN;
 extern ULONG query_reg_ascii_value( HKEY hkey, const char *name,
                                     KEY_VALUE_PARTIAL_INFORMATION *info, ULONG size ) DECLSPEC_HIDDEN;
+extern void set_reg_ascii_value( HKEY hkey, const char *name, const char *value ) DECLSPEC_HIDDEN;
+extern BOOL set_reg_value( HKEY hkey, const WCHAR *name, UINT type, const void *value,
+                           DWORD count ) DECLSPEC_HIDDEN;
+extern BOOL reg_delete_tree( HKEY parent, const WCHAR *name, ULONG name_len ) DECLSPEC_HIDDEN;
+extern void reg_delete_value( HKEY hkey, const WCHAR *name ) DECLSPEC_HIDDEN;
+
+extern HKEY hkcu_key DECLSPEC_HIDDEN;
 
 static inline struct user_thread_info *get_user_thread_info(void)
 {
@@ -250,45 +274,22 @@ static inline struct user_thread_info *get_user_thread_info(void)
 
 extern const struct user_driver_funcs *user_driver DECLSPEC_HIDDEN;
 
+static inline NTSTATUS user32_call( ULONG id, void *args, ULONG len )
+{
+    /* FIXME: use KeUserModeCallback instead */
+    NTSTATUS (WINAPI *func)(void *, ULONG) = ((void **)NtCurrentTeb()->Peb->KernelCallbackTable)[id];
+    return func( args, len );
+}
+
 static inline BOOL set_ntstatus( NTSTATUS status )
 {
     if (status) SetLastError( RtlNtStatusToDosError( status ));
     return !status;
 }
 
-static inline WCHAR *win32u_wcsrchr( const WCHAR *str, WCHAR ch )
-{
-    WCHAR *ret = NULL;
-    do { if (*str == ch) ret = (WCHAR *)(ULONG_PTR)str; } while (*str++);
-    return ret;
-}
-
 static inline WCHAR win32u_towupper( WCHAR ch )
 {
     return RtlUpcaseUnicodeChar( ch );
-}
-
-static inline WCHAR *win32u_wcschr( const WCHAR *str, WCHAR ch )
-{
-    do { if (*str == ch) return (WCHAR *)(ULONG_PTR)str; } while (*str++);
-    return NULL;
-}
-
-static inline int win32u_wcsicmp( const WCHAR *str1, const WCHAR *str2 )
-{
-    int ret;
-    for (;;)
-    {
-        if ((ret = win32u_towupper( *str1 ) - win32u_towupper( *str2 )) || !*str1) return ret;
-        str1++;
-        str2++;
-    }
-}
-
-static inline int win32u_wcscmp( const WCHAR *str1, const WCHAR *str2 )
-{
-    while (*str1 && (*str1 == *str2)) { str1++; str2++; }
-    return *str1 - *str2;
 }
 
 static inline LONG win32u_wcstol( LPCWSTR s, LPWSTR *end, INT base )
@@ -385,10 +386,6 @@ static inline ULONG win32u_wcstoul( const WCHAR *s, WCHAR **end, int base )
 }
 
 #define towupper(c)     win32u_towupper(c)
-#define wcschr(s,c)     win32u_wcschr(s,c)
-#define wcscmp(s1,s2)   win32u_wcscmp(s1,s2)
-#define wcsicmp(s1,s2)  win32u_wcsicmp(s1,s2)
-#define wcsrchr(s,c)    win32u_wcsrchr(s,c)
 #define wcstol(s,e,b)   win32u_wcstol(s,e,b)
 #define wcstoul(s,e,b)  win32u_wcstoul(s,e,b)
 
@@ -412,6 +409,19 @@ DWORD win32u_wctomb( CPTABLEINFO *info, char *dst, DWORD dstlen, const WCHAR *sr
 static inline BOOL is_win9x(void)
 {
     return NtCurrentTeb()->Peb->OSPlatformId == VER_PLATFORM_WIN32s;
+}
+
+static inline void init_unicode_string( UNICODE_STRING *str, const WCHAR *data )
+{
+    str->Length = lstrlenW(data) * sizeof(WCHAR);
+    str->MaximumLength = str->Length + sizeof(WCHAR);
+    str->Buffer = (WCHAR *)data;
+}
+
+static inline const char *debugstr_us( const UNICODE_STRING *us )
+{
+    if (!us) return "<null>";
+    return debugstr_wn( us->Buffer, us->Length / sizeof(WCHAR) );
 }
 
 #endif /* __WINE_WIN32U_PRIVATE */

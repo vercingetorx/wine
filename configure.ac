@@ -57,7 +57,6 @@ AC_ARG_WITH(pcap,      AS_HELP_STRING([--without-pcap],[do not use the Packet Ca
 AC_ARG_WITH(pthread,   AS_HELP_STRING([--without-pthread],[do not use the pthread library]),
             [if test "x$withval" = "xno"; then ac_cv_header_pthread_h=no; fi])
 AC_ARG_WITH(pulse,     AS_HELP_STRING([--without-pulse],[do not use PulseAudio sound support]))
-AC_ARG_WITH(quicktime, AS_HELP_STRING([--without-quicktime],[do not use QuickTime support]))
 AC_ARG_WITH(sane,      AS_HELP_STRING([--without-sane],[do not use SANE (scanner support)]))
 AC_ARG_WITH(sdl,       AS_HELP_STRING([--without-sdl],[do not use SDL]))
 AC_ARG_WITH(udev,      AS_HELP_STRING([--without-udev],[do not use udev (plug and play support)]))
@@ -427,16 +426,13 @@ AC_CHECK_HEADERS(\
 	IOKit/hid/IOHIDLib.h \
 	OpenAL/al.h \
 	OpenCL/opencl.h \
-	QuickTime/ImageCompression.h \
 	Security/Security.h \
 	SystemConfiguration/SCDynamicStoreCopyDHCPInfo.h \
 	SystemConfiguration/SCNetworkConfiguration.h \
-	alias.h \
 	arpa/inet.h \
 	arpa/nameser.h \
 	asm/types.h \
 	asm/user.h \
-	dirent.h \
 	elf.h \
 	float.h \
 	gettext-po.h \
@@ -449,7 +445,6 @@ AC_CHECK_HEADERS(\
 	linux/hidraw.h \
 	linux/input.h \
 	linux/ioctl.h \
-	linux/joystick.h \
 	linux/major.h \
 	linux/param.h \
 	linux/serial.h \
@@ -482,15 +477,12 @@ AC_CHECK_HEADERS(\
 	sys/epoll.h \
 	sys/event.h \
 	sys/filio.h \
-	sys/ioctl.h \
 	sys/ipc.h \
 	sys/link.h \
-	sys/mman.h \
 	sys/modem.h \
 	sys/mtio.h \
 	sys/param.h \
 	sys/prctl.h \
-	sys/protosw.h \
 	sys/ptrace.h \
 	sys/queue.h \
 	sys/random.h \
@@ -498,24 +490,18 @@ AC_CHECK_HEADERS(\
 	sys/scsiio.h \
 	sys/shm.h \
 	sys/signal.h \
-	sys/socket.h \
 	sys/socketvar.h \
 	sys/sockio.h \
 	sys/statvfs.h \
 	sys/strtio.h \
 	sys/syscall.h \
 	sys/sysinfo.h \
-	sys/time.h \
-	sys/timeout.h \
 	sys/times.h \
 	sys/uio.h \
 	sys/user.h \
 	sys/utsname.h \
 	sys/vnode.h \
-	sys/wait.h \
 	syscall.h \
-	termios.h \
-	unistd.h \
 	utime.h \
 	valgrind/memcheck.h \
 	valgrind/valgrind.h
@@ -549,7 +535,6 @@ AC_CHECK_HEADERS(\
 	net/if_types.h \
 	net/route.h \
 	netinet/if_ether.h \
-	netinet/if_inarp.h \
 	netinet/in_pcb.h \
 	netinet/ip_icmp.h \
 	netinet/ip_var.h \
@@ -557,9 +542,7 @@ AC_CHECK_HEADERS(\
 	netipx/ipx.h \
 	sys/un.h \
 ,,,[#include <sys/types.h>
-     #ifdef HAVE_SYS_SOCKET_H
-     # include <sys/socket.h>
-     #endif
+     #include <sys/socket.h>
      #ifdef HAVE_SYS_SOCKETVAR_H
      # include <sys/socketvar.h>
      #endif
@@ -579,19 +562,11 @@ AC_CHECK_HEADERS(\
      # include <netinet/ip.h>
      #endif])
 
-AC_CHECK_HEADERS([netinet/tcp_timer.h netinet/udp_var.h netinet/icmp_var.h netinet/tcp_var.h ],,,
+AC_CHECK_HEADERS([netinet/udp_var.h netinet/icmp_var.h netinet/tcp_var.h ],,,
     [#include <sys/types.h>
-     #ifdef HAVE_ALIAS_H
-     # include <alias.h>
-     #endif
-     #ifdef HAVE_SYS_SOCKET_H
-     # include <sys/socket.h>
-     #endif
+     #include <sys/socket.h>
      #ifdef HAVE_SYS_SOCKETVAR_H
      # include <sys/socketvar.h>
-     #endif
-     #ifdef HAVE_SYS_TIMEOUT_H
-     # include <sys/timeout.h>
      #endif
      #ifdef HAVE_NETINET_IN_H
      # include <netinet/in.h>
@@ -613,18 +588,13 @@ AC_CHECK_HEADERS([netinet/tcp_timer.h netinet/udp_var.h netinet/icmp_var.h netin
      #endif
      #ifdef HAVE_NETINET_TCP_H
      # include <netinet/tcp.h>
-     #endif
-     #ifdef HAVE_NETINET_TCP_TIMER_H
-     #include <netinet/tcp_timer.h>
      #endif])
 
 AC_CHECK_HEADERS([linux/ipx.h linux/irda.h linux/rtnetlink.h],,,
     [#include <sys/types.h>
+     #include <sys/socket.h>
      #ifdef HAVE_ASM_TYPES_H
      # include <asm/types.h>
-     #endif
-     #ifdef HAVE_SYS_SOCKET_H
-     # include <sys/socket.h>
      #endif
      #ifdef HAVE_LINUX_TYPES_H
      # include <linux/types.h>
@@ -632,9 +602,7 @@ AC_CHECK_HEADERS([linux/ipx.h linux/irda.h linux/rtnetlink.h],,,
 
 AC_CHECK_HEADERS([resolv.h],,,
     [#include <sys/types.h>
-     #ifdef HAVE_SYS_SOCKET_H
-     # include <sys/socket.h>
-     #endif
+     #include <sys/socket.h>
      #ifdef HAVE_NETINET_IN_H
      # include <netinet/in.h>
      #endif
@@ -658,9 +626,7 @@ AC_CHECK_HEADERS([pthread_np.h],,,
 #endif])
 
 AC_CHECK_HEADERS([linux/videodev2.h],,,
-[#ifdef HAVE_SYS_TIME_H
-#include <sys/time.h>
-#endif
+[#include <sys/time.h>
 #include <sys/types.h>
 #ifdef HAVE_ASM_TYPES_H
 #include <asm/types.h>
@@ -670,11 +636,9 @@ AC_CHECK_HEADERS([libprocstat.h],,,
 [#ifdef HAVE_SYS_PARAM_H
 #include <sys/param.h>
 #endif
+#include <sys/socket.h>
 #ifdef HAVE_SYS_QUEUE_H
 #include <sys/queue.h>
-#endif
-#ifdef HAVE_SYS_SOCKET_H
-#include <sys/socket.h>
 #endif])
 
 dnl **** Check for working dll ****
@@ -786,27 +750,6 @@ case $host_os in
         AC_CHECK_FUNCS(IOHIDManagerCreate)
         LIBS="$ac_save_LIBS"
     fi
-
-    dnl *** Check for QuickTime ***
-    if test "x$with_quicktime" != "xno"
-    then
-        if test "$ac_cv_header_QuickTime_ImageCompression_h" = "yes"
-        then
-            dnl Make sure we can actually use the QuickTime framework
-            ac_save_LIBS="$LIBS"
-            LIBS="-framework QuickTime -framework ApplicationServices -framework CoreVideo $LIBS"
-            AC_MSG_CHECKING([for the QuickTime framework])
-            AC_LINK_IFELSE([AC_LANG_PROGRAM([[#include <QuickTime/ImageCompression.h>]],[[CodecManagerVersion(NULL);]])],
-                           [AC_MSG_RESULT([yes])
-                            AC_SUBST(QUICKTIME_LIBS,"-framework QuickTime -framework ApplicationServices -framework CoreVideo")
-                            enable_wineqtdecoder=${enable_wineqtdecoder:-yes}],
-                           [AC_MSG_RESULT([no])
-                            ac_cv_header_QuickTime_ImageCompression_h=no])
-            LIBS="$ac_save_LIBS"
-        fi
-    fi
-    WINE_NOTICE_WITH(quicktime,[test "$ac_cv_header_QuickTime_ImageCompression_h" != "yes"],
-                     [QuickTime ${notice_platform}development files not found, video decoding won't be supported.])
 
     if test "$ac_cv_header_Carbon_Carbon_h" = "yes"
     then
@@ -920,10 +863,8 @@ case $host_os in
 esac
 
 enable_winecoreaudio_drv=${enable_winecoreaudio_drv:-no}
-enable_wineqtdecoder=${enable_wineqtdecoder:-no}
 enable_wineandroid_drv=${enable_wineandroid_drv:-no}
 enable_winemac_drv=${enable_winemac_drv:-no}
-test "$ac_cv_header_linux_joystick_h" = "yes" -o "$ac_cv_header_IOKit_hid_IOHIDLib_h" = "yes" || enable_winejoystick_drv=${enable_winejoystick_drv:-no}
 
 dnl Check for cross compiler to build test programs
 AC_SUBST(CROSSTARGET)
@@ -1057,6 +998,105 @@ WINE_NOTICE_WITH(mingw,[test "x$CROSSTARGET" = "x"],
 
 dnl **** External libraries ****
 
+if test "x$with_system_dllpath" != "x" -a "$CROSSCC" != "false"
+then
+    WINE_MINGW_PACKAGE_FLAGS(FAUDIO,[FAudio],[-lFAudio],
+        [WINE_CHECK_MINGW_HEADER(FAudio.h,
+            [WINE_CHECK_MINGW_LIB(FAudio,FAudio_CommitOperationSet,[:],[FAUDIO_PE_CFLAGS=""; FAUDIO_PE_LIBS=""],[$FAUDIO_PE_LIBS])],
+            [FAUDIO_PE_CFLAGS=""; FAUDIO_PE_LIBS=""])])
+    if test "x$FAUDIO_PE_LIBS" = "x"
+    then
+        WINE_NOTICE([FAudio ${notice_platform}MinGW development files not found (or too old); using bundled version.])
+    fi
+
+    WINE_MINGW_PACKAGE_FLAGS(JPEG,[libjpeg],,
+        [WINE_CHECK_MINGW_HEADER(jpeglib.h,
+            [WINE_CHECK_MINGW_LIB(jpeg,jpeg_start_decompress,[:],[JPEG_PE_CFLAGS=""; JPEG_PE_LIBS=""],[$JPEG_PE_LIBS])],
+            [JPEG_PE_CFLAGS=""; JPEG_PE_LIBS=""],
+            [#include <stddef.h>
+             #include <stdio.h>])])
+    if test "x$JPEG_PE_LIBS" = "x"
+    then
+        WINE_NOTICE([libjpeg ${notice_platform}MinGW development files not found; using bundled version.])
+    fi
+
+    WINE_MINGW_PACKAGE_FLAGS(LCMS2,[lcms2],[-llcms2],
+        [WINE_CHECK_MINGW_HEADER(lcms2.h,
+            [WINE_CHECK_MINGW_LIB(lcms2,cmsOpenProfileFromFile,[:],[LCMS2_PE_CFLAGS=""; LCMS2_PE_LIBS=""],[$LCMS2_PE_LIBS])],
+            [LCMS2_PE_CFLAGS=""; LCMS2_PE_LIBS=""])])
+    if test "x$LCMS2_PE_LIBS" = "x"
+    then
+        WINE_NOTICE([liblcms2 ${notice_platform}MinGW development files not found; using bundled version.])
+    fi
+
+    WINE_MINGW_PACKAGE_FLAGS(MPG123,[libmpg123],[-lmpg123],
+        [WINE_CHECK_MINGW_HEADER(mpg123.h,
+            [WINE_CHECK_MINGW_LIB(mpg123,mpg123_feed,[:],[MPG123_PE_CFLAGS=""; MPG123_PE_LIBS=""],[$MPG123_PE_LIBS])],
+            [MPG123_PE_CFLAGS=""; MPG123_PE_LIBS=""])])
+    if test "x$MPG123_PE_LIBS" = "x"
+    then
+        WINE_NOTICE([libmpg123 ${notice_platform}MinGW development files not found (or too old); using bundled version.])
+    fi
+
+    WINE_MINGW_PACKAGE_FLAGS(PNG,[libpng],,
+        [WINE_CHECK_MINGW_HEADER(png.h,
+            [WINE_CHECK_MINGW_LIB(png,png_create_read_struct,[:],[PNG_PE_CFLAGS=""; PNG_PE_LIBS=""],[$PNG_PE_LIBS])],
+            [PNG_PE_CFLAGS=""; PNG_PE_LIBS=""])])
+    if test "x$PNG_PE_LIBS" = "x"
+    then
+        WINE_NOTICE([libpng ${notice_platform}MinGW development files not found; using bundled version.])
+    fi
+
+    WINE_MINGW_PACKAGE_FLAGS(TIFF,[libtiff-4],,
+        [WINE_CHECK_MINGW_HEADER(tiffio.h,
+            [WINE_CHECK_MINGW_LIB(tiff,TIFFClientOpen,[:],[TIFF_PE_CFLAGS=""; TIFF_PE_LIBS=""],[$TIFF_PE_LIBS])],
+            [TIFF_PE_CFLAGS=""; TIFF_PE_LIBS=""])])
+    if test "x$TIFF_PE_LIBS" = "x"
+    then
+        WINE_NOTICE([libtiff ${notice_platform}MinGW development files not found; using bundled version.])
+    fi
+
+    WINE_MINGW_PACKAGE_FLAGS(XML2,[libxml-2.0],[-lxml2],
+        [WINE_CHECK_MINGW_HEADER(libxml/parser.h)
+        WINE_CHECK_MINGW_HEADER(libxml/xmlsave.h)
+        WINE_CHECK_MINGW_HEADER(libxml/SAX2.h)
+        if test "$ac_cv_mingw_header_libxml_parser_h" = "yes" -a "$ac_cv_mingw_header_libxml_xmlsave_h" = "yes" -a "$ac_cv_mingw_header_libxml_SAX2_h" = "yes"
+        then
+            WINE_CHECK_MINGW_LIB(xml2,xmlFirstElementChild,[:],[XML2_PE_CFLAGS=""; XML2_PE_LIBS=""],[$XML2_PE_LIBS])
+        else
+            XML2_PE_CFLAGS=""
+            XML2_PE_LIBS=""
+        fi])
+    if test "x$XML2_PE_LIBS" = "x"
+    then
+        WINE_NOTICE([libxml2 ${notice_platform}MinGW development files not found (or too old); using bundled version.])
+    fi
+
+    WINE_MINGW_PACKAGE_FLAGS(XSLT,[libxslt],[-lxslt],
+        [WINE_CHECK_MINGW_HEADER(libxslt/pattern.h)
+        WINE_CHECK_MINGW_HEADER(libxslt/transform.h)
+        if test "$ac_cv_mingw_header_libxslt_pattern_h" = "yes" -a "$ac_cv_mingw_header_libxslt_transform_h" = "yes"
+        then
+            WINE_CHECK_MINGW_LIB(xslt,xsltCompilePattern,[:],[XSLT_PE_CFLAGS=""; XSLT_PE_LIBS=""],[$XSLT_PE_LIBS])
+        else
+            XSLT_PE_CFLAGS=""
+            XSLT_PE_LIBS=""
+        fi])
+    if test "x$XSLT_PE_LIBS" = "x"
+    then
+        WINE_NOTICE([libxslt ${notice_platform}MinGW development files not found; using bundled version.])
+    fi
+
+    WINE_MINGW_PACKAGE_FLAGS(ZLIB,[zlib],[-lz],
+        [WINE_CHECK_MINGW_HEADER(zlib.h,
+            [WINE_CHECK_MINGW_LIB(z,inflate,[:],[ZLIB_PE_CFLAGS=""; ZLIB_PE_LIBS=""],[$ZLIB_PE_LIBS])],
+            [ZLIB_PE_CFLAGS=""; ZLIB_PE_LIBS=""])])
+    if test "x$ZLIB_PE_LIBS" = "x"
+    then
+        WINE_NOTICE([zlib ${notice_platform}MinGW development files not found; using bundled version.])
+    fi
+fi
+
 WINE_EXTLIB_FLAGS(FAUDIO, faudio, "faudio mfplat mfreadwrite mfuuid propsys", "-I\$(top_srcdir)/libs/faudio/include")
 WINE_EXTLIB_FLAGS(GSM, gsm, gsm, "-I\$(top_srcdir)/libs/gsm/inc")
 WINE_EXTLIB_FLAGS(JPEG, jpeg, jpeg, "-I\$(top_srcdir)/libs/jpeg")
@@ -1065,8 +1105,8 @@ WINE_EXTLIB_FLAGS(LCMS2, lcms2, lcms2, "-I\$(top_srcdir)/libs/lcms2/include")
 WINE_EXTLIB_FLAGS(MPG123, mpg123, mpg123, "-I\$(top_srcdir)/libs/mpg123/src/libmpg123")
 WINE_EXTLIB_FLAGS(PNG, png, "png \$(ZLIB_PE_LIBS)", "-I\$(top_srcdir)/libs/png")
 WINE_EXTLIB_FLAGS(TIFF, tiff, tiff, "-I\$(top_srcdir)/libs/tiff/libtiff")
-WINE_EXTLIB_FLAGS(XML2, libxml2, xml2, "-I\$(top_srcdir)/libs/xml2/include -DLIBXML_STATIC")
-WINE_EXTLIB_FLAGS(XSLT, libxslt, xslt, "-I\$(top_srcdir)/libs/xslt -DLIBXSLT_STATIC")
+WINE_EXTLIB_FLAGS(XML2, xml2, xml2, "-I\$(top_srcdir)/libs/xml2/include -DLIBXML_STATIC")
+WINE_EXTLIB_FLAGS(XSLT, xslt, xslt, "-I\$(top_srcdir)/libs/xslt -DLIBXSLT_STATIC")
 WINE_EXTLIB_FLAGS(ZLIB, zlib, z, "-I\$(top_srcdir)/libs/zlib -DFAR= -DZ_SOLO")
 
 dnl **** Check for pthread ****
@@ -1503,12 +1543,9 @@ then
                  ac_glib2_broken=yes
                  WINE_NOTICE([glib-2.0 pkgconfig configuration is for the wrong architecture, winegstreamer won't be built.])])])])
 fi
-if test "x$with_gstreamer" = xyes -o "x$with_quicktime" = xno -o "x$ac_cv_header_QuickTime_ImageCompression_h" != xyes
-then
-    WINE_NOTICE_WITH(gstreamer,[test "x$ac_glib2_broken" != xyes -a "x$ac_cv_lib_gstreamer_1_0_gst_pad_new" != xyes],
-                     [gstreamer-1.0 base plugins ${notice_platform}development files not found, GStreamer won't be supported.])
-fi
-test "x$ac_cv_lib_gstreamer_1_0_gst_pad_new" = xyes || enable_winegstreamer=${enable_winegstreamer:-no}
+WINE_NOTICE_WITH(gstreamer,[test "x$ac_glib2_broken" != xyes -a "x$ac_cv_lib_gstreamer_1_0_gst_pad_new" != xyes],
+                 [gstreamer-1.0 base plugins ${notice_platform}development files not found, GStreamer won't be supported.],
+                 [enable_winegstreamer])
 
 dnl **** Check for ALSA 1.x ****
 AC_SUBST(ALSA_LIBS,"")
@@ -1711,6 +1748,10 @@ then
     WINE_PACKAGE_FLAGS(NETAPI,[netapi],,,,
       [WINE_CHECK_SONAME(netapi,libnetapi_init,,[AC_DEFINE_UNQUOTED(SONAME_LIBNETAPI,["libnetapi.$LIBEXT"])],[$NETAPI_LIBS])])
 fi
+WINE_NOTICE_WITH(netapi,[test "x$ac_cv_lib_soname_netapi" = "x"],
+                 [libnetapi not found, Samba NetAPI won't be supported.],
+                 [enable_netapi])
+
 
 dnl **** Check for any sound system ****
 if test "x$enable_winealsa_drv$enable_winecoreaudio_drv$enable_winepulse_drv$enable_wineoss_drv$enable_wineandroid_drv" = xnonononono -a \
@@ -1990,16 +2031,6 @@ then
                     [$PTHREAD_LIBS $LDAP_LIBS])],
                 [LDAP_LIBS=""],
                 [#include <ldap.h>])
-            WINE_CHECK_LIB_FUNCS(\
-                ldap_count_references \
-                ldap_first_reference \
-                ldap_next_reference \
-                ldap_parse_reference \
-                ldap_parse_sort_control \
-                ldap_parse_sortresponse_control \
-                ldap_parse_vlv_control \
-                ldap_parse_vlvresponse_control,
-                [$LDAP_LIBS $PTHREAD_LIBS])
         else
             LDAP_LIBS=""
         fi])
@@ -2024,9 +2055,7 @@ AC_CHECK_TYPES([request_sense],,,[#include <linux/cdrom.h>])
 
 AC_CHECK_TYPES([struct xinpgen],,,
 [#include <sys/types.h>
-#ifdef HAVE_SYS_SOCKET_H
 #include <sys/socket.h>
-#endif
 #ifdef HAVE_SYS_SOCKETVAR_H
 #include <sys/socketvar.h>
 #endif
@@ -2044,11 +2073,6 @@ AC_CHECK_TYPES([struct xinpgen],,,
 #endif
 #ifdef HAVE_NETINET_IN_PCB_H
 #include <netinet/in_pcb.h>
-#endif])
-
-AC_CHECK_MEMBERS([struct ff_effect.direction],,,
-[#ifdef HAVE_LINUX_INPUT_H
-#include <linux/input.h>
 #endif])
 
 AC_CACHE_CHECK([for sigaddset],wine_cv_have_sigaddset,
@@ -2082,34 +2106,10 @@ AC_CACHE_CHECK([whether we can use re-entrant gethostbyname_r Linux style],
                 [Define if Linux-style gethostbyname_r and gethostbyaddr_r are available])
    fi
 
-if test "$ac_cv_header_linux_joystick_h" = "yes"
-then
-   AC_CACHE_CHECK([whether linux/joystick.h uses the Linux 2.2+ API],
-   	wine_cv_linux_joystick_22_api,
-	AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[
-	#include <sys/ioctl.h>
-	#include <sys/types.h>
-	#include <linux/joystick.h>
-
-	struct js_event blub;
-	#if !defined(JS_EVENT_AXIS) || !defined(JS_EVENT_BUTTON)
-	#error "no 2.2 header"
-	#endif
-	]], [[/*empty*/]])],[wine_cv_linux_joystick_22_api=yes],[wine_cv_linux_joystick_22_api=no])
-   )
-   if test "$wine_cv_linux_joystick_22_api" = "yes"
-   then
-      AC_DEFINE(HAVE_LINUX_22_JOYSTICK_API, 1,
-                [Define if <linux/joystick.h> defines the Linux 2.2 joystick API])
-   fi
-fi
-
 dnl Check for socket structure members
 AC_CHECK_MEMBERS([struct msghdr.msg_accrights, struct sockaddr_un.sun_len],,,
 [#include <sys/types.h>
-#ifdef HAVE_SYS_SOCKET_H
-# include <sys/socket.h>
-#endif
+#include <sys/socket.h>
 #ifdef HAVE_SYS_UN_H
 # include <sys/un.h>
 #endif])
@@ -2147,83 +2147,15 @@ AC_CHECK_MEMBERS([
 
 dnl Check for sin6_scope_id
 AC_CHECK_MEMBERS([struct sockaddr_in6.sin6_scope_id],,,
-[#ifdef HAVE_SYS_TYPES_H
-#include <sys/types.h>
-#endif
+[#include <sys/types.h>
 #ifdef HAVE_NETINET_IN_H
 #include <netinet/in.h>
 #endif])
 
-dnl Check for struct __res_state
-AC_CHECK_TYPES([struct __res_state],,,
-[#ifdef HAVE_SYS_TYPES_H
-#include <sys/types.h>
-#endif
-#ifdef HAVE_NETINET_IN_H
-#include <netinet/in.h>
-#endif
-#ifdef HAVE_RESOLV_H
-#include <resolv.h>
-#endif])
-
-dnl Check for _u._ext.nscount6
+dnl Check for struct __res_state._u._ext.nscount6
 AC_CHECK_MEMBERS([struct __res_state._u._ext.nscount6],,,
 [#ifdef HAVE_RESOLV_H
 #include <resolv.h>
-#endif])
-
-dnl Check for struct icmpstat
-AC_CHECK_MEMBERS([struct icmpstat.icps_inhist],,,
-[#ifdef HAVE_SYS_TYPES_H
-#include <sys/types.h>
-#endif
-#ifdef HAVE_NETINET_IN_H
-#include <netinet/in.h>
-#endif
-#ifdef HAVE_NETINET_IP_H
-#include <netinet/ip.h>
-#endif
-#ifdef HAVE_NETINET_IP_ICMP_H
-#include <netinet/ip_icmp.h>
-#endif
-#ifdef HAVE_NETINET_ICMP_VAR_H
-#include <netinet/icmp_var.h>
-#endif])
-
-dnl Check for struct icmpstat.icps_outhist
-AC_CHECK_MEMBERS([struct icmpstat.icps_outhist],,,
-[#ifdef HAVE_SYS_TYPES_H
-#include <sys/types.h>
-#endif
-#ifdef HAVE_ALIAS_H
-#include <alias.h>
-#endif
-#ifdef HAVE_SYS_SOCKET_H
-#include <sys/socket.h>
-#endif
-#ifdef HAVE_SYS_SOCKETVAR_H
-#include <sys/socketvar.h>
-#endif
-#ifdef HAVE_SYS_TIMEOUT_H
-#include <sys/timeout.h>
-#endif
-#ifdef HAVE_NETINET_IN_H
-#include <netinet/in.h>
-#endif
-#ifdef HAVE_NETINET_IN_SYSTM_H
-#include <netinet/in_systm.h>
-#endif
-#ifdef HAVE_NETINET_IP_H
-#include <netinet/ip.h>
-#endif
-#ifdef HAVE_NETINET_IP_VAR_H
-#include <netinet/ip_var.h>
-#endif
-#ifdef HAVE_NETINET_IP_ICMP_H
-#include <netinet/ip_icmp.h>
-#endif
-#ifdef HAVE_NETINET_ICMP_VAR_H
-#include <netinet/icmp_var.h>
 #endif])
 
 dnl Check for struct in6_pktinfo
@@ -2234,9 +2166,7 @@ AC_CHECK_MEMBERS([struct in6_pktinfo.ipi6_addr],,,
 
 dnl Check for struct ipstat
 AC_CHECK_MEMBERS([struct ipstat.ips_total],,,
-[#ifdef HAVE_SYS_TYPES_H
-#include <sys/types.h>
-#endif
+[#include <sys/types.h>
 #ifdef HAVE_SYS_SOCKETVAR_H
 #include <sys/socketvar.h>
 #endif
@@ -2255,9 +2185,7 @@ AC_CHECK_MEMBERS([struct ip_stats.ips_total],,,
 
 dnl Check for struct tcpstat
 AC_CHECK_MEMBERS([struct tcpstat.tcps_connattempt],,,
-[#ifdef HAVE_SYS_TYPES_H
-#include <sys/types.h>
-#endif
+[#include <sys/types.h>
 #ifdef HAVE_SYS_SOCKETVAR_H
 #include <sys/socketvar.h>
 #endif
@@ -2279,9 +2207,7 @@ AC_CHECK_MEMBERS([struct tcp_stats.tcps_connattempt],,,
 
 dnl Check for struct udpstat
 AC_CHECK_MEMBERS([struct udpstat.udps_ipackets],,,
-[#ifdef HAVE_SYS_TYPES_H
-#include <sys/types.h>
-#endif
+[#include <sys/types.h>
 #ifdef HAVE_NETINET_IN_H
 #include <netinet/in.h>
 #endif
@@ -2297,9 +2223,7 @@ AC_CHECK_MEMBERS([struct udpstat.udps_ipackets],,,
 
 dnl Check for struct ifreq.ifr_hwaddr
 AC_CHECK_MEMBERS([struct ifreq.ifr_hwaddr],,,
-[#ifdef HAVE_SYS_TYPES_H
-#include <sys/types.h>
-#endif
+[#include <sys/types.h>
 #ifdef HAVE_NET_IF_H
 # include <net/if.h>
 #endif])
@@ -3344,7 +3268,6 @@ WINE_CONFIG_MAKEFILE(dlls/sti)
 WINE_CONFIG_MAKEFILE(dlls/sti/tests)
 WINE_CONFIG_MAKEFILE(dlls/storage.dll16,enable_win16)
 WINE_CONFIG_MAKEFILE(dlls/stress.dll16,enable_win16)
-WINE_CONFIG_MAKEFILE(dlls/strmbase)
 WINE_CONFIG_MAKEFILE(dlls/strmdll)
 WINE_CONFIG_MAKEFILE(dlls/svrapi)
 WINE_CONFIG_MAKEFILE(dlls/sxs)
@@ -3462,14 +3385,12 @@ WINE_CONFIG_MAKEFILE(dlls/winecrt0)
 WINE_CONFIG_MAKEFILE(dlls/wined3d)
 WINE_CONFIG_MAKEFILE(dlls/winegstreamer)
 WINE_CONFIG_MAKEFILE(dlls/winehid.sys)
-WINE_CONFIG_MAKEFILE(dlls/winejoystick.drv)
 WINE_CONFIG_MAKEFILE(dlls/winemac.drv)
 WINE_CONFIG_MAKEFILE(dlls/winemapi)
 WINE_CONFIG_MAKEFILE(dlls/wineoss.drv)
 WINE_CONFIG_MAKEFILE(dlls/wineps.drv)
 WINE_CONFIG_MAKEFILE(dlls/wineps16.drv16,enable_win16)
 WINE_CONFIG_MAKEFILE(dlls/winepulse.drv)
-WINE_CONFIG_MAKEFILE(dlls/wineqtdecoder)
 WINE_CONFIG_MAKEFILE(dlls/wineusb.sys)
 WINE_CONFIG_MAKEFILE(dlls/winevulkan)
 WINE_CONFIG_MAKEFILE(dlls/winex11.drv)
@@ -3593,6 +3514,7 @@ WINE_CONFIG_MAKEFILE(libs/lcms2)
 WINE_CONFIG_MAKEFILE(libs/mfuuid)
 WINE_CONFIG_MAKEFILE(libs/mpg123)
 WINE_CONFIG_MAKEFILE(libs/png)
+WINE_CONFIG_MAKEFILE(libs/strmbase)
 WINE_CONFIG_MAKEFILE(libs/strmiids)
 WINE_CONFIG_MAKEFILE(libs/tiff)
 WINE_CONFIG_MAKEFILE(libs/uuid)

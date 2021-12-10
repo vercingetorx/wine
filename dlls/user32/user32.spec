@@ -223,7 +223,7 @@
 @ stub EnumDisplayDeviceModesW
 @ stdcall EnumDisplayDevicesA(str long ptr long)
 @ stdcall EnumDisplayDevicesW(wstr long ptr long)
-@ stdcall EnumDisplayMonitors(long ptr ptr long)
+@ stdcall EnumDisplayMonitors(long ptr ptr long) NtUserEnumDisplayMonitors
 @ stdcall EnumDisplaySettingsA(str long ptr)
 @ stdcall EnumDisplaySettingsExA(str long ptr long)
 @ stdcall EnumDisplaySettingsExW(wstr long ptr long)
@@ -282,7 +282,7 @@
 @ stdcall GetClipboardViewer() NtUserGetClipboardViewer
 @ stdcall GetComboBoxInfo(long ptr)
 @ stdcall GetCurrentInputMessageSource(ptr)
-@ stdcall GetCursor()
+@ stdcall GetCursor() NtUserGetCursor
 @ stdcall GetCursorFrameInfo(long long long ptr ptr)
 @ stdcall GetCursorInfo(ptr)
 @ stdcall GetCursorPos(ptr)
@@ -291,14 +291,14 @@
 @ stdcall GetDesktopWindow()
 @ stdcall GetDialogBaseUnits()
 @ stdcall GetDisplayAutoRotationPreferences(ptr)
-@ stdcall GetDisplayConfigBufferSizes(long ptr ptr)
+@ stdcall GetDisplayConfigBufferSizes(long ptr ptr) NtUserGetDisplayConfigBufferSizes
 @ stdcall GetDlgCtrlID(long)
 @ stdcall GetDlgItem(long long)
 @ stdcall GetDlgItemInt(long long ptr long)
 @ stdcall GetDlgItemTextA(long long ptr long)
 @ stdcall GetDlgItemTextW(long long ptr long)
-@ stdcall GetDoubleClickTime()
-@ stdcall GetDpiForMonitorInternal(long long ptr ptr)
+@ stdcall GetDoubleClickTime() NtUserGetDoubleClickTime
+@ stdcall GetDpiForMonitorInternal(long long ptr ptr) NtUserGetDpiForMonitor
 @ stdcall GetDpiForSystem()
 @ stdcall GetDpiForWindow(long)
 @ stdcall GetFocus()
@@ -320,7 +320,7 @@
 @ stdcall GetKeyboardLayout(long) NtUserGetKeyboardLayout
 @ stdcall GetKeyboardLayoutList(long ptr) NtUserGetKeyboardLayoutList
 @ stdcall GetKeyboardLayoutNameA(ptr)
-@ stdcall GetKeyboardLayoutNameW(ptr)
+@ stdcall GetKeyboardLayoutNameW(ptr) NtUserGetKeyboardLayoutName
 @ stdcall -import GetKeyboardState(ptr) NtUserGetKeyboardState
 @ stdcall GetKeyboardType(long)
 @ stdcall GetLastActivePopup(long)
@@ -703,7 +703,7 @@
 @ stdcall SetScrollRange(long long long long long)
 @ stdcall SetShellWindow(long)
 @ stdcall SetShellWindowEx (long long)
-@ stdcall SetSysColors(long ptr ptr)
+@ stdcall SetSysColors(long ptr ptr) NtUserSetSysColors
 @ stdcall SetSysColorsTemp(ptr ptr long)
 @ stdcall SetSystemCursor(long long)
 @ stdcall SetSystemMenu(long long)
@@ -736,7 +736,7 @@
 @ stdcall SetWindowsHookExW(long long long long)
 @ stdcall SetWindowsHookW(long ptr)
 @ stdcall ShowCaret(long)
-@ stdcall ShowCursor(long)
+@ stdcall -import ShowCursor(long) NtUserShowCursor
 @ stdcall ShowOwnedPopups(long long)
 @ stdcall ShowScrollBar(long long long)
 @ stub ShowStartGlass

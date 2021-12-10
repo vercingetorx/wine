@@ -33,9 +33,7 @@
 #include <sys/types.h>
 #include <unistd.h>
 #include <errno.h>
-#ifdef HAVE_SYS_TIME_H
-# include <sys/time.h>
-#endif
+#include <sys/time.h>
 #include <time.h>
 #ifdef HAVE_SYS_PARAM_H
 # include <sys/param.h>
@@ -1848,18 +1846,21 @@ static NTSTATUS get_firmware_info( SYSTEM_FIRMWARE_TABLE_INFORMATION *sfti, ULON
 static void get_performance_info( SYSTEM_PERFORMANCE_INFORMATION *info )
 {
     unsigned long long totalram = 0, freeram = 0, totalswap = 0, freeswap = 0;
-    FILE *fp;
 
     memset( info, 0, sizeof(*info) );
 
 #if defined(linux)
-    if ((fp = fopen("/proc/uptime", "r")))
     {
-        double uptime, idle_time;
+        FILE *fp;
 
-        fscanf(fp, "%lf %lf", &uptime, &idle_time);
-        fclose(fp);
-        info->IdleTime.QuadPart = 10000000 * idle_time;
+        if ((fp = fopen("/proc/uptime", "r")))
+        {
+            double uptime, idle_time;
+
+            fscanf(fp, "%lf %lf", &uptime, &idle_time);
+            fclose(fp);
+            info->IdleTime.QuadPart = 10000000 * idle_time;
+        }
     }
 #elif defined(__FreeBSD__) || defined(__FreeBSD_kernel__)
     {
@@ -1885,27 +1886,31 @@ static void get_performance_info( SYSTEM_PERFORMANCE_INFORMATION *info )
 #endif
 
 #ifdef linux
-    if ((fp = fopen("/proc/meminfo", "r")))
     {
-        unsigned long long value;
-        char line[64];
+        FILE *fp;
 
-        while (fgets(line, sizeof(line), fp))
+        if ((fp = fopen("/proc/meminfo", "r")))
         {
-            if(sscanf(line, "MemTotal: %llu kB", &value) == 1)
-                totalram += value * 1024;
-            else if(sscanf(line, "MemFree: %llu kB", &value) == 1)
-                freeram += value * 1024;
-            else if(sscanf(line, "SwapTotal: %llu kB", &value) == 1)
-                totalswap += value * 1024;
-            else if(sscanf(line, "SwapFree: %llu kB", &value) == 1)
-                freeswap += value * 1024;
-            else if (sscanf(line, "Buffers: %llu", &value))
-                freeram += value * 1024;
-            else if (sscanf(line, "Cached: %llu", &value))
-                freeram += value * 1024;
+            unsigned long long value;
+            char line[64];
+
+            while (fgets(line, sizeof(line), fp))
+            {
+                if(sscanf(line, "MemTotal: %llu kB", &value) == 1)
+                    totalram += value * 1024;
+                else if(sscanf(line, "MemFree: %llu kB", &value) == 1)
+                    freeram += value * 1024;
+                else if(sscanf(line, "SwapTotal: %llu kB", &value) == 1)
+                    totalswap += value * 1024;
+                else if(sscanf(line, "SwapFree: %llu kB", &value) == 1)
+                    freeswap += value * 1024;
+                else if (sscanf(line, "Buffers: %llu", &value))
+                    freeram += value * 1024;
+                else if (sscanf(line, "Cached: %llu", &value))
+                    freeram += value * 1024;
+            }
+            fclose(fp);
         }
-        fclose(fp);
     }
 #elif defined(__FreeBSD__) || defined(__FreeBSD_kernel__) || defined(__NetBSD__) || \
     defined(__OpenBSD__) || defined(__DragonFly__) || defined(__APPLE__)
@@ -3506,6 +3511,51 @@ static NTSTATUS fill_battery_state( SYSTEM_BATTERY_STATE *bs )
         bs->EstimatedTime = (ULONG)remain;
 
     CFRelease( batteries );
+    return STATUS_SUCCESS;
+}
+
+#elif defined(__FreeBSD__)
+
+#include <dev/acpica/acpiio.h>
+
+static NTSTATUS fill_battery_state( SYSTEM_BATTERY_STATE *bs )
+{
+    size_t len;
+    int state = 0;
+    int rate_mW = 0;
+    int time_mins = -1;
+    int life_percent = 0;
+
+    bs->BatteryPresent = TRUE;
+    len = sizeof(state);
+    bs->BatteryPresent &= !sysctlbyname("hw.acpi.battery.state", &state, &len, NULL, 0);
+    len = sizeof(rate_mW);
+    bs->BatteryPresent &= !sysctlbyname("hw.acpi.battery.rate", &rate_mW, &len, NULL, 0);
+    len = sizeof(time_mins);
+    bs->BatteryPresent &= !sysctlbyname("hw.acpi.battery.time", &time_mins, &len, NULL, 0);
+    len = sizeof(life_percent);
+    bs->BatteryPresent &= !sysctlbyname("hw.acpi.battery.life", &life_percent, &len, NULL, 0);
+
+    if (bs->BatteryPresent)
+    {
+        bs->AcOnLine = (time_mins == -1);
+        bs->Charging = state & ACPI_BATT_STAT_CHARGING;
+        bs->Discharging = state & ACPI_BATT_STAT_DISCHARG;
+
+        bs->Rate = (rate_mW >= 0 ? -rate_mW : 0);
+        if (time_mins >= 0 && life_percent > 0)
+        {
+            bs->EstimatedTime = 60 * time_mins;
+            bs->RemainingCapacity = bs->EstimatedTime * rate_mW / 3600;
+            bs->MaxCapacity = bs->RemainingCapacity * 100 / life_percent;
+        }
+        else
+        {
+            bs->EstimatedTime = ~0u;
+            bs->RemainingCapacity = life_percent;
+            bs->MaxCapacity = 100;
+        }
+    }
     return STATUS_SUCCESS;
 }
 

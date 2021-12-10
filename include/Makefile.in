@@ -245,6 +245,7 @@ SOURCES = \
 	dmusics.h \
 	docobj.idl \
 	docobjectservice.idl \
+	documenttarget.idl \
 	downloadmgr.idl \
 	dpaddr.h \
 	dpfilter.h \
@@ -525,6 +526,7 @@ SOURCES = \
 	mtxdm.h \
 	mulres.idl \
 	multimon.h \
+	namespaceapi.h \
 	natupnp.idl \
 	nb30.h \
 	ncrypt.h \
@@ -591,6 +593,7 @@ SOURCES = \
 	poppack.h \
 	powrprof.h \
 	prntvpt.h \
+	processthreadsapi.h \
 	profinfo.h \
 	proofofpossessioncookieinfo.idl \
 	propidl.idl \
@@ -777,6 +780,7 @@ SOURCES = \
 	windows.globalization.idl \
 	windows.h \
 	windows.media.devices.idl \
+	windows.media.idl \
 	windows.media.speechsynthesis.idl \
 	windows.storage.streams.idl \
 	windows.system.idl \
@@ -875,4 +879,6 @@ SOURCES = \
 	xmldso.idl \
 	xmldsodid.h \
 	xmllite.idl \
+	xpsobjectmodel.idl \
+	xpsobjectmodel_1.idl \
 	zmouse.h
