@@ -1,9 +1,7 @@
 name: build-stable-vaniglia
 on:
   push:
-    branches: [ stable ]
-  pull_request:
-    branches: [ stable ]
+    branches: [ cx ]
   workflow_dispatch:
 jobs:
   build:
@@ -29,21 +27,13 @@ jobs:
         working-directory: /home/runner/work/build-tools/runners/vaniglia
         run: chmod +x *
       
-      - name: Launch fetch.sh
+      - name: Launch cx_fetch.sh
         working-directory: /home/runner/work/build-tools/runners/vaniglia
-        run: ./fetch.sh -r ${{ steps.vars.outputs.release_version }}
+        run: ./cx_fetch.sh -r ${{ steps.vars.outputs.release_version }}
       
       - name: Launch environment.sh
         working-directory: /home/runner/work/build-tools/runners/vaniglia
         run: ./environment.sh
-      
-      - name: Launch patch-josh-flat-theme.sh
-        working-directory: /home/runner/work/build-tools/runners/vaniglia
-        run: ./patch-josh-flat-theme.sh
-      
-      - name: Launch patch-staging.sh
-        working-directory: /home/runner/work/build-tools/runners/vaniglia
-        run: ./patch-staging.sh -r ${{ steps.vars.outputs.release_version }}
       
       - name: Launch build-tools.sh
         working-directory: /home/runner/work/build-tools/runners/vaniglia
@@ -59,15 +49,14 @@ jobs:
       
       - name: Launch package.sh
         working-directory: /home/runner/work/build-tools/runners/vaniglia
-        run: ./package.sh
-        
+        run: ./package.sh -s cx
+          
       - uses: "marvinpinto/action-automatic-releases@latest"
         with:
           repo_token: "${{ secrets.GITHUB_TOKEN }}"
           draft: false
           prerelease: false
-          automatic_release_tag: "${{ steps.vars.outputs.release_version }}"
-          title: "Vaniglia ${{ steps.vars.outputs.release_version }}"
-          files: "/home/runner/work/wine/wine/vaniglia-${{ steps.vars.outputs.release_version }}-x86_64.tar.gz"
-          
+          automatic_release_tag: "${{ steps.vars.outputs.release_version }}-cx"
+          title: "Vaniglia ${{ steps.vars.outputs.release_version }} CX"
+          files: "/home/runner/work/wine/wine/vaniglia-${{ steps.vars.outputs.release_version }}-cx-x86_64.tar.gz"
 
