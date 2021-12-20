@@ -27,9 +27,9 @@ jobs:
         working-directory: /home/runner/work/build-tools/runners/vaniglia
         run: chmod +x *
       
-      - name: Launch cx_fetch.sh
+      - name: Launch cx-fetch.sh
         working-directory: /home/runner/work/build-tools/runners/vaniglia
-        run: ./cx_fetch.sh -r ${{ steps.vars.outputs.release_version }}
+        run: ./cx-fetch.sh -r ${{ steps.vars.outputs.release_version }}
       
       - name: Launch environment.sh
         working-directory: /home/runner/work/build-tools/runners/vaniglia
