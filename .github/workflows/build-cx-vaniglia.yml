@@ -1,4 +1,4 @@
-name: build-stable-vaniglia
+name: build-cx-vaniglia
 on:
   push:
     branches: [ cx ]
@@ -9,7 +9,7 @@ jobs:
     steps:
       - uses: actions/checkout@v2
         with:
-          ref: stable
+          ref: cx
           path: bottlesdevs_wine
 
       - name: Get release version
