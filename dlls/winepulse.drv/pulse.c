@@ -260,9 +260,6 @@ static void pulse_underflow_callback(pa_stream *s, void *userdata)
     struct pulse_stream *stream = userdata;
     WARN("%p: Underflow\n", userdata);
     stream->just_underran = TRUE;
-    /* re-sync */
-    stream->pa_offs_bytes = stream->lcl_offs_bytes;
-    stream->pa_held_bytes = stream->held_bytes;
 }
 
 static void pulse_started_callback(pa_stream *s, void *userdata)
@@ -879,7 +876,7 @@ static NTSTATUS pulse_create_stream(void *args)
             stream->alloc_size = stream->real_bufsize_bytes =
                 stream->bufsize_frames * 2 * pa_frame_size(&stream->ss);
             if (NtAllocateVirtualMemory(GetCurrentProcess(), (void **)&stream->local_buffer,
-                                        0, &stream->real_bufsize_bytes, MEM_COMMIT, PAGE_READWRITE))
+                                        0, &stream->alloc_size, MEM_COMMIT, PAGE_READWRITE))
                 hr = E_OUTOFMEMORY;
         } else {
             UINT32 i, capture_packets;
@@ -1677,6 +1674,9 @@ static NTSTATUS pulse_release_render_buffer(void *args)
     }
     stream->clock_written += written_bytes;
     stream->locked = 0;
+
+    /* push as much data as we can to pulseaudio too */
+    pulse_write(stream);
 
     TRACE("Released %u, held %lu\n", params->written_frames, stream->held_bytes / pa_frame_size(&stream->ss));
 
