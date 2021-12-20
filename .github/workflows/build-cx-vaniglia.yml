@@ -49,7 +49,9 @@ jobs:
       
       - name: Launch package.sh
         working-directory: /home/runner/work/build-tools/runners/vaniglia
-        run: ./package.sh -s cx
+        run: |
+          ./package.sh -s cx
+          mv /home/runner/work/wine/wine/vaniglia-*.tar.gz /home/runner/work/wine/wine/vaniglia-${{ steps.vars.outputs.release_version }}-cx-x86_64.tar.gz
           
       - uses: "marvinpinto/action-automatic-releases@latest"
         with:
