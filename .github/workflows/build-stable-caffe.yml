@@ -53,4 +53,3 @@ jobs:
           title: "Caffe ${{ steps.vars.outputs.release_version }}"
           files: "/tmp/caffe-${{ steps.vars.outputs.release_version }}-x86_64.tar.gz"
           
-
