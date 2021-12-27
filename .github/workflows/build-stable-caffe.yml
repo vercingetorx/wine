@@ -45,7 +45,7 @@ jobs:
           cd /tmp/wine-tkg/
           tar --use-compress-program=unzstd -xvf wine-tkg-*
           mv usr /tmp/caffe-${{ steps.vars.outputs.release_version }}-x86_64
-          cd /tmp && tar cJvf caffe-${{ steps.vars.outputs.release_version }}-x86_64.tar.gz caffe-${{ steps.vars.outputs.release_version }}-x86_64
+          cd /tmp && tar cJvf caffe-${{ steps.vars.outputs.release_version }}-x86_64.tar.xz caffe-${{ steps.vars.outputs.release_version }}-x86_64
         
       - uses: "marvinpinto/action-automatic-releases@latest"
         with:
@@ -54,5 +54,5 @@ jobs:
           prerelease: false
           automatic_release_tag: "caffe-${{ steps.vars.outputs.release_version }}"
           title: "Caffe ${{ steps.vars.outputs.release_version }}"
-          files: "/tmp/caffe-${{ steps.vars.outputs.release_version }}-x86_64.tar.gz"
+          files: "/tmp/caffe-${{ steps.vars.outputs.release_version }}-x86_64.tar.xz"
           
