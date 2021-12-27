@@ -16,7 +16,7 @@ jobs:
           
           # Enable multilib for i386 deps
           echo -e "[multilib]\nInclude = /etc/pacman.d/mirrorlist" >> /etc/pacman.conf
-          pacman -Syu --noconfirm base-devel sudo git
+          pacman -Syu --noconfirm base-devel sudo git wget
           
           # Clone wine-tkg-git repo
           git clone https://github.com/Frogging-Family/wine-tkg-git
@@ -40,7 +40,8 @@ jobs:
           
       - name: Package
         run: |
-          cd /tmp/wine-tkg/wine-tkg-*
+          cd /tmp/wine-tkg/
+          tar --use-compress-program=unzstd -xvf wine-tkg-*
           mv usr /tmp/caffe-${{ steps.vars.outputs.release_version }}-x86_64
           cd /tmp && tar zcvf caffe-${{ steps.vars.outputs.release_version }}-x86_64.tar.gz caffe-${{ steps.vars.outputs.release_version }}-x86_64
         
