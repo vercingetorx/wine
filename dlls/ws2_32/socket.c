@@ -419,8 +419,6 @@ static BOOL socket_list_remove( SOCKET socket )
     return FALSE;
 }
 
-#define MAX_SOCKETS_PER_PROCESS      128     /* reasonable guess */
-#define MAX_UDP_DATAGRAM             1024
 static INT WINAPI WSA_DefaultBlockingHook( FARPROC x );
 
 int num_startup;
@@ -572,29 +570,34 @@ BOOL WINAPI DllMain( HINSTANCE instance, DWORD reason, void *reserved )
 /***********************************************************************
  *      WSAStartup		(WS2_32.115)
  */
-int WINAPI WSAStartup(WORD wVersionRequested, LPWSADATA lpWSAData)
+int WINAPI WSAStartup( WORD version, WSADATA *data )
 {
-    TRACE("verReq=%x\n", wVersionRequested);
+    TRACE( "version %#x\n", version );
 
-    if (LOBYTE(wVersionRequested) < 1)
+    if (data)
+    {
+        if (!LOBYTE(version) || LOBYTE(version) > 2
+                || (LOBYTE(version) == 2 && HIBYTE(version) > 2))
+            data->wVersion = MAKEWORD(2, 2);
+        else if (LOBYTE(version) == 1 && HIBYTE(version) > 1)
+            data->wVersion = MAKEWORD(1, 1);
+        else
+            data->wVersion = version;
+        data->wHighVersion = MAKEWORD(2, 2);
+        strcpy( data->szDescription, "WinSock 2.0" );
+        strcpy( data->szSystemStatus, "Running" );
+        data->iMaxSockets = (LOBYTE(version) == 1 ? 32767 : 0);
+        data->iMaxUdpDg = (LOBYTE(version) == 1 ? 65467 : 0);
+        /* don't fill lpVendorInfo */
+    }
+
+    if (!LOBYTE(version))
         return WSAVERNOTSUPPORTED;
 
-    if (!lpWSAData) return WSAEINVAL;
+    if (!data) return WSAEFAULT;
 
     num_startup++;
-
-    /* that's the whole of the negotiation for now */
-    lpWSAData->wVersion = wVersionRequested;
-    /* return winsock information */
-    lpWSAData->wHighVersion = 0x0202;
-    strcpy(lpWSAData->szDescription, "WinSock 2.0" );
-    strcpy(lpWSAData->szSystemStatus, "Running" );
-    lpWSAData->iMaxSockets = MAX_SOCKETS_PER_PROCESS;
-    lpWSAData->iMaxUdpDg = MAX_UDP_DATAGRAM;
-    /* don't do anything with lpWSAData->lpVendorInfo */
-    /* (some apps don't allocate the space for this field) */
-
-    TRACE("succeeded starts: %d\n", num_startup);
+    TRACE( "increasing startup count to %d\n", num_startup );
     return 0;
 }
 
@@ -1142,6 +1145,8 @@ int WINAPI bind( SOCKET s, const struct sockaddr *addr, int len )
             return -1;
         status = io.u.Status;
     }
+
+    if (!status) TRACE( "successfully bound to address %s\n", debugstr_sockaddr( ret_addr ));
 
     free( params );
     free( ret_addr );
@@ -2364,13 +2369,8 @@ static int add_fd_to_set( SOCKET fd, struct fd_set *set )
             return 0;
     }
 
-    if (set->fd_count < FD_SETSIZE)
-    {
-        set->fd_array[set->fd_count++] = fd;
-        return 1;
-    }
-
-    return 0;
+    set->fd_array[set->fd_count++] = fd;
+    return 1;
 }
 
 
@@ -2380,9 +2380,9 @@ static int add_fd_to_set( SOCKET fd, struct fd_set *set )
 int WINAPI select( int count, fd_set *read_ptr, fd_set *write_ptr,
                    fd_set *except_ptr, const struct timeval *timeout)
 {
-    char buffer[offsetof( struct afd_poll_params, sockets[FD_SETSIZE * 3] )] = {0};
-    struct afd_poll_params *params = (struct afd_poll_params *)buffer;
-    struct fd_set read, write, except;
+    struct fd_set *read_input = NULL;
+    struct afd_poll_params *params;
+    unsigned int poll_count = 0;
     ULONG params_size, i, j;
     SOCKET poll_socket = 0;
     IO_STATUS_BLOCK io;
@@ -2392,99 +2392,126 @@ int WINAPI select( int count, fd_set *read_ptr, fd_set *write_ptr,
 
     TRACE( "read %p, write %p, except %p, timeout %p\n", read_ptr, write_ptr, except_ptr, timeout );
 
-    FD_ZERO( &read );
-    FD_ZERO( &write );
-    FD_ZERO( &except );
-    if (read_ptr) read.fd_count = read_ptr->fd_count;
-    if (write_ptr) write.fd_count = write_ptr->fd_count;
-    if (except_ptr) except.fd_count = except_ptr->fd_count;
-
     if (!(sync_event = get_sync_event())) return -1;
 
-    if (timeout)
-        params->timeout = timeout->tv_sec * -10000000 + timeout->tv_usec * -10;
-    else
-        params->timeout = TIMEOUT_INFINITE;
+    if (read_ptr) poll_count += read_ptr->fd_count;
+    if (write_ptr) poll_count += write_ptr->fd_count;
+    if (except_ptr) poll_count += except_ptr->fd_count;
 
-    for (i = 0; i < read.fd_count; ++i)
-    {
-        params->sockets[params->count].socket = read.fd_array[i] = read_ptr->fd_array[i];
-        params->sockets[params->count].flags = AFD_POLL_READ | AFD_POLL_ACCEPT | AFD_POLL_HUP;
-        ++params->count;
-        poll_socket = read.fd_array[i];
-    }
-
-    for (i = 0; i < write.fd_count; ++i)
-    {
-        params->sockets[params->count].socket = write.fd_array[i] = write_ptr->fd_array[i];
-        params->sockets[params->count].flags = AFD_POLL_WRITE;
-        ++params->count;
-        poll_socket = write.fd_array[i];
-    }
-
-    for (i = 0; i < except.fd_count; ++i)
-    {
-        params->sockets[params->count].socket = except.fd_array[i] = except_ptr->fd_array[i];
-        params->sockets[params->count].flags = AFD_POLL_OOB | AFD_POLL_CONNECT_ERR;
-        ++params->count;
-        poll_socket = except.fd_array[i];
-    }
-
-    if (!params->count)
+    if (!poll_count)
     {
         SetLastError( WSAEINVAL );
         return -1;
     }
 
-    params_size = offsetof( struct afd_poll_params, sockets[params->count] );
+    params_size = offsetof( struct afd_poll_params, sockets[poll_count] );
+    if (!(params = calloc( params_size, 1 )))
+    {
+        SetLastError( WSAENOBUFS );
+        return -1;
+    }
+
+    if (timeout)
+        params->timeout = (LONGLONG)timeout->tv_sec * -10000000 + (LONGLONG)timeout->tv_usec * -10;
+    else
+        params->timeout = TIMEOUT_INFINITE;
+
+    if (read_ptr)
+    {
+        unsigned int read_size = offsetof( struct fd_set, fd_array[read_ptr->fd_count] );
+
+        if (!(read_input = malloc( read_size )))
+        {
+            free( params );
+            SetLastError( WSAENOBUFS );
+            return -1;
+        }
+        memcpy( read_input, read_ptr, read_size );
+
+        for (i = 0; i < read_ptr->fd_count; ++i)
+        {
+            params->sockets[params->count].socket = read_ptr->fd_array[i];
+            params->sockets[params->count].flags = AFD_POLL_READ | AFD_POLL_ACCEPT | AFD_POLL_HUP;
+            ++params->count;
+            poll_socket = read_ptr->fd_array[i];
+        }
+    }
+
+    if (write_ptr)
+    {
+        for (i = 0; i < write_ptr->fd_count; ++i)
+        {
+            params->sockets[params->count].socket = write_ptr->fd_array[i];
+            params->sockets[params->count].flags = AFD_POLL_WRITE;
+            ++params->count;
+            poll_socket = write_ptr->fd_array[i];
+        }
+    }
+
+    if (except_ptr)
+    {
+        for (i = 0; i < except_ptr->fd_count; ++i)
+        {
+            params->sockets[params->count].socket = except_ptr->fd_array[i];
+            params->sockets[params->count].flags = AFD_POLL_OOB | AFD_POLL_CONNECT_ERR;
+            ++params->count;
+            poll_socket = except_ptr->fd_array[i];
+        }
+    }
+
+    assert( params->count == poll_count );
 
     status = NtDeviceIoControlFile( (HANDLE)poll_socket, sync_event, NULL, NULL, &io,
                                     IOCTL_AFD_POLL, params, params_size, params, params_size );
     if (status == STATUS_PENDING)
     {
         if (WaitForSingleObject( sync_event, INFINITE ) == WAIT_FAILED)
+        {
+            free( read_input );
+            free( params );
             return -1;
+        }
         status = io.u.Status;
     }
     if (status == STATUS_TIMEOUT) status = STATUS_SUCCESS;
     if (!status)
     {
         /* pointers may alias, so clear them all first */
-        if (read_ptr) FD_ZERO( read_ptr );
-        if (write_ptr) FD_ZERO( write_ptr );
-        if (except_ptr) FD_ZERO( except_ptr );
+        if (read_ptr) read_ptr->fd_count = 0;
+        if (write_ptr) write_ptr->fd_count = 0;
+        if (except_ptr) except_ptr->fd_count = 0;
 
         for (i = 0; i < params->count; ++i)
         {
             unsigned int flags = params->sockets[i].flags;
             SOCKET s = params->sockets[i].socket;
 
-            for (j = 0; j < read.fd_count; ++j)
+            if (read_input)
             {
-                if (read.fd_array[j] == s
-                        && (flags & (AFD_POLL_READ | AFD_POLL_ACCEPT | AFD_POLL_HUP | AFD_POLL_CLOSE)))
+                for (j = 0; j < read_input->fd_count; ++j)
                 {
-                    ret_count += add_fd_to_set( s, read_ptr );
-                    flags &= ~AFD_POLL_CLOSE;
+                    if (read_input->fd_array[j] == s
+                            && (flags & (AFD_POLL_READ | AFD_POLL_ACCEPT | AFD_POLL_HUP | AFD_POLL_CLOSE)))
+                    {
+                        ret_count += add_fd_to_set( s, read_ptr );
+                        flags &= ~AFD_POLL_CLOSE;
+                    }
                 }
             }
 
             if (flags & AFD_POLL_CLOSE)
                 status = STATUS_INVALID_HANDLE;
 
-            for (j = 0; j < write.fd_count; ++j)
-            {
-                if (write.fd_array[j] == s && (flags & AFD_POLL_WRITE))
-                    ret_count += add_fd_to_set( s, write_ptr );
-            }
+            if (flags & AFD_POLL_WRITE)
+                ret_count += add_fd_to_set( s, write_ptr );
 
-            for (j = 0; j < except.fd_count; ++j)
-            {
-                if (except.fd_array[j] == s && (flags & (AFD_POLL_OOB | AFD_POLL_CONNECT_ERR)))
-                    ret_count += add_fd_to_set( s, except_ptr );
-            }
+            if (flags & (AFD_POLL_OOB | AFD_POLL_CONNECT_ERR))
+                ret_count += add_fd_to_set( s, except_ptr );
         }
     }
+
+    free( read_input );
+    free( params );
 
     SetLastError( NtStatusToWSAError( status ) );
     return status ? -1 : ret_count;
@@ -2550,7 +2577,7 @@ int WINAPI WSAPoll( WSAPOLLFD *fds, ULONG count, int timeout )
         return SOCKET_ERROR;
     }
 
-    params->timeout = (timeout >= 0 ? timeout * -10000 : TIMEOUT_INFINITE);
+    params->timeout = (timeout >= 0 ? (LONGLONG)timeout * -10000 : TIMEOUT_INFINITE);
 
     for (i = 0; i < count; ++i)
     {

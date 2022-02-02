@@ -107,7 +107,7 @@ static ULONG WINAPI HTMLDOMChildrenCollectionEnum_Release(IEnumVARIANT *iface)
 
 static ULONG get_enum_len(HTMLDOMChildrenCollectionEnum *This)
 {
-    ULONG len;
+    UINT32 len;
     nsresult nsres;
 
     nsres = nsIDOMNodeList_GetLength(This->col->nslist, &len);
@@ -800,6 +800,7 @@ static HRESULT WINAPI HTMLDOMNode_cloneNode(IHTMLDOMNode *iface, VARIANT_BOOL fD
     }
 
     hres = This->vtbl->clone(This, nsnode, &new_node);
+    nsIDOMNode_Release(nsnode);
     if(FAILED(hres))
         return hres;
 

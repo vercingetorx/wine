@@ -70,6 +70,12 @@ BOOL is_dualshock4_gamepad(WORD vid, WORD pid)
     return FALSE;
 }
 
+BOOL is_dualsense_gamepad(WORD vid, WORD pid)
+{
+    if (vid == 0x054c && pid == 0x0ce6) return TRUE;
+    return FALSE;
+}
+
 struct mouse_device
 {
     struct unix_device unix_device;
@@ -95,7 +101,7 @@ static void mouse_stop(struct unix_device *iface)
 {
 }
 
-static NTSTATUS mouse_haptics_start(struct unix_device *iface, DWORD duration,
+static NTSTATUS mouse_haptics_start(struct unix_device *iface, UINT duration,
                                     USHORT rumble_intensity, USHORT buzz_intensity)
 {
     return STATUS_NOT_SUPPORTED;
@@ -178,7 +184,7 @@ static void keyboard_stop(struct unix_device *iface)
 {
 }
 
-static NTSTATUS keyboard_haptics_start(struct unix_device *iface, DWORD duration,
+static NTSTATUS keyboard_haptics_start(struct unix_device *iface, UINT duration,
                                        USHORT rumble_intensity, USHORT buzz_intensity)
 {
     return STATUS_NOT_SUPPORTED;

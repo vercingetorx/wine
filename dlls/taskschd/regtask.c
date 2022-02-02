@@ -158,7 +158,7 @@ static HRESULT WINAPI regtask_get_State(IRegisteredTask *iface, TASK_STATE *stat
 
     if (!state) return E_POINTER;
 
-    return SchRpcGetTaskInfo(regtask->path, SCH_FLAG_STATE, &enabled, state);
+    return SchRpcGetTaskInfo(regtask->path, SCH_FLAG_STATE, &enabled, (DWORD *)state);
 }
 
 static HRESULT WINAPI regtask_get_Enabled(IRegisteredTask *iface, VARIANT_BOOL *v_enabled)
@@ -465,6 +465,7 @@ static HRESULT WINAPI regtasks_Invoke(IRegisteredTaskCollection *iface, DISPID d
 static HRESULT WINAPI regtasks_get_Count(IRegisteredTaskCollection *iface, LONG *count)
 {
     FIXME("%p,%p: stub\n", iface, count);
+    if (count) *count = 0;
     return E_NOTIMPL;
 }
 

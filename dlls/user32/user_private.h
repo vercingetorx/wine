@@ -120,7 +120,7 @@ struct rawinput_thread_data
     RAWINPUT buffer[1]; /* rawinput message data buffer */
 };
 
-extern INT global_key_state_counter DECLSPEC_HIDDEN;
+extern LONG global_key_state_counter DECLSPEC_HIDDEN;
 extern BOOL (WINAPI *imm_register_window)(HWND) DECLSPEC_HIDDEN;
 extern void (WINAPI *imm_unregister_window)(HWND) DECLSPEC_HIDDEN;
 #define WM_IME_INTERNAL 0x287
@@ -296,16 +296,12 @@ typedef struct
 extern int bitmap_info_size( const BITMAPINFO * info, WORD coloruse ) DECLSPEC_HIDDEN;
 extern BOOL get_icon_size( HICON handle, SIZE *size ) DECLSPEC_HIDDEN;
 
-/* Mingw's assert() imports MessageBoxA and gets confused by user32 exporting it */
-#ifdef __MINGW32__
-#undef assert
-#define assert(expr) ((void)0)
-#endif
-
 extern struct user_api_hook *user_api DECLSPEC_HIDDEN;
+LRESULT WINAPI USER_DefDlgProc(HWND, UINT, WPARAM, LPARAM, BOOL) DECLSPEC_HIDDEN;
 LRESULT WINAPI USER_ScrollBarProc(HWND, UINT, WPARAM, LPARAM, BOOL) DECLSPEC_HIDDEN;
 void WINAPI USER_ScrollBarDraw(HWND, HDC, INT, enum SCROLL_HITTEST,
                                const struct SCROLL_TRACKING_INFO *, BOOL, BOOL, RECT *, INT, INT,
                                INT, BOOL) DECLSPEC_HIDDEN;
+void SCROLL_SetStandardScrollPainted(HWND hwnd, INT bar, BOOL visible);
 
 #endif /* __WINE_USER_PRIVATE_H */

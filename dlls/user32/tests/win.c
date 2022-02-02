@@ -34,10 +34,6 @@
 
 #include "wine/test.h"
 
-#ifndef SPI_GETDESKWALLPAPER
-#define SPI_GETDESKWALLPAPER 0x0073
-#endif
-
 #ifndef WM_SYSTIMER
 #define WM_SYSTIMER 0x0118
 #endif
@@ -106,22 +102,6 @@ static void flush_events( BOOL remove_messages )
     }
 }
 
-static BOOL wait_for_event(HANDLE event, int timeout)
-{
-    DWORD end_time = GetTickCount() + timeout;
-    MSG msg;
-
-    do {
-        if(MsgWaitForMultipleObjects(1, &event, FALSE, timeout, QS_ALLINPUT) == WAIT_OBJECT_0)
-            return TRUE;
-        while(PeekMessageA(&msg, 0, 0, 0, PM_REMOVE))
-            DispatchMessageA(&msg);
-        timeout = end_time - GetTickCount();
-    }while(timeout > 0);
-
-    return FALSE;
-}
-
 /* check the values returned by the various parent/owner functions on a given window */
 static void check_parents( HWND hwnd, HWND ga_parent, HWND gwl_parent, HWND get_parent,
                            HWND gw_owner, HWND ga_root, HWND ga_root_owner )
@@ -170,8 +150,14 @@ static void check_active_state_(const char *file, int line,
     ok_(file, line)(focus == GetFocus(), "GetFocus() = %p\n", GetFocus());
 }
 
-static BOOL ignore_message( UINT message )
+static BOOL ignore_message( UINT message, HWND hwnd )
 {
+    WCHAR buffer[256];
+
+    if (GetClassNameW( hwnd, buffer, ARRAY_SIZE(buffer) ) == 22 &&
+        !wcscmp( buffer, L"UserAdapterWindowClass" ))
+        return TRUE;
+
     /* these are always ignored */
     return (message >= 0xc000 ||
             message == WM_GETICON ||
@@ -179,8 +165,29 @@ static BOOL ignore_message( UINT message )
             message == WM_TIMER ||
             message == WM_SYSTIMER ||
             message == WM_TIMECHANGE ||
-            message == WM_DEVICECHANGE ||
-            message == 0x0060 /* undocumented, used by Win10 1709+ */);
+            message == WM_DEVICECHANGE);
+}
+
+static DWORD wait_for_events( DWORD count, HANDLE *events, DWORD timeout )
+{
+    DWORD ret, end = GetTickCount() + timeout;
+    MSG msg;
+
+    while ((ret = MsgWaitForMultipleObjects( count, events, FALSE, timeout, QS_ALLINPUT )) <= count)
+    {
+        while (PeekMessageA( &msg, 0, 0, 0, PM_REMOVE ))
+        {
+            TranslateMessage( &msg );
+            DispatchMessageA( &msg );
+        }
+        if (ret < count) return ret;
+        if (timeout == INFINITE) continue;
+        if (end <= GetTickCount()) timeout = 0;
+        else timeout = end - GetTickCount();
+    }
+
+    ok( ret == WAIT_TIMEOUT, "MsgWaitForMultipleObjects returned %#x\n", ret );
+    return ret;
 }
 
 static BOOL CALLBACK EnumChildProc( HWND hwndChild, LPARAM lParam)
@@ -1132,12 +1139,42 @@ static void wine_AdjustWindowRectExForDpi( RECT *rect, LONG style, BOOL menu, LO
         InflateRect(rect, GetSystemMetrics(SM_CXEDGE), GetSystemMetrics(SM_CYEDGE));
 }
 
+static int offset;
+
+static LRESULT CALLBACK test_standard_scrollbar_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
+{
+    switch (msg)
+    {
+    case WM_NCPAINT:
+    {
+        HRGN region;
+        RECT rect;
+
+        GetWindowRect(hwnd, &rect);
+        region = CreateRectRgn(rect.left, rect.top, rect.right, rect.bottom - offset);
+        DefWindowProcA(hwnd, msg, (WPARAM)region, lp);
+        DeleteObject(region);
+        return 0;
+    }
+    default:
+        return DefWindowProcA(hwnd, msg, wp, lp);
+    }
+}
+
 static void test_nonclient_area(HWND hwnd)
 {
+    BOOL (WINAPI *pIsThemeActive)(void);
+    POINT point, old_cursor_pos;
+    COLORREF color, old_color;
+    BOOL is_theme_active;
     DWORD style, exstyle;
     RECT rc_window, rc_client, rc;
+    HWND child, parent;
+    HMODULE uxtheme;
+    WNDCLASSA cls;
     BOOL menu;
     LRESULT ret;
+    HDC hdc;
 
     style = GetWindowLongA(hwnd, GWL_STYLE);
     exstyle = GetWindowLongA(hwnd, GWL_EXSTYLE);
@@ -1189,6 +1226,97 @@ static void test_nonclient_area(HWND hwnd)
     ok(EqualRect(&rc, &rc_client),
        "synthetic rect does not match: style:exstyle=0x%08x:0x%08x, menu=%d, client=%s, calc=%s\n",
        style, exstyle, menu, wine_dbgstr_rect(&rc_client), wine_dbgstr_rect(&rc));
+
+    /* Test standard scroll bars */
+    uxtheme = LoadLibraryA("uxtheme.dll");
+    ok(!!uxtheme, "Failed to load uxtheme.dll, error %u.\n", GetLastError());
+    pIsThemeActive = (void *)GetProcAddress(uxtheme, "IsThemeActive");
+    ok(!!pIsThemeActive, "Failed to load IsThemeActive, error %u.\n", GetLastError());
+    is_theme_active = pIsThemeActive();
+
+    memset(&cls, 0, sizeof(cls));
+    cls.lpfnWndProc = DefWindowProcA;
+    cls.hInstance = GetModuleHandleA(0);
+    cls.hCursor = LoadCursorA(NULL, (LPCSTR)IDC_ARROW);
+    cls.hbrBackground = GetStockObject(LTGRAY_BRUSH);
+    cls.lpszClassName = "TestStandardScrollbarParentClass";
+    RegisterClassA(&cls);
+
+    cls.lpfnWndProc = test_standard_scrollbar_proc;
+    cls.hbrBackground = GetStockObject(GRAY_BRUSH);
+    cls.lpszClassName = "TestStandardScrollbarClass";
+    RegisterClassA(&cls);
+
+    parent = CreateWindowA("TestStandardScrollbarParentClass", "parent", WS_POPUP | WS_VISIBLE, 100,
+                           100, 100, 100, NULL, NULL, 0, NULL);
+    ok(!!parent, "Failed to create a parent window, error %u.\n", GetLastError());
+    GetCursorPos(&old_cursor_pos);
+
+    /* Place the cursor on the standard scroll bar arrow button when not painting it at all.
+     * Expects the standard scroll bar not to appear before and after the cursor position change */
+    offset = GetSystemMetrics(SM_CYHSCROLL);
+    child = CreateWindowA("TestStandardScrollbarClass", "test", WS_CHILD | WS_HSCROLL | WS_VISIBLE,
+                          0, 0, 50, 50, parent, NULL, 0, NULL);
+    ok(!!child, "Failed to create a test window, error %u.\n", GetLastError());
+    hdc = GetDC(parent);
+    ok(!!hdc, "GetDC failed, error %d.\n", GetLastError());
+
+    SetCursorPos(0, 0);
+    flush_events(TRUE);
+    RedrawWindow(child, NULL, NULL, RDW_INVALIDATE | RDW_ERASE | RDW_UPDATENOW | RDW_ERASENOW | RDW_FRAME);
+    old_color = GetPixel(hdc, 50 - GetSystemMetrics(SM_CXVSCROLL) / 2,
+                         50 - GetSystemMetrics(SM_CYHSCROLL) / 2);
+    ok(old_color == 0xc0c0c0, "Expected color %#x, got %#x.\n", 0xc0c0c0, old_color);
+
+    point.x = 50 - GetSystemMetrics(SM_CXVSCROLL) / 2;
+    point.y = 50 - GetSystemMetrics(SM_CYHSCROLL) / 2;
+    ClientToScreen(child, &point);
+    SetCursorPos(point.x, point.y);
+    flush_events(TRUE);
+    RedrawWindow(child, NULL, NULL, RDW_INVALIDATE | RDW_ERASE | RDW_UPDATENOW | RDW_ERASENOW | RDW_FRAME);
+    color = GetPixel(hdc, 50 - GetSystemMetrics(SM_CXVSCROLL) / 2,
+                     50 - GetSystemMetrics(SM_CYHSCROLL) / 2);
+    ok(color == old_color, "Expected color %#x, got %#x.\n", old_color, color);
+
+    ReleaseDC(parent, hdc);
+    DestroyWindow(child);
+
+    /* Place the cursor on standard scroll bar arrow button when painting 1 pixel of the scroll bar.
+     * Expects the scroll bar to appear after the cursor position change */
+    offset = GetSystemMetrics(SM_CYHSCROLL) - 1;
+    child = CreateWindowA("TestStandardScrollbarClass", "test", WS_CHILD | WS_HSCROLL | WS_VISIBLE,
+                          0, 0, 50, 50, parent, NULL, 0, NULL);
+    ok(!!child, "Failed to create a test window, error %u.\n", GetLastError());
+    hdc = GetDC(parent);
+    ok(!!hdc, "GetDC failed, error %d.\n", GetLastError());
+
+    SetCursorPos(0, 0);
+    flush_events(TRUE);
+    RedrawWindow(child, NULL, NULL, RDW_INVALIDATE | RDW_ERASE | RDW_UPDATENOW | RDW_ERASENOW | RDW_FRAME);
+    old_color = GetPixel(hdc, 50 - GetSystemMetrics(SM_CXVSCROLL) / 2,
+                         50 - GetSystemMetrics(SM_CYHSCROLL) / 2);
+
+    point.x = 50 - GetSystemMetrics(SM_CXVSCROLL) / 2;
+    point.y = 50 - GetSystemMetrics(SM_CYHSCROLL) / 2;
+    ClientToScreen(child, &point);
+    SetCursorPos(point.x, point.y);
+    flush_events(TRUE);
+    RedrawWindow(child, NULL, NULL, RDW_INVALIDATE | RDW_ERASE | RDW_UPDATENOW | RDW_ERASENOW | RDW_FRAME);
+    color = GetPixel(hdc, 50 - GetSystemMetrics(SM_CXVSCROLL) / 2,
+                     50 - GetSystemMetrics(SM_CYHSCROLL) / 2);
+    if (is_theme_active)
+        ok(color != old_color || broken(color == old_color), /* Win 10 1507 64-bit */
+           "Got unexpected color %#x.\n", color);
+    else
+        todo_wine
+        ok(color == old_color, "Expected color %#x, got %#x.\n", old_color, color);
+
+    SetCursorPos(old_cursor_pos.x, old_cursor_pos.y);
+    ReleaseDC(parent, hdc);
+    DestroyWindow(parent);
+    UnregisterClassA("TestStandardScrollbarClass", GetModuleHandleA(0));
+    UnregisterClassA("TestStandardScrollbarParentClass", GetModuleHandleA(0));
+    FreeLibrary(uxtheme);
 }
 
 static LRESULT CALLBACK cbt_hook_proc(int nCode, WPARAM wParam, LPARAM lParam) 
@@ -2128,7 +2256,7 @@ static void test_mdi(void)
     mdi_hwndMain = CreateWindowExA(0, "MDI_parent_Class", "MDI parent window",
                                    WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX |
                                    WS_MAXIMIZEBOX /*| WS_VISIBLE*/,
-                                   100, 100, CW_USEDEFAULT, CW_USEDEFAULT,
+                                   200, 100, CW_USEDEFAULT, CW_USEDEFAULT,
                                    GetDesktopWindow(), 0,
                                    GetModuleHandleA(NULL), NULL);
     assert(mdi_hwndMain);
@@ -2263,7 +2391,7 @@ static void test_mdi(void)
         if (style[i] & (WS_HSCROLL | WS_VSCROLL))
         {
             ok(ret, "GetScrollInfo(SB_HORZ) failed\n");
-todo_wine
+            todo_wine
             ok(si.nPage != 0, "expected !0\n");
             ok(si.nPos == 0, "expected 0\n");
             ok(si.nTrackPos == 0, "expected 0\n");
@@ -2277,7 +2405,7 @@ todo_wine
         if (style[i] & (WS_HSCROLL | WS_VSCROLL))
         {
             ok(ret, "GetScrollInfo(SB_VERT) failed\n");
-todo_wine
+            todo_wine
             ok(si.nPage != 0, "expected !0\n");
             ok(si.nPos == 0, "expected 0\n");
             ok(si.nTrackPos == 0, "expected 0\n");
@@ -3267,7 +3395,7 @@ static void test_SetFocus(HWND hwnd)
     ok( GetActiveWindow() == hwnd, "parent window %p should be active\n", hwnd);
     ShowWindow(hwnd, SW_SHOWMINIMIZED);
     ok( GetActiveWindow() == hwnd, "parent window %p should be active\n", hwnd);
-todo_wine
+    todo_wine
     ok( GetFocus() != child, "Focus should not be on child %p\n", child );
     ok( GetFocus() != hwnd, "Focus should not be on parent %p\n", hwnd );
     ShowWindow(hwnd, SW_RESTORE);
@@ -3311,29 +3439,140 @@ todo_wine
     DestroyWindow( child );
 }
 
+static void test_SetActiveWindow_0_proc( char **argv )
+{
+    HANDLE start_event, stop_event;
+    HWND hwnd, other, tmp;
+    BOOL ret;
+
+    sscanf( argv[3], "%p", &other );
+    start_event = CreateEventW( NULL, FALSE, FALSE, L"test_SetActiveWindow_0_start" );
+    ok( start_event != 0, "CreateEventW failed, error %u\n", GetLastError() );
+    stop_event = CreateEventW( NULL, FALSE, FALSE, L"test_SetActiveWindow_0_stop" );
+    ok( stop_event != 0, "CreateEventW failed, error %u\n", GetLastError() );
+
+    hwnd = CreateWindowExA( 0, "static", NULL, WS_OVERLAPPEDWINDOW | WS_VISIBLE, 100, 100, 200, 200, 0, 0, NULL, NULL );
+    ok( !!hwnd, "CreateWindowExA failed, error %u\n", GetLastError() );
+    flush_events( TRUE );
+
+    ret = SetForegroundWindow( hwnd );
+    ok( ret, "SetForegroundWindow failed, error %u\n", GetLastError() );
+
+    tmp = GetForegroundWindow();
+    ok( tmp == hwnd, "GetForegroundWindow returned %p\n", tmp );
+    tmp = GetActiveWindow();
+    ok( tmp == hwnd, "GetActiveWindow returned %p\n", tmp );
+    tmp = GetFocus();
+    ok( tmp == hwnd, "GetFocus returned %p\n", tmp );
+
+    SetLastError( 0xdeadbeef );
+    tmp = SetActiveWindow( 0 );
+    if (!tmp) ok( GetLastError() == 0xdeadbeef, "got error %u\n", GetLastError() );
+    else /* < Win10 */
+    {
+        ok( tmp == hwnd, "SetActiveWindow returned %p\n", tmp );
+        todo_wine
+        ok( GetLastError() == 0, "got error %u\n", GetLastError() );
+
+        tmp = GetForegroundWindow();
+        ok( tmp == other || tmp == 0, "GetForegroundWindow returned %p\n", tmp );
+        tmp = GetActiveWindow();
+        ok( tmp == 0, "GetActiveWindow returned %p\n", tmp );
+        tmp = GetFocus();
+        ok( tmp == 0, "GetFocus returned %p\n", tmp );
+
+        SetEvent( start_event );
+        wait_for_events( 1, &stop_event, INFINITE );
+
+        tmp = GetForegroundWindow();
+        todo_wine
+        ok( tmp == other, "GetForegroundWindow returned %p\n", tmp );
+        tmp = GetActiveWindow();
+        ok( tmp == 0, "GetActiveWindow returned %p\n", tmp );
+        tmp = GetFocus();
+        ok( tmp == 0, "GetFocus returned %p\n", tmp );
+    }
+
+    tmp = SetActiveWindow( 0 );
+    ok( tmp == 0, "SetActiveWindow returned %p\n", tmp );
+    tmp = GetForegroundWindow();
+    todo_wine
+    ok( tmp == hwnd, "GetForegroundWindow returned %p\n", tmp );
+    tmp = GetActiveWindow();
+    todo_wine
+    ok( tmp == hwnd, "GetActiveWindow returned %p\n", tmp );
+    tmp = GetFocus();
+    todo_wine
+    ok( tmp == hwnd, "GetFocus returned %p\n", tmp );
+
+    CloseHandle( start_event );
+    CloseHandle( stop_event );
+    DestroyWindow( hwnd );
+}
+
+static void test_SetActiveWindow_0( char **argv )
+{
+    STARTUPINFOA startup = {.cb = sizeof(STARTUPINFOA)};
+    PROCESS_INFORMATION info;
+    char cmdline[MAX_PATH];
+    HANDLE events[3];
+    HWND hwnd, tmp;
+    BOOL ret;
+
+    hwnd = CreateWindowExA( 0, "static", NULL, WS_OVERLAPPEDWINDOW | WS_VISIBLE, 100, 100, 200, 200, 0, 0, NULL, NULL );
+    ok( !!hwnd, "CreateWindowExA failed, error %u\n", GetLastError() );
+    SetWindowPos( hwnd, HWND_TOPMOST, 150, 150, 300, 300, SWP_FRAMECHANGED | SWP_SHOWWINDOW );
+    flush_events( TRUE );
+
+    tmp = GetForegroundWindow();
+    ok( tmp == hwnd, "GetForegroundWindow returned %p\n", tmp );
+    tmp = GetActiveWindow();
+    ok( tmp == hwnd, "GetActiveWindow returned %p\n", tmp );
+    tmp = GetFocus();
+    ok( tmp == hwnd, "GetFocus returned %p\n", tmp );
+
+    events[1] = CreateEventW( NULL, FALSE, FALSE, L"test_SetActiveWindow_0_start" );
+    ok( events[1] != 0, "CreateEventW failed, error %u\n", GetLastError() );
+    events[2] = CreateEventW( NULL, FALSE, FALSE, L"test_SetActiveWindow_0_stop" );
+    ok( events[2] != 0, "CreateEventW failed, error %u\n", GetLastError() );
+
+    sprintf( cmdline, "%s %s SetActiveWindow_0 %p", argv[0], argv[1], hwnd );
+    ret = CreateProcessA( NULL, cmdline, NULL, NULL, FALSE, 0, NULL, NULL, &startup, &info );
+    ok( ret, "CreateProcessA failed, error %u\n", GetLastError() );
+
+    events[0] = info.hProcess;
+    if (wait_for_events( 2, events, INFINITE ) == 1)
+    {
+        tmp = GetForegroundWindow();
+        todo_wine
+        ok( tmp == hwnd, "GetForegroundWindow returned %p\n", tmp );
+        tmp = GetActiveWindow();
+        todo_wine
+        ok( tmp == hwnd, "GetActiveWindow returned %p\n", tmp );
+        tmp = GetFocus();
+        todo_wine
+        ok( tmp == hwnd, "GetFocus returned %p\n", tmp );
+        SetEvent( events[2] );
+    }
+
+    wait_child_process( info.hProcess );
+    CloseHandle( info.hProcess );
+    CloseHandle( info.hThread );
+    CloseHandle( events[1] );
+    CloseHandle( events[2] );
+
+    DestroyWindow( hwnd );
+}
+
 static void test_SetActiveWindow(HWND hwnd)
 {
     HWND hwnd2, ret;
 
     flush_events( TRUE );
     ShowWindow(hwnd, SW_HIDE);
-    SetFocus(0);
-    SetActiveWindow(0);
     check_wnd_state(0, 0, 0, 0);
 
     ShowWindow(hwnd, SW_SHOW);
-    check_wnd_state(hwnd, hwnd, hwnd, 0);
-
-    SetLastError(0xdeadbeef);
-    ret = SetActiveWindow(0);
-    ok(ret == hwnd || broken(!ret) /* Win10 1809 */, "expected %p, got %p\n", hwnd, ret);
-    if (!ret) ok(GetLastError() == 0xdeadbeef, "wrong error %u\n", GetLastError());
-    if (!GetActiveWindow())  /* doesn't always work on vista */
-    {
-        check_wnd_state(0, 0, 0, 0);
-        ret = SetActiveWindow(hwnd);
-        ok(ret == 0, "SetActiveWindow returned %p instead of 0\n", ret);
-    }
     check_wnd_state(hwnd, hwnd, hwnd, 0);
 
     SetWindowPos(hwnd,0,0,0,0,0,SWP_NOZORDER|SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE|SWP_HIDEWINDOW);
@@ -3384,17 +3623,7 @@ static void test_SetActiveWindow(HWND hwnd)
     ret = SetActiveWindow(hwnd2);
     ok(ret == hwnd, "expected %p, got %p\n", hwnd, ret);
     check_wnd_state(hwnd, hwnd, hwnd, 0);
-    SetLastError(0xdeadbeef);
-    ret = SetActiveWindow(0);
-    ok(ret == hwnd || broken(!ret) /* Win10 1809 */, "expected %p, got %p\n", hwnd, ret);
-    if (!ret) ok(GetLastError() == 0xdeadbeef, "wrong error %u\n", GetLastError());
-    if (!GetActiveWindow())
-    {
-        ret = SetActiveWindow(hwnd2);
-        ok(ret == NULL, "expected NULL, got %p\n", ret);
-        todo_wine
-        check_active_state(hwnd, hwnd, hwnd);
-    }
+
     DestroyWindow(hwnd2);
 }
 
@@ -3435,21 +3664,10 @@ static void test_SetForegroundWindow(HWND hwnd)
 
     flush_events( TRUE );
     ShowWindow(hwnd, SW_HIDE);
-    SetFocus(0);
-    SetActiveWindow(0);
     check_wnd_state(0, 0, 0, 0);
 
     ShowWindow(hwnd, SW_SHOW);
     check_wnd_state(hwnd, hwnd, hwnd, 0);
-
-    SetLastError(0xdeadbeef);
-    hwnd2 = SetActiveWindow(0);
-    ok(hwnd2 == hwnd || broken(!hwnd2) /* Win10 1809 */, "expected %p, got %p\n", hwnd, hwnd2);
-    if (!hwnd2) ok(GetLastError() == 0xdeadbeef, "wrong error %u\n", GetLastError());
-    if (GetActiveWindow() == hwnd)  /* doesn't always work on vista */
-        check_wnd_state(hwnd, hwnd, hwnd, 0);
-    else
-        check_wnd_state(0, 0, 0, 0);
 
     ret = SetForegroundWindow(hwnd);
     if (!ret)
@@ -3832,7 +4050,7 @@ static BOOL peek_message( MSG *msg )
     do
     {
         ret = PeekMessageA(msg, 0, 0, 0, PM_REMOVE);
-    } while (ret && ignore_message(msg->message));
+    } while (ret && ignore_message(msg->message, msg->hwnd));
     return ret;
 }
 
@@ -3992,7 +4210,7 @@ static void test_mouse_input(HWND hwnd)
     /* FIXME: SetCursorPos in Wine generates additional WM_MOUSEMOVE message */
     while (PeekMessageA(&msg, 0, 0, 0, PM_REMOVE))
     {
-        if (ignore_message(msg.message)) continue;
+        if (ignore_message(msg.message, msg.hwnd)) continue;
         ok(msg.hwnd == popup && msg.message == WM_MOUSEMOVE,
            "hwnd %p message %04x\n", msg.hwnd, msg.message);
         DispatchMessageA(&msg);
@@ -4138,7 +4356,7 @@ static void test_mouse_input(HWND hwnd)
 
     ret = wait_for_message( &msg );
     ok(ret, "no message available\n");
-todo_wine
+    todo_wine
     ok(msg.hwnd == child && (msg.message == WM_NCMOUSELEAVE || broken(msg.message == WM_LBUTTONUP)),
        "hwnd %p/%p message %04x\n", msg.hwnd, child, msg.message);
 
@@ -6579,33 +6797,33 @@ static void test_set_window_long_size(void)
     retval = GetWindowLongPtrA(hwnd, GWLP_USERDATA);
     ok(retval > 123, "Unexpected user data.\n");
     ret = GetWindowWord(hwnd, GWLP_USERDATA);
-todo_wine
+    todo_wine
     ok(ret == 123, "Unexpected user data %#x.\n", ret);
     ret = SetWindowWord(hwnd, GWLP_USERDATA, 124);
-todo_wine
+    todo_wine
     ok(ret == 123, "Unexpected user data %#x.\n", ret);
     ret = GetWindowLongA(hwnd, GWLP_USERDATA);
-todo_wine
+    todo_wine
     ok(ret == 124, "Unexpected user data %#x.\n", ret);
     retval = GetWindowLongPtrA(hwnd, GWLP_USERDATA);
-todo_wine
+    todo_wine
     ok(retval == 124, "Unexpected user data.\n");
 
     SetWindowLongA(hwnd, GWLP_USERDATA, (1 << 16) | 123);
     ret = GetWindowLongA(hwnd, GWLP_USERDATA);
     ok(ret == ((1 << 16) | 123), "Unexpected user data %#x.\n", ret);
     ret = GetWindowWord(hwnd, GWLP_USERDATA);
-todo_wine
+    todo_wine
     ok(ret == 123, "Unexpected user data %#x.\n", ret);
 
     ret = SetWindowWord(hwnd, GWLP_USERDATA, 124);
-todo_wine
+    todo_wine
     ok(ret == 123, "Unexpected user data %#x.\n", ret);
     ret = GetWindowLongA(hwnd, GWLP_USERDATA);
-todo_wine
+    todo_wine
     ok(ret == ((1 << 16) | 124), "Unexpected user data %#x.\n", ret);
     ret = GetWindowWord(hwnd, GWLP_USERDATA);
-todo_wine
+    todo_wine
     ok(ret == 124, "Unexpected user data %#x.\n", ret);
 
     /* GWLP_ID */
@@ -6627,7 +6845,7 @@ todo_wine
     ok(retval > 123, "Unexpected id.\n");
     SetLastError(0xdeadbeef);
     ret = GetWindowWord(hwnd, GWLP_ID);
-todo_wine
+    todo_wine
     ok(!ret && GetLastError() == ERROR_INVALID_INDEX, "Unexpected id %#x.\n", ret);
 
     /* GWLP_HINSTANCE */
@@ -6644,7 +6862,7 @@ todo_wine
 
     SetLastError(0xdeadbeef);
     ret = GetWindowWord(hwnd, GWLP_HINSTANCE);
-todo_wine
+    todo_wine
     ok(!ret && GetLastError() == ERROR_INVALID_INDEX, "Unexpected instance %#x.\n", ret);
 
     SetLastError(0xdeadbeef);
@@ -6670,7 +6888,7 @@ todo_wine
 
     SetLastError(0xdeadbeef);
     ret = GetWindowWord(hwnd, GWLP_HWNDPARENT);
-todo_wine
+    todo_wine
     ok(!ret && GetLastError() == ERROR_INVALID_INDEX, "Unexpected parent window %#x.\n", ret);
 
     DestroyWindow(hwnd);
@@ -6710,16 +6928,16 @@ static void test_set_window_word_size(void)
     ret = GetWindowLongA(hwnd, GWLP_USERDATA);
     ok(ret > 123, "Unexpected user data %#x.\n", ret);
     ret = GetWindowWord(hwnd, GWLP_USERDATA);
-todo_wine
+    todo_wine
     ok(ret == 123, "Unexpected user data %#x.\n", ret);
     ret = SetWindowWord(hwnd, GWLP_USERDATA, 124);
-todo_wine
+    todo_wine
     ok(ret == 123, "Unexpected user data %#x.\n", ret);
     ret = GetWindowWord(hwnd, GWLP_USERDATA);
-todo_wine
+    todo_wine
     ok(ret == 124, "Unexpected user data %#x.\n", ret);
     ret = GetWindowLongA(hwnd, GWLP_USERDATA);
-todo_wine
+    todo_wine
     ok(ret == ((1 << 16) | 124), "Unexpected user data %#x.\n", ret);
 
     /* GWLP_ID */
@@ -6730,11 +6948,11 @@ todo_wine
 
     SetLastError(0xdeadbeef);
     ret = GetWindowWord(hwnd, GWLP_ID);
-todo_wine
+    todo_wine
     ok(!ret && GetLastError() == ERROR_INVALID_INDEX, "Unexpected id %#x.\n", ret);
     SetLastError(0xdeadbeef);
     ret = SetWindowWord(hwnd, GWLP_ID, 2);
-todo_wine
+    todo_wine
     ok(!ret && GetLastError() == ERROR_INVALID_INDEX, "Unexpected id %#x.\n", ret);
 
     /* GWLP_HINSTANCE */
@@ -6743,12 +6961,12 @@ todo_wine
 
     SetLastError(0xdeadbeef);
     ret = GetWindowWord(hwnd, GWLP_HINSTANCE);
-todo_wine
+    todo_wine
     ok(!ret && GetLastError() == ERROR_INVALID_INDEX, "Unexpected instance %#x.\n", ret);
 
     SetLastError(0xdeadbeef);
     ret = SetWindowWord(hwnd, GWLP_HINSTANCE, 0xdead);
-todo_wine
+    todo_wine
     ok(!ret && GetLastError() == ERROR_INVALID_INDEX, "Unexpected instance %#x.\n", ret);
 
     /* GWLP_HWNDPARENT */
@@ -6757,7 +6975,7 @@ todo_wine
 
     SetLastError(0xdeadbeef);
     ret = GetWindowWord(hwnd, GWLP_HWNDPARENT);
-todo_wine
+    todo_wine
     ok(!ret && GetLastError() == ERROR_INVALID_INDEX, "Unexpected parent window %#x.\n", ret);
 
     DestroyWindow(hwnd);
@@ -6905,7 +7123,7 @@ static void test_ShowWindow(void)
 {
     HWND hwnd;
     DWORD style;
-    RECT rcMain, rc, rcMinimized, rcClient, rcEmpty, rcMaximized, rcResized, rcNonClient;
+    RECT rcMain, rc, rcMinimized, rcClient, rcEmpty, rcMaximized, rcResized, rcNonClient, rcBroken;
     LPARAM ret;
     MONITORINFO mon_info;
     unsigned int i;
@@ -7208,8 +7426,17 @@ static void test_ShowWindow(void)
         style = GetWindowLongA(hwnd, GWL_STYLE);
         ok(style & WS_MAXIMIZE, "Test %u: window should be maximized\n", i);
         GetWindowRect(hwnd, &rc);
-        ok(EqualRect(&rcMaximized, &rc), "Test %u: expected %s, got %s\n",
-           i, wine_dbgstr_rect(&rcMaximized), wine_dbgstr_rect(&rc));
+
+        rcBroken = rcMaximized;
+        if (test_style[i] & WS_THICKFRAME)
+        {
+            InflateRect(&rcBroken, -2, -2);
+            OffsetRect(&rcBroken, -2, -2);
+        }
+
+        ok(EqualRect(&rcMaximized, &rc) || broken(EqualRect(&rcBroken, &rc)),
+           "Test %u: expected %s, got %s\n", i, wine_dbgstr_rect(&rcMaximized),
+           wine_dbgstr_rect(&rc));
 
         ret = ShowWindow(hwnd, SW_RESTORE);
         ok(ret, "unexpected ret: %lu\n", ret);
@@ -9599,10 +9826,10 @@ static void test_child_window_from_point(void)
 
     ok(!found_invisible, "found %d invisible windows\n", found_invisible);
     ok(found_disabled, "found %d disabled windows\n", found_disabled);
-todo_wine
+    todo_wine
     ok(found_groupbox == 4, "found %d groupbox windows\n", found_groupbox);
     ok(found_httransparent, "found %d httransparent windows\n", found_httransparent);
-todo_wine
+    todo_wine
     ok(found_extransparent, "found %d extransparent windows\n", found_extransparent);
 
     ret = UnregisterClassA("my_button", cls.hInstance);
@@ -9750,7 +9977,7 @@ static void test_window_from_point(const char *argv0)
     startup.cb = sizeof(startup);
     ok(CreateProcessA(NULL, cmd, NULL, NULL, FALSE, 0, NULL, NULL,
                 &startup, &info), "CreateProcess failed.\n");
-    ok(wait_for_event(start_event, 1000), "didn't get start_event\n");
+    ok(wait_for_events(1, &start_event, 1000) == 0, "didn't get start_event\n");
 
     child = GetWindow(hwnd, GW_CHILD);
     win = WindowFromPoint(pt);
@@ -10043,7 +10270,7 @@ static void test_update_region(void)
             rc.right + wnd_orig.x, rc.bottom + wnd_orig.y);
     CombineRgn(rgn1, rgn1, rgn2, RGN_OR);
     GetUpdateRgn(parent, rgn2, FALSE);
-todo_wine
+    todo_wine
     ok(EqualRgn(rgn1, rgn2), "wrong update region\n");
 
     /* hwnd has the same invalid region as before moving */
@@ -10055,7 +10282,7 @@ todo_wine
     SetRectRgn(rgn1, rc.left - child_orig.x , rc.top - child_orig.y,
             rc.right - child_orig.x, rc.bottom - child_orig.y);
     GetUpdateRgn(child, rgn2, FALSE);
-todo_wine
+    todo_wine
     ok(EqualRgn(rgn1, rgn2), "wrong update region\n");
 
     DeleteObject(rgn1);
@@ -10691,12 +10918,12 @@ static void test_deferwindowpos(void)
     ok(!ret, "got %d\n", ret);
 
     hdwp2 = DeferWindowPos(NULL, NULL, NULL, 0, 0, 10, 10, 0);
-todo_wine
+    todo_wine
     ok(hdwp2 == NULL && ((GetLastError() == ERROR_INVALID_DWP_HANDLE) ||
         broken(GetLastError() == ERROR_INVALID_WINDOW_HANDLE) /* before win8 */), "got %p, error %d\n", hdwp2, GetLastError());
 
     hdwp2 = DeferWindowPos((HDWP)0xdead, GetDesktopWindow(), NULL, 0, 0, 10, 10, 0);
-todo_wine
+    todo_wine
     ok(hdwp2 == NULL && ((GetLastError() == ERROR_INVALID_DWP_HANDLE) ||
         broken(GetLastError() == ERROR_INVALID_WINDOW_HANDLE) /* before win8 */), "got %p, error %d\n", hdwp2, GetLastError());
 
@@ -11140,10 +11367,10 @@ static void test_topmost(void)
     ok(!is_topmost(hwnd2), "hwnd2 should NOT be topmost\n");
     check_z_order(hwnd, hwnd2, 0, owner, TRUE);
     swp_after(owner, HWND_TOPMOST);
-todo_wine
+    todo_wine
     ok(is_topmost(owner), "owner should be topmost\n");
     ok(is_topmost(hwnd), "hwnd should be topmost\n");
-todo_wine
+    todo_wine
     ok(is_topmost(hwnd2), "hwnd2 should be topmost\n");
     swp_after(hwnd, HWND_NOTOPMOST);
     ok(!is_topmost(owner) || broken(is_topmost(owner)) /*win7 64-bit*/, "owner should NOT be topmost\n");
@@ -11155,8 +11382,8 @@ todo_wine
     ok(!is_topmost(owner) || broken(is_topmost(owner)) /*win7 64-bit*/, "owner should NOT be topmost\n");
     ok(!is_topmost(hwnd), "hwnd should NOT be topmost\n");
     ok(!is_topmost(hwnd2), "hwnd2 should NOT be topmost\n");
-if (!is_wine) /* FIXME: remove once Wine is fixed */
-    check_z_order(hwnd, 0, hwnd2, owner, FALSE);
+    if (!is_wine) /* FIXME: remove once Wine is fixed */
+        check_z_order(hwnd, 0, hwnd2, owner, FALSE);
     reset_window_state(state, ARRAY_SIZE(state));
 
     swp_after(hwnd, HWND_TOPMOST);
@@ -11166,11 +11393,11 @@ if (!is_wine) /* FIXME: remove once Wine is fixed */
     check_z_order(hwnd, hwnd2, 0, owner, TRUE);
     swp_after(hwnd, HWND_BOTTOM);
     ok(!is_topmost(owner), "owner should NOT be topmost\n");
-todo_wine
+    todo_wine
     ok(!is_topmost(hwnd), "hwnd should NOT be topmost\n");
     ok(!is_topmost(hwnd2), "hwnd2 should NOT be topmost\n");
-if (!is_wine) /* FIXME: remove once Wine is fixed */
-    check_z_order(hwnd, 0, hwnd2, owner, FALSE);
+    if (!is_wine) /* FIXME: remove once Wine is fixed */
+        check_z_order(hwnd, 0, hwnd2, owner, FALSE);
     reset_window_state(state, ARRAY_SIZE(state));
 
     swp_after(hwnd, HWND_TOPMOST);
@@ -11180,18 +11407,18 @@ if (!is_wine) /* FIXME: remove once Wine is fixed */
     check_z_order(hwnd, hwnd2, 0, owner, TRUE);
     swp_after(hwnd, hwnd2);
     ok(!is_topmost(owner), "owner should NOT be topmost\n");
-todo_wine
-    ok(!is_topmost(hwnd), "hwnd should NOT be topmost\n");
+    todo_wine
+        ok(!is_topmost(hwnd), "hwnd should NOT be topmost\n");
     ok(!is_topmost(hwnd2), "hwnd2 should NOT be topmost\n");
-if (!is_wine) /* FIXME: remove once Wine is fixed */
-    check_z_order(hwnd, 0, hwnd2, owner, FALSE);
+    if (!is_wine) /* FIXME: remove once Wine is fixed */
+        check_z_order(hwnd, 0, hwnd2, owner, FALSE);
     /* FIXME: compensate todo_wine above */
     swp_after(hwnd, HWND_NOTOPMOST);
     ok(!is_topmost(owner), "owner should NOT be topmost\n");
     ok(!is_topmost(hwnd), "hwnd should NOT be topmost\n");
     ok(!is_topmost(hwnd2), "hwnd2 should NOT be topmost\n");
-if (!is_wine) /* FIXME: remove once Wine is fixed */
-    check_z_order(hwnd, 0, hwnd2, owner, FALSE);
+    if (!is_wine) /* FIXME: remove once Wine is fixed */
+        check_z_order(hwnd, 0, hwnd2, owner, FALSE);
     reset_window_state(state, ARRAY_SIZE(state));
 
     hwnd_child2 = create_tool_window(WS_VISIBLE|WS_POPUP, hwnd);
@@ -11215,54 +11442,54 @@ if (!is_wine) /* FIXME: remove once Wine is fixed */
     ok(!is_topmost(hwnd_child), "child should NOT be topmost\n");
     ok(!is_topmost(hwnd_child2), "child2 should NOT be topmost\n");
     ok(!is_topmost(hwnd_grandchild), "grandchild should NOT be topmost\n");
-if (!is_wine) /* FIXME: remove once Wine is fixed */
-    check_z_order(hwnd, hwnd2, 0, owner, FALSE);
+    if (!is_wine) /* FIXME: remove once Wine is fixed */
+        check_z_order(hwnd, hwnd2, 0, owner, FALSE);
     check_z_order(hwnd_child, hwnd_child2, 0, hwnd, FALSE);
 
     swp_after(hwnd, HWND_TOPMOST);
     ok(!is_topmost(owner), "owner should NOT be topmost\n");
-todo_wine
+    todo_wine
     ok(is_topmost(hwnd), "hwnd should be topmost\n");
-todo_wine
+    todo_wine
     ok(is_topmost(hwnd_child), "child should be topmost\n");
-todo_wine
+    todo_wine
     ok(is_topmost(hwnd_child2), "child2 should be topmost\n");
     ok(is_topmost(hwnd_grandchild), "grandchild should be topmost\n");
-if (!is_wine) /* FIXME: remove once Wine is fixed */
-    check_z_order(hwnd, hwnd2, 0, owner, TRUE);
-if (!is_wine) /* FIXME: remove once Wine is fixed */
-    check_z_order(hwnd_child, hwnd_child2, 0, hwnd, TRUE);
+    if (!is_wine) /* FIXME: remove once Wine is fixed */
+        check_z_order(hwnd, hwnd2, 0, owner, TRUE);
+    if (!is_wine) /* FIXME: remove once Wine is fixed */
+        check_z_order(hwnd_child, hwnd_child2, 0, hwnd, TRUE);
     swp_after(hwnd, HWND_NOTOPMOST);
     ok(!is_topmost(owner), "owner should NOT be topmost\n");
     ok(!is_topmost(hwnd), "hwnd should NOT be topmost\n");
     ok(!is_topmost(hwnd_child), "child should NOT be topmost\n");
     ok(!is_topmost(hwnd_child2), "child2 should NOT be topmost\n");
-todo_wine
+    todo_wine
     ok(!is_topmost(hwnd_grandchild), "grandchild should NOT be topmost\n");
-if (!is_wine) /* FIXME: remove once Wine is fixed */
+    if (!is_wine) /* FIXME: remove once Wine is fixed */
     check_z_order(hwnd, hwnd2, 0, owner, FALSE);
     check_z_order(hwnd_child, hwnd_child2, 0, hwnd, FALSE);
     reset_window_state(state, ARRAY_SIZE(state));
 
     swp_after(hwnd, HWND_TOPMOST);
     ok(!is_topmost(owner), "owner should NOT be topmost\n");
-todo_wine
+    todo_wine
     ok(is_topmost(hwnd), "hwnd should be topmost\n");
-todo_wine
+    todo_wine
     ok(is_topmost(hwnd_child), "child should be topmost\n");
-todo_wine
+    todo_wine
     ok(is_topmost(hwnd_child2), "child2 should be topmost\n");
     ok(is_topmost(hwnd_grandchild), "grandchild should be topmost\n");
-if (!is_wine) /* FIXME: remove once Wine is fixed */
-    check_z_order(hwnd, hwnd2, 0, owner, TRUE);
-if (!is_wine) /* FIXME: remove once Wine is fixed */
-    check_z_order(hwnd_child, hwnd_child2, 0, hwnd, TRUE);
+    if (!is_wine) /* FIXME: remove once Wine is fixed */
+        check_z_order(hwnd, hwnd2, 0, owner, TRUE);
+    if (!is_wine) /* FIXME: remove once Wine is fixed */
+        check_z_order(hwnd_child, hwnd_child2, 0, hwnd, TRUE);
     swp_after(hwnd_child, HWND_NOTOPMOST);
     ok(!is_topmost(owner), "owner should NOT be topmost\n");
     ok(!is_topmost(hwnd), "hwnd should NOT be topmost\n");
     ok(!is_topmost(hwnd_child), "child should NOT be topmost\n");
     ok(!is_topmost(hwnd_child2), "child2 should NOT be topmost\n");
-todo_wine
+    todo_wine
     ok(!is_topmost(hwnd_grandchild), "grandchild should NOT be topmost\n");
     check_z_order(hwnd, hwnd2, 0, owner, FALSE);
     check_z_order(hwnd_child, hwnd_child2, 0, hwnd, FALSE);
@@ -11270,23 +11497,23 @@ todo_wine
 
     swp_after(hwnd, HWND_TOPMOST);
     ok(!is_topmost(owner), "owner should NOT be topmost\n");
-todo_wine
+    todo_wine
     ok(is_topmost(hwnd), "hwnd should be topmost\n");
-todo_wine
+    todo_wine
     ok(is_topmost(hwnd_child), "child should be topmost\n");
-todo_wine
+    todo_wine
     ok(is_topmost(hwnd_child2), "child2 should be topmost\n");
     ok(is_topmost(hwnd_grandchild), "grandchild should be topmost\n");
-if (!is_wine) /* FIXME: remove once Wine is fixed */
-    check_z_order(hwnd, hwnd2, 0, owner, TRUE);
-if (!is_wine) /* FIXME: remove once Wine is fixed */
-    check_z_order(hwnd_child, hwnd_child2, 0, hwnd, TRUE);
+    if (!is_wine) /* FIXME: remove once Wine is fixed */
+        check_z_order(hwnd, hwnd2, 0, owner, TRUE);
+    if (!is_wine) /* FIXME: remove once Wine is fixed */
+        check_z_order(hwnd_child, hwnd_child2, 0, hwnd, TRUE);
     swp_after(hwnd_grandchild, HWND_NOTOPMOST);
     ok(!is_topmost(owner), "owner should NOT be topmost\n");
     ok(!is_topmost(hwnd), "hwnd should NOT be topmost\n");
     ok(!is_topmost(hwnd_child), "child should NOT be topmost\n");
     ok(!is_topmost(hwnd_child2), "child2 should NOT be topmost\n");
-todo_wine
+    todo_wine
     ok(!is_topmost(hwnd_grandchild), "grandchild should NOT be topmost\n");
     check_z_order(hwnd, hwnd2, 0, owner, FALSE);
     check_z_order(hwnd_child, hwnd_child2, 0, hwnd, FALSE);
@@ -11295,57 +11522,57 @@ todo_wine
     swp_after(hwnd_child, HWND_TOPMOST);
     ok(!is_topmost(owner), "owner should NOT be topmost\n");
     ok(!is_topmost(hwnd), "hwnd should NOT be topmost\n");
-todo_wine
+    todo_wine
     ok(is_topmost(hwnd_child), "child should be topmost\n");
     ok(!is_topmost(hwnd_child2), "child2 should NOT be topmost\n");
     ok(is_topmost(hwnd_grandchild), "grandchild should be topmost\n");
-if (!is_wine) /* FIXME: remove once Wine is fixed */
-    check_z_order(hwnd, hwnd2, 0, owner, FALSE);
-if (!is_wine) /* FIXME: remove once Wine is fixed */
-    check_z_order(hwnd_child, hwnd_child2, 0, hwnd, TRUE);
+    if (!is_wine) /* FIXME: remove once Wine is fixed */
+        check_z_order(hwnd, hwnd2, 0, owner, FALSE);
+    if (!is_wine) /* FIXME: remove once Wine is fixed */
+        check_z_order(hwnd_child, hwnd_child2, 0, hwnd, TRUE);
     swp_after(hwnd_child, HWND_TOP);
     ok(!is_topmost(owner), "owner should NOT be topmost\n");
     ok(!is_topmost(hwnd), "hwnd should NOT be topmost\n");
-todo_wine
+    todo_wine
     ok(is_topmost(hwnd_child), "child should be topmost\n");
     ok(!is_topmost(hwnd_child2), "child2 should NOT be topmost\n");
     ok(is_topmost(hwnd_grandchild), "grandchild should be topmost\n");
-if (!is_wine) /* FIXME: remove once Wine is fixed */
-    check_z_order(hwnd, hwnd2, 0, owner, FALSE);
-if (!is_wine) /* FIXME: remove once Wine is fixed */
-    check_z_order(hwnd_child, hwnd_child2, 0, hwnd, TRUE);
+    if (!is_wine) /* FIXME: remove once Wine is fixed */
+        check_z_order(hwnd, hwnd2, 0, owner, FALSE);
+    if (!is_wine) /* FIXME: remove once Wine is fixed */
+        check_z_order(hwnd_child, hwnd_child2, 0, hwnd, TRUE);
     swp_after(hwnd, HWND_NOTOPMOST);
     ok(!is_topmost(owner), "owner should NOT be topmost\n");
     ok(!is_topmost(hwnd), "hwnd should NOT be topmost\n");
     ok(!is_topmost(hwnd_child), "child should NOT be topmost\n");
     ok(!is_topmost(hwnd_child2), "child2 should NOT be topmost\n");
-todo_wine
+    todo_wine
     ok(!is_topmost(hwnd_grandchild) || broken(is_topmost(hwnd_grandchild))/*win2008 64-bit*/, "grandchild should NOT be topmost\n");
-if (!is_wine) /* FIXME: remove once Wine is fixed */
-    check_z_order(hwnd, hwnd2, 0, owner, FALSE);
+    if (!is_wine) /* FIXME: remove once Wine is fixed */
+        check_z_order(hwnd, hwnd2, 0, owner, FALSE);
     check_z_order(hwnd_child, hwnd_child2, 0, hwnd, FALSE);
     reset_window_state(state, ARRAY_SIZE(state));
 
     swp_after(hwnd_child, HWND_TOPMOST);
     ok(!is_topmost(owner), "owner should NOT be topmost\n");
     ok(!is_topmost(hwnd), "hwnd should NOT be topmost\n");
-todo_wine
+    todo_wine
     ok(is_topmost(hwnd_child), "child should be topmost\n");
     ok(!is_topmost(hwnd_child2), "child2 should NOT be topmost\n");
     ok(is_topmost(hwnd_grandchild), "grandchild should be topmost\n");
-if (!is_wine) /* FIXME: remove once Wine is fixed */
-    check_z_order(hwnd, hwnd2, 0, owner, FALSE);
-if (!is_wine) /* FIXME: remove once Wine is fixed */
-    check_z_order(hwnd_child, hwnd_child2, 0, hwnd, TRUE);
+    if (!is_wine) /* FIXME: remove once Wine is fixed */
+        check_z_order(hwnd, hwnd2, 0, owner, FALSE);
+    if (!is_wine) /* FIXME: remove once Wine is fixed */
+        check_z_order(hwnd_child, hwnd_child2, 0, hwnd, TRUE);
     swp_after(hwnd, HWND_NOTOPMOST);
     ok(!is_topmost(owner), "owner should NOT be topmost\n");
     ok(!is_topmost(hwnd), "hwnd should NOT be topmost\n");
     ok(!is_topmost(hwnd_child), "child should NOT be topmost\n");
     ok(!is_topmost(hwnd_child2), "child2 should NOT be topmost\n");
-todo_wine
+    todo_wine
     ok(!is_topmost(hwnd_grandchild), "grandchild should NOT be topmost\n");
-if (!is_wine) /* FIXME: remove once Wine is fixed */
-    check_z_order(hwnd, hwnd2, 0, owner, FALSE);
+    if (!is_wine) /* FIXME: remove once Wine is fixed */
+        check_z_order(hwnd, hwnd2, 0, owner, FALSE);
     check_z_order(hwnd_child, hwnd_child2, 0, hwnd, FALSE);
     reset_window_state(state, ARRAY_SIZE(state));
 
@@ -11355,8 +11582,8 @@ if (!is_wine) /* FIXME: remove once Wine is fixed */
     ok(!is_topmost(hwnd_child), "child should NOT be topmost\n");
     ok(!is_topmost(hwnd_child2), "child2 should NOT be topmost\n");
     ok(is_topmost(hwnd_grandchild), "grandchild should be topmost\n");
-if (!is_wine) /* FIXME: remove once Wine is fixed */
-    check_z_order(hwnd, hwnd2, 0, owner, FALSE);
+    if (!is_wine) /* FIXME: remove once Wine is fixed */
+        check_z_order(hwnd, hwnd2, 0, owner, FALSE);
     check_z_order(hwnd_child, hwnd_child2, 0, hwnd, FALSE);
     swp_after(hwnd_child2, HWND_NOTOPMOST);
     ok(!is_topmost(owner), "owner should NOT be topmost\n");
@@ -11364,58 +11591,58 @@ if (!is_wine) /* FIXME: remove once Wine is fixed */
     ok(!is_topmost(hwnd_child), "child should NOT be topmost\n");
     ok(!is_topmost(hwnd_child2), "child2 should NOT be topmost\n");
     ok(is_topmost(hwnd_grandchild) || broken(!is_topmost(hwnd_grandchild)) /* win8+ */, "grandchild should be topmost\n");
-if (!is_wine) /* FIXME: remove once Wine is fixed */
-    check_z_order(hwnd, hwnd2, 0, owner, FALSE);
-if (!is_wine) /* FIXME: remove once Wine is fixed */
-    check_z_order(hwnd_child, 0, hwnd_child2, hwnd, FALSE);
+    if (!is_wine) /* FIXME: remove once Wine is fixed */
+        check_z_order(hwnd, hwnd2, 0, owner, FALSE);
+    if (!is_wine) /* FIXME: remove once Wine is fixed */
+        check_z_order(hwnd_child, 0, hwnd_child2, hwnd, FALSE);
     reset_window_state(state, ARRAY_SIZE(state));
 
     swp_after(hwnd_child, HWND_TOPMOST);
     ok(!is_topmost(owner), "owner should NOT be topmost\n");
     ok(!is_topmost(hwnd), "hwnd should NOT be topmost\n");
-todo_wine
+    todo_wine
     ok(is_topmost(hwnd_child), "child should be topmost\n");
     ok(!is_topmost(hwnd_child2), "child2 should NOT be topmost\n");
     ok(is_topmost(hwnd_grandchild), "grandchild should be topmost\n");
-if (!is_wine) /* FIXME: remove once Wine is fixed */
-    check_z_order(hwnd, hwnd2, 0, owner, FALSE);
-if (!is_wine) /* FIXME: remove once Wine is fixed */
-    check_z_order(hwnd_child, hwnd_child2, 0, hwnd, TRUE);
+    if (!is_wine) /* FIXME: remove once Wine is fixed */
+        check_z_order(hwnd, hwnd2, 0, owner, FALSE);
+    if (!is_wine) /* FIXME: remove once Wine is fixed */
+        check_z_order(hwnd_child, hwnd_child2, 0, hwnd, TRUE);
     swp_after(hwnd_child, HWND_BOTTOM);
     ok(!is_topmost(owner), "owner should NOT be topmost\n");
     ok(!is_topmost(hwnd), "hwnd should NOT be topmost\n");
     ok(!is_topmost(hwnd_child), "child should NOT be topmost\n");
     ok(!is_topmost(hwnd_child2), "child2 should NOT be topmost\n");
-todo_wine
+    todo_wine
     ok(!is_topmost(hwnd_grandchild), "grandchild should NOT be topmost\n");
-if (!is_wine) /* FIXME: remove once Wine is fixed */
-    check_z_order(hwnd, 0, hwnd2, owner, FALSE);
-if (!is_wine) /* FIXME: remove once Wine is fixed */
+    if (!is_wine) /* FIXME: remove once Wine is fixed */
+        check_z_order(hwnd, 0, hwnd2, owner, FALSE);
+    if (!is_wine) /* FIXME: remove once Wine is fixed */
     check_z_order(hwnd_child, 0, hwnd_child2, hwnd, FALSE);
     reset_window_state(state, ARRAY_SIZE(state));
 
     swp_after(hwnd_child, HWND_TOPMOST);
     ok(!is_topmost(owner), "owner should NOT be topmost\n");
     ok(!is_topmost(hwnd), "hwnd should NOT be topmost\n");
-todo_wine
+    todo_wine
     ok(is_topmost(hwnd_child), "child should be topmost\n");
     ok(!is_topmost(hwnd_child2), "child2 should NOT be topmost\n");
     ok(is_topmost(hwnd_grandchild), "grandchild should be topmost\n");
-if (!is_wine) /* FIXME: remove once Wine is fixed */
-    check_z_order(hwnd, hwnd2, 0, owner, FALSE);
-if (!is_wine) /* FIXME: remove once Wine is fixed */
-    check_z_order(hwnd_child, hwnd_child2, 0, hwnd, TRUE);
+    if (!is_wine) /* FIXME: remove once Wine is fixed */
+        check_z_order(hwnd, hwnd2, 0, owner, FALSE);
+    if (!is_wine) /* FIXME: remove once Wine is fixed */
+        check_z_order(hwnd_child, hwnd_child2, 0, hwnd, TRUE);
     swp_after(hwnd_child, hwnd_child2);
     ok(!is_topmost(owner), "owner should NOT be topmost\n");
     ok(!is_topmost(hwnd), "hwnd should NOT be topmost\n");
     ok(!is_topmost(hwnd_child), "child should NOT be topmost\n");
     ok(!is_topmost(hwnd_child2), "child2 should NOT be topmost\n");
-todo_wine
+    todo_wine
     ok(!is_topmost(hwnd_grandchild), "grandchild should NOT be topmost\n");
-if (!is_wine) /* FIXME: remove once Wine is fixed */
-    check_z_order(hwnd, hwnd2, 0, owner, FALSE);
-if (!is_wine) /* FIXME: remove once Wine is fixed */
-    check_z_order(hwnd_child, 0, hwnd_child2, hwnd, FALSE);
+    if (!is_wine) /* FIXME: remove once Wine is fixed */
+        check_z_order(hwnd, hwnd2, 0, owner, FALSE);
+    if (!is_wine) /* FIXME: remove once Wine is fixed */
+        check_z_order(hwnd_child, 0, hwnd_child2, hwnd, FALSE);
     reset_window_state(state, ARRAY_SIZE(state));
 
     DestroyWindow(hwnd_grandchild);
@@ -12376,6 +12603,12 @@ START_TEST(win)
         return;
     }
 
+    if (argc == 4 && !strcmp( argv[2], "SetActiveWindow_0" ))
+    {
+        test_SetActiveWindow_0_proc( argv );
+        return;
+    }
+
     if (!RegisterWindowClasses()) assert(0);
 
     hwndMain = CreateWindowExA(/*WS_EX_TOOLWINDOW*/ 0, "MainWindowClass", "Main window",
@@ -12437,6 +12670,7 @@ START_TEST(win)
     test_SetWindowPos(hwndMain, hwndMain2);
     test_SetMenu(hwndMain);
     test_SetFocus(hwndMain);
+    test_SetActiveWindow_0( argv );
     test_SetActiveWindow(hwndMain);
     test_NCRedraw();
 

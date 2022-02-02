@@ -1409,7 +1409,7 @@ static void testGetAdaptersInfo(void)
         GetIfEntry( &row );
         ConvertInterfaceIndexToLuid( ptr->Index, &luid );
         ConvertInterfaceLuidToGuid( &luid, &guid );
-        sprintf( name, "{%08X-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X}",
+        sprintf( name, "{%08lX-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X}",
                  guid.Data1, guid.Data2, guid.Data3, guid.Data4[0], guid.Data4[1],
                  guid.Data4[2], guid.Data4[3], guid.Data4[4], guid.Data4[5],
                  guid.Data4[6], guid.Data4[7] );
@@ -1580,6 +1580,12 @@ static void test_GetAdaptersAddresses(void)
     ok(ret == ERROR_BUFFER_OVERFLOW, "expected ERROR_BUFFER_OVERFLOW, got %u\n", ret);
     if (ret != ERROR_BUFFER_OVERFLOW) return;
 
+    /* GAA_FLAG_SKIP_FRIENDLY_NAME is ignored */
+    osize = 0x7fffffff;
+    ret = GetAdaptersAddresses(AF_UNSPEC, GAA_FLAG_SKIP_FRIENDLY_NAME, NULL, NULL, &osize);
+    ok(ret == ERROR_BUFFER_OVERFLOW, "expected ERROR_BUFFER_OVERFLOW, got %u\n", ret);
+    ok(osize == size, "expected %d, got %d\n", size, osize);
+
     ptr = HeapAlloc(GetProcessHeap(), 0, size);
     ret = GetAdaptersAddresses(AF_UNSPEC, 0, NULL, ptr, &size);
     ok(!ret, "expected ERROR_SUCCESS got %u\n", ret);
@@ -1589,7 +1595,7 @@ static void test_GetAdaptersAddresses(void)
     size *= 2;
     osize = size;
     ptr = HeapAlloc(GetProcessHeap(), 0, osize);
-    ret = GetAdaptersAddresses(AF_UNSPEC, GAA_FLAG_INCLUDE_PREFIX, NULL, ptr, &osize);
+    ret = GetAdaptersAddresses(AF_UNSPEC, GAA_FLAG_INCLUDE_PREFIX | GAA_FLAG_SKIP_FRIENDLY_NAME, NULL, ptr, &osize);
     ok(!ret, "expected ERROR_SUCCESS got %u\n", ret);
     ok(osize == size, "expected %d, got %d\n", size, osize);
 
@@ -1665,7 +1671,7 @@ static void test_GetAdaptersAddresses(void)
 
         status = ConvertInterfaceLuidToGuid(&aa->Luid, &guid);
         ok(!status, "got %u\n", status);
-        sprintf(buf, "{%08x-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x}",
+        sprintf(buf, "{%08lx-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x}",
                 guid.Data1, guid.Data2, guid.Data3, guid.Data4[0], guid.Data4[1],
                 guid.Data4[2], guid.Data4[3], guid.Data4[4], guid.Data4[5],
                 guid.Data4[6], guid.Data4[7]);
@@ -2011,7 +2017,7 @@ static void test_interface_identifier_conversion(void)
         memset( &guid, 0xff, sizeof(guid) );
         ret = ConvertInterfaceLuidToGuid( NULL, &guid );
         ok( ret == ERROR_INVALID_PARAMETER, "got %u\n", ret );
-        ok( guid.Data1 == 0xffffffff, "got %x\n", guid.Data1 );
+        ok( guid.Data1 == 0xffffffff, "got %s\n", debugstr_guid(&guid) );
 
         ret = ConvertInterfaceLuidToGuid( &luid, NULL );
         ok( ret == ERROR_INVALID_PARAMETER, "got %u\n", ret );

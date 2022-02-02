@@ -461,7 +461,7 @@ INT WINAPI SHStringFromGUIDA(REFGUID guid, LPSTR lpszDest, INT cchMax)
 
   TRACE("(%s,%p,%d)\n", debugstr_guid(guid), lpszDest, cchMax);
 
-  sprintf(xguid, "{%08X-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X}",
+  sprintf(xguid, "{%08lX-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X}",
           guid->Data1, guid->Data2, guid->Data3,
           guid->Data4[0], guid->Data4[1], guid->Data4[2], guid->Data4[3],
           guid->Data4[4], guid->Data4[5], guid->Data4[6], guid->Data4[7]);
@@ -2714,7 +2714,7 @@ DWORD WINAPI SHGetIniStringW(LPCWSTR appName, LPCWSTR keyName, LPWSTR out,
 BOOL WINAPI SHSetIniStringW(LPCWSTR appName, LPCWSTR keyName, LPCWSTR str,
         LPCWSTR filename)
 {
-    TRACE("(%s, %p, %s, %s)\n", debugstr_w(appName), keyName, debugstr_w(str),
+    TRACE("(%s, %s, %s, %s)\n", debugstr_w(appName), debugstr_w(keyName), debugstr_w(str),
             debugstr_w(filename));
 
     return WritePrivateProfileStringW(appName, keyName, str, filename);

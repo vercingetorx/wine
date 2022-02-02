@@ -3529,11 +3529,24 @@ HRESULT WINAPI SHGetKnownFolderPath(REFKNOWNFOLDERID rfid, DWORD flags, HANDLE t
         return HRESULT_FROM_WIN32( ERROR_FILE_NOT_FOUND );
 
     if (flags & ~(KF_FLAG_CREATE|KF_FLAG_SIMPLE_IDLIST|KF_FLAG_DONT_UNEXPAND|
-        KF_FLAG_DONT_VERIFY|KF_FLAG_NO_ALIAS|KF_FLAG_INIT|KF_FLAG_DEFAULT_PATH))
+        KF_FLAG_DONT_VERIFY|KF_FLAG_NO_ALIAS|KF_FLAG_INIT|KF_FLAG_DEFAULT_PATH|KF_FLAG_NOT_PARENT_RELATIVE))
     {
         FIXME("flags 0x%08x not supported\n", flags);
         return E_INVALIDARG;
     }
+
+    if ((flags & (KF_FLAG_DEFAULT_PATH | KF_FLAG_NOT_PARENT_RELATIVE)) == KF_FLAG_NOT_PARENT_RELATIVE)
+    {
+        WARN("Invalid flags mask %#x.\n", flags);
+        return E_INVALIDARG;
+    }
+
+    if (flags & KF_FLAG_NOT_PARENT_RELATIVE)
+    {
+        FIXME("Ignoring KF_FLAG_NOT_PARENT_RELATIVE.\n");
+        flags &= ~KF_FLAG_NOT_PARENT_RELATIVE;
+    }
+
     folder |= flags & CSIDL_FLAG_MASK;
     shgfp_flags = flags & KF_FLAG_DEFAULT_PATH ? SHGFP_TYPE_DEFAULT : SHGFP_TYPE_CURRENT;
 
@@ -3664,7 +3677,7 @@ static HRESULT get_known_folder_redirection_place(
 {
     HRESULT hr;
     LPWSTR lpRegistryPath = NULL;
-    KF_CATEGORY category;
+    DWORD category;
 
     /* first, get known folder's category */
     hr = get_known_folder_registry_path(rfid, NULL, &lpRegistryPath);
@@ -3905,7 +3918,7 @@ static HRESULT WINAPI knownfolder_GetCategory(
         hr = E_FAIL;
 
     if(SUCCEEDED(hr))
-        hr = get_known_folder_dword(knownfolder->registryPath, L"Category", pCategory);
+        hr = get_known_folder_dword(knownfolder->registryPath, L"Category", (DWORD *)pCategory);
 
     return hr;
 }
@@ -3930,7 +3943,7 @@ static HRESULT get_known_folder_path(
     DWORD dwSize, dwType;
     WCHAR path[MAX_PATH] = {0};
     WCHAR parentGuid[39];
-    KF_CATEGORY category;
+    DWORD category;
     LPWSTR parentRegistryPath, parentPath;
     HKEY hRedirectionRootKey = NULL;
 
@@ -4125,7 +4138,7 @@ static HRESULT WINAPI knownfolder_GetFolderDefinition(
     ZeroMemory(pKFD, sizeof(*pKFD));
 
     /* required fields */
-    hr = get_known_folder_dword(knownfolder->registryPath, L"Category", &pKFD->category);
+    hr = get_known_folder_dword(knownfolder->registryPath, L"Category", (DWORD *)&pKFD->category);
     if(FAILED(hr))
         return hr;
 

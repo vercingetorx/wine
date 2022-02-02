@@ -396,6 +396,7 @@ static BOOL check_clsid(CLSID *clsids, UINT32 count)
 
 static void test_register(void)
 {
+    MFT_REGISTER_TYPE_INFO *in_types, *out_types;
     WCHAR name[] = L"Wine test";
     MFT_REGISTER_TYPE_INFO input[] =
     {
@@ -405,17 +406,19 @@ static void test_register(void)
     {
         { DUMMY_CLSID, DUMMY_GUID2 }
     };
+    UINT32 count, in_count, out_count;
+    IMFAttributes *attributes;
+    WCHAR *mft_name;
     CLSID *clsids;
-    UINT32 count;
-    HRESULT ret;
+    HRESULT hr, ret;
 
     ret = MFTRegister(DUMMY_CLSID, MFT_CATEGORY_OTHER, name, 0, 1, input, 1, output, NULL);
     if (ret == E_ACCESSDENIED)
     {
-        win_skip("Not enough permissions to register a filter\n");
+        win_skip("Not enough permissions to register a transform.\n");
         return;
     }
-    ok(ret == S_OK, "Failed to register dummy filter: %x\n", ret);
+    ok(ret == S_OK, "Failed to register dummy transform, hr %#x.\n", ret);
 
 if(0)
 {
@@ -445,6 +448,49 @@ if(0)
     ret = MFTEnum(MFT_CATEGORY_OTHER, 0, NULL, NULL, NULL, &clsids, NULL);
     ok(ret == E_POINTER, "Failed to enumerate filters: %x\n", ret);
 }
+    hr = MFTGetInfo(DUMMY_CLSID, &mft_name, NULL, NULL, NULL, NULL, NULL);
+    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+    ok(!lstrcmpW(mft_name, L"Wine test"), "Unexpected name %s.\n", wine_dbgstr_w(mft_name));
+    CoTaskMemFree(mft_name);
+
+    hr = MFTGetInfo(DUMMY_CLSID, NULL, NULL, NULL, NULL, NULL, NULL);
+    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+
+    in_count = out_count = 1;
+    hr = MFTGetInfo(DUMMY_CLSID, NULL, NULL, &in_count, NULL, &out_count, NULL);
+    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+    ok(!in_count, "Unexpected count %u.\n", in_count);
+    ok(!out_count, "Unexpected count %u.\n", out_count);
+
+    hr = MFTGetInfo(DUMMY_CLSID, NULL, NULL, NULL, NULL, NULL, &attributes);
+    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+    ok(!!attributes, "Unexpected attributes.\n");
+    IMFAttributes_Release(attributes);
+
+    hr = MFTGetInfo(DUMMY_CLSID, &mft_name, &in_types, &in_count, &out_types, &out_count, &attributes);
+    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+    ok(!lstrcmpW(mft_name, L"Wine test"), "Unexpected name %s.\n", wine_dbgstr_w(mft_name));
+    ok(!!in_types, "Unexpected pointer.\n");
+    ok(!!out_types, "Unexpected pointer.\n");
+    ok(in_count == 1, "Unexpected count %u.\n", in_count);
+    ok(out_count == 1, "Unexpected count %u.\n", out_count);
+    ok(IsEqualGUID(&in_types->guidMajorType, &DUMMY_CLSID), "Unexpected type guid %s.\n",
+            wine_dbgstr_guid(&in_types->guidMajorType));
+    ok(IsEqualGUID(&in_types->guidSubtype, &DUMMY_GUID1), "Unexpected type guid %s.\n",
+            wine_dbgstr_guid(&in_types->guidSubtype));
+    ok(IsEqualGUID(&out_types->guidMajorType, &DUMMY_CLSID), "Unexpected type guid %s.\n",
+            wine_dbgstr_guid(&out_types->guidMajorType));
+    ok(IsEqualGUID(&out_types->guidSubtype, &DUMMY_GUID2), "Unexpected type guid %s.\n",
+            wine_dbgstr_guid(&out_types->guidSubtype));
+    ok(!!attributes, "Unexpected attributes.\n");
+    count = 1;
+    hr = IMFAttributes_GetCount(attributes, &count);
+    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+    ok(!count, "Unexpected count %u.\n", count);
+    CoTaskMemFree(mft_name);
+    CoTaskMemFree(in_types);
+    CoTaskMemFree(out_types);
+    IMFAttributes_Release(attributes);
 
     count = 0;
     clsids = NULL;
@@ -872,7 +918,7 @@ static void test_source_resolver(void)
     ok(hr == S_OK, "Failed to get current media type, hr %#x.\n", hr);
     hr = IMFMediaType_GetGUID(media_type, &MF_MT_SUBTYPE, &guid);
     ok(hr == S_OK, "Failed to get media sub type, hr %#x.\n", hr);
-todo_wine
+    todo_wine
     ok(IsEqualGUID(&guid, &MFVideoFormat_M4S2), "Unexpected sub type %s.\n", debugstr_guid(&guid));
 
     hr = IMFMediaType_GetUINT32(media_type, &MF_MT_VIDEO_ROTATION, &rotation);
@@ -5213,9 +5259,11 @@ static const IClassFactoryVtbl test_mft_factory_vtbl =
 static void test_MFTRegisterLocal(void)
 {
     IClassFactory test_factory = { &test_mft_factory_vtbl };
-    MFT_REGISTER_TYPE_INFO input_types[1];
+    MFT_REGISTER_TYPE_INFO input_types[1], *in_types, *out_types;
+    IMFAttributes *attributes;
     IMFActivate **activate;
     UINT32 count, count2;
+    WCHAR *name;
     HRESULT hr;
 
     if (!pMFTRegisterLocal)
@@ -5254,6 +5302,9 @@ static void test_MFTRegisterLocal(void)
     hr = pMFTRegisterLocalByCLSID(&MFT_CATEGORY_OTHER, &MFT_CATEGORY_OTHER, L"Local MFT name 2", 0, 1, input_types,
             0, NULL);
     ok(hr == S_OK, "Failed to register MFT, hr %#x.\n", hr);
+
+    hr = MFTGetInfo(MFT_CATEGORY_OTHER, &name, &in_types, &count, &out_types, &count2, &attributes);
+    ok(hr == HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND), "Unexpected hr %#x.\n", hr);
 
     hr = pMFTUnregisterLocal(NULL);
     ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
@@ -6869,7 +6920,7 @@ static void test_d3d12_surface_buffer(void)
     hr = pMFCreateDXGISurfaceBuffer(&IID_ID3D12Resource, (IUnknown *)resource, 0, FALSE, &buffer);
     if (hr == E_INVALIDARG)
     {
-todo_wine
+        todo_wine
         win_skip("D3D12 resource buffers are not supported.\n");
         goto notsupported;
     }
@@ -7037,7 +7088,7 @@ static void test_sample_allocator_sysmem(void)
 
     hr = IMFVideoSampleAllocatorCallback_GetFreeSampleCount(allocator_cb, &count);
     ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
-todo_wine
+    todo_wine
     ok(!count, "Unexpected count %d.\n", count);
 
     check_interface(sample, &IID_IMFTrackedSample, TRUE);
@@ -7061,7 +7112,7 @@ todo_wine
 
     hr = IMFVideoSampleAllocator_UninitializeSampleAllocator(allocator);
     ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
-todo_wine
+    todo_wine
     EXPECT_REF(video_type, 2);
 
     hr = IMFVideoSampleAllocatorCallback_GetFreeSampleCount(allocator_cb, &count);
@@ -7404,7 +7455,7 @@ static void test_sample_allocator_d3d11(void)
         hr = IMFVideoSampleAllocatorEx_InitializeSampleAllocatorEx(allocatorex, 0, 0, attributes, video_type);
         if (sharing[i] == (D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX | D3D11_RESOURCE_MISC_SHARED))
         {
-        todo_wine
+            todo_wine
             ok(hr == E_INVALIDARG, "%u: Unexpected hr %#x.\n", i, hr);
             IMFVideoSampleAllocatorEx_Release(allocatorex);
             continue;
@@ -7489,7 +7540,7 @@ static void test_sample_allocator_d3d12(void)
     ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
 
     hr = IMFVideoSampleAllocator_InitializeSampleAllocator(allocator, 1, video_type);
-todo_wine
+    todo_wine
     ok(hr == S_OK || broken(hr == MF_E_UNEXPECTED) /* Some Win10 versions fail. */, "Unexpected hr %#x.\n", hr);
     if (FAILED(hr)) goto done;
 

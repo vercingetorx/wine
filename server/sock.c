@@ -722,6 +722,7 @@ static void complete_async_accept( struct sock *sock, struct accept_req *req )
         handle = alloc_handle_no_access_check( async_get_thread( async )->process, &acceptsock->obj,
                                                GENERIC_READ | GENERIC_WRITE | SYNCHRONIZE, OBJ_INHERIT );
         acceptsock->wparam = handle;
+        sock_reselect( acceptsock );
         release_object( acceptsock );
         if (!handle)
         {
@@ -2174,6 +2175,7 @@ static void sock_ioctl( struct fd *fd, ioctl_code_t code, struct async *async )
         handle = alloc_handle( current->process, &acceptsock->obj,
                                GENERIC_READ | GENERIC_WRITE | SYNCHRONIZE, OBJ_INHERIT );
         acceptsock->wparam = handle;
+        sock_reselect( acceptsock );
         release_object( acceptsock );
         set_reply_data( &handle, sizeof(handle) );
         return;
@@ -2541,6 +2543,11 @@ static void sock_ioctl( struct fd *fd, ioctl_code_t code, struct async *async )
         sock->nonblocking = 1;
 
         sock_reselect( sock );
+        /* Explicitly wake the socket up if the mask causes it to become
+         * signaled. Note that reselecting isn't enough, since we might already
+         * have had events recorded in sock->reported_events and we don't want
+         * to select for them again. */
+        sock_wake_up( sock );
 
         return;
     }
@@ -2972,6 +2979,9 @@ static int poll_single_socket( struct sock *sock, int mask )
     if (pollfd.events < 0 || poll( &pollfd, 1, 0 ) < 0)
         return 0;
 
+    if (sock->state == SOCK_CONNECTING && (pollfd.revents & (POLLERR | POLLHUP)))
+        pollfd.revents &= ~POLLOUT;
+
     if ((mask & AFD_POLL_HUP) && (pollfd.revents & POLLIN) && sock->type == WS_SOCK_STREAM)
     {
         char dummy;
@@ -3036,7 +3046,7 @@ static void poll_socket( struct sock *poll_sock, struct async *async, int exclus
         req->sockets[i].sock = (struct sock *)get_handle_obj( current->process, sockets[i].socket, 0, &sock_ops );
         if (!req->sockets[i].sock)
         {
-            for (j = 0; j < i; ++j) release_object( req->sockets[i].sock );
+            for (j = 0; j < i; ++j) release_object( req->sockets[j].sock );
             if (req->timeout) remove_timeout_user( req->timeout );
             free( req );
             return;

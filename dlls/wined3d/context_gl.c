@@ -2706,12 +2706,12 @@ static void *wined3d_bo_gl_map(struct wined3d_bo_gl *bo, struct wined3d_context_
 
 map:
     if (bo->b.map_ptr)
-        return (uint8_t *)bo->b.map_ptr;
+        return bo->b.map_ptr;
 
     gl_info = context_gl->gl_info;
     wined3d_context_gl_bind_bo(context_gl, bo->binding, bo->id);
 
-    if (gl_info->supported[ARB_BUFFER_STORAGE] && wined3d_map_persistent())
+    if (gl_info->supported[ARB_BUFFER_STORAGE])
     {
         GLbitfield gl_flags;
 
@@ -2719,15 +2719,28 @@ map:
          * used to create the bo, instead of the access flags passed to the
          * map call. Otherwise, if for example the initial map call that
          * caused the bo to be persistently mapped was a read-only map,
-         * subsequent write access to the bo would be undefined. */
-        gl_flags = bo->flags & ~GL_CLIENT_STORAGE_BIT;
+         * subsequent write access to the bo would be undefined.
+         *
+         * Note that we use GL_MAP_PERSISTENT_BIT for non-persistent maps here
+         * as well, in order to allow draws to succeed while referenced buffer
+         * resources are mapped. On the other hand, we don't want to use the
+         * access flags used to create the bo for non-persistent maps, because
+         * that may imply dropping GL_MAP_UNSYNCHRONIZED_BIT. */
+        if (wined3d_map_persistent())
+        {
+            gl_flags = bo->flags & ~GL_CLIENT_STORAGE_BIT;
+            if (!(gl_flags & GL_MAP_READ_BIT))
+                gl_flags |= GL_MAP_UNSYNCHRONIZED_BIT;
+            if (gl_flags & GL_MAP_WRITE_BIT)
+                gl_flags |= GL_MAP_FLUSH_EXPLICIT_BIT;
+        }
+        else
+        {
+            gl_flags = wined3d_resource_gl_map_flags(bo, flags);
+        }
         gl_flags |= GL_MAP_PERSISTENT_BIT | GL_MAP_COHERENT_BIT;
-        if (!(gl_flags & GL_MAP_READ_BIT))
-            gl_flags |= GL_MAP_UNSYNCHRONIZED_BIT;
-        if (gl_flags & GL_MAP_WRITE_BIT)
-            gl_flags |= GL_MAP_FLUSH_EXPLICIT_BIT;
 
-        if ((map_ptr = GL_EXTCALL(glMapBufferRange(bo->binding, 0, bo->size, gl_flags))))
+        if ((map_ptr = GL_EXTCALL(glMapBufferRange(bo->binding, 0, bo->size, gl_flags))) && wined3d_map_persistent())
             bo->b.map_ptr = map_ptr;
     }
     else if (gl_info->supported[ARB_MAP_BUFFER_RANGE])
@@ -2743,6 +2756,19 @@ map:
     checkGLcall("Map buffer object");
 
     return map_ptr;
+}
+
+static void wined3d_bo_gl_unmap(struct wined3d_bo_gl *bo, struct wined3d_context_gl *context_gl)
+{
+    const struct wined3d_gl_info *gl_info = context_gl->gl_info;
+
+    if (bo->b.map_ptr)
+        return;
+
+    wined3d_context_gl_bind_bo(context_gl, bo->binding, bo->id);
+    GL_EXTCALL(glUnmapBuffer(bo->binding));
+    wined3d_context_gl_bind_bo(context_gl, bo->binding, 0);
+    checkGLcall("Unmap buffer object");
 }
 
 void *wined3d_context_gl_map_bo_address(struct wined3d_context_gl *context_gl,
@@ -2804,7 +2830,6 @@ static void flush_bo_ranges(struct wined3d_context_gl *context_gl, const struct 
 void wined3d_context_gl_unmap_bo_address(struct wined3d_context_gl *context_gl,
         const struct wined3d_bo_address *data, unsigned int range_count, const struct wined3d_range *ranges)
 {
-    const struct wined3d_gl_info *gl_info;
     struct wined3d_bo_gl *bo;
 
     if (!data->buffer_object)
@@ -2812,15 +2837,7 @@ void wined3d_context_gl_unmap_bo_address(struct wined3d_context_gl *context_gl,
     bo = wined3d_bo_gl(data->buffer_object);
 
     flush_bo_ranges(context_gl, wined3d_const_bo_address(data), range_count, ranges);
-
-    if (bo->b.map_ptr)
-        return;
-
-    gl_info = context_gl->gl_info;
-    wined3d_context_gl_bind_bo(context_gl, bo->binding, bo->id);
-    GL_EXTCALL(glUnmapBuffer(bo->binding));
-    wined3d_context_gl_bind_bo(context_gl, bo->binding, 0);
-    checkGLcall("Unmap buffer object");
+    wined3d_bo_gl_unmap(bo, context_gl);
 }
 
 void wined3d_context_gl_flush_bo_address(struct wined3d_context_gl *context_gl,
@@ -3557,18 +3574,16 @@ static void wined3d_context_gl_map_fixed_function_samplers(struct wined3d_contex
 {
     const struct wined3d_d3d_info *d3d_info = context_gl->c.d3d_info;
     unsigned int i, tex;
-    WORD ffu_map;
+    uint32_t ffu_map;
 
     ffu_map = context_gl->c.fixed_function_usage_map;
 
     if (d3d_info->limits.ffp_textures == d3d_info->limits.ffp_blend_stages
             || context_gl->c.lowest_disabled_stage <= d3d_info->limits.ffp_textures)
     {
-        for (i = 0; ffu_map; ffu_map >>= 1, ++i)
+        while (ffu_map)
         {
-            if (!(ffu_map & 1))
-                continue;
-
+            i = wined3d_bit_scan(&ffu_map);
             if (context_gl->tex_unit_map[i] != i)
             {
                 wined3d_context_gl_map_stage(context_gl, i, i);
@@ -3581,11 +3596,9 @@ static void wined3d_context_gl_map_fixed_function_samplers(struct wined3d_contex
 
     /* Now work out the mapping */
     tex = 0;
-    for (i = 0; ffu_map; ffu_map >>= 1, ++i)
+    while (ffu_map)
     {
-        if (!(ffu_map & 1))
-            continue;
-
+        i = wined3d_bit_scan(&ffu_map);
         if (context_gl->tex_unit_map[i] != tex)
         {
             wined3d_context_gl_map_stage(context_gl, i, tex);
@@ -4695,7 +4708,7 @@ static void draw_primitive_immediate_mode(struct wined3d_context_gl *context_gl,
      * them is printed after decoding the vertex declaration. */
     for (vertex_idx = 0; vertex_idx < vertex_count; ++vertex_idx)
     {
-        unsigned int tmp_tex_mask;
+        uint32_t tmp_tex_mask;
 
         stride_idx = get_stride_idx(idx_data, idx_size, base_vertex_idx, start_idx, vertex_idx);
 
@@ -4734,11 +4747,9 @@ static void draw_primitive_immediate_mode(struct wined3d_context_gl *context_gl,
         }
 
         tmp_tex_mask = tex_mask;
-        for (texture_idx = 0; tmp_tex_mask; tmp_tex_mask >>= 1, ++texture_idx)
+        while (tmp_tex_mask)
         {
-            if (!(tmp_tex_mask & 1))
-                continue;
-
+            texture_idx = wined3d_bit_scan(&tmp_tex_mask);
             coord_idx = state->texture_states[texture_idx][WINED3D_TSS_TEXCOORD_INDEX];
             ptr = tex_coords[coord_idx] + (stride_idx * si->elements[WINED3D_FFP_TEXCOORD0 + coord_idx].stride);
             ops->texcoord[si->elements[WINED3D_FFP_TEXCOORD0 + coord_idx].format->emit_idx](

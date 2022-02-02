@@ -245,7 +245,7 @@ static HRESULT WINAPI sysinfo_get_UserName(IADsADSystemInfo *iface, BSTR *retval
 
 static HRESULT WINAPI sysinfo_get_ComputerName(IADsADSystemInfo *iface, BSTR *retval)
 {
-    UINT size;
+    ULONG size;
     WCHAR *name;
 
     TRACE("%p,%p\n", iface, retval);
@@ -1302,7 +1302,11 @@ static HRESULT WINAPI search_ExecuteSearch(IDirectorySearch *iface, LPWSTR filte
         props = NULL;
     else
     {
-        if (count && !names) return E_ADS_BAD_PARAMETER;
+        if (count && !names)
+        {
+            heap_free(ldap_ctx);
+            return E_ADS_BAD_PARAMETER;
+        }
 
         props = heap_alloc((count + 1) * sizeof(props[0]));
         if (!props)

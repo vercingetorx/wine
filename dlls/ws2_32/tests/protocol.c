@@ -393,13 +393,13 @@ static void test_WSALookupService(void)
     ret = WSALookupServiceBeginW(NULL, 0, &handle);
     error = WSAGetLastError();
     ok(ret == SOCKET_ERROR, "WSALookupServiceBeginW should have failed\n");
-todo_wine
+    todo_wine
     ok(error == WSAEFAULT, "expected 10014, got %d\n", error);
 
     ret = WSALookupServiceBeginW(qs, 0, NULL);
     error = WSAGetLastError();
     ok(ret == SOCKET_ERROR, "WSALookupServiceBeginW should have failed\n");
-todo_wine
+    todo_wine
     ok(error == WSAEFAULT, "expected 10014, got %d\n", error);
 
     ret = WSALookupServiceBeginW(qs, 0, &handle);
@@ -410,9 +410,9 @@ todo_wine
 
     ret = WSALookupServiceEnd(NULL);
     error = WSAGetLastError();
-todo_wine
+    todo_wine
     ok(ret == SOCKET_ERROR, "WSALookupServiceEnd should have failed\n");
-todo_wine
+    todo_wine
     ok(error == ERROR_INVALID_HANDLE, "expected 6, got %d\n", error);
 
     /* standard network list query */
@@ -426,9 +426,9 @@ todo_wine
         return;
     }
 
-todo_wine
+    todo_wine
     ok(!ret, "WSALookupServiceBeginW failed unexpectedly with error %d\n", error);
-todo_wine
+    todo_wine
     ok(handle != (HANDLE)0xdeadbeef, "Handle was not filled\n");
 
     offset = 0;
@@ -2610,40 +2610,40 @@ static void test_WSAEnumNameSpaceProvidersA(void)
     SetLastError(0xdeadbeef);
     ret = WSAEnumNameSpaceProvidersA(&len, name);
     error = WSAGetLastError();
-todo_wine
+    todo_wine
     ok(ret == SOCKET_ERROR, "Expected failure, got %u\n", ret);
-todo_wine
+    todo_wine
     ok(error == WSAEFAULT, "Expected 10014, got %u\n", error);
 
     /* Invalid parameter tests */
     SetLastError(0xdeadbeef);
     ret = WSAEnumNameSpaceProvidersA(NULL, name);
     error = WSAGetLastError();
-todo_wine
+    todo_wine
     ok(ret == SOCKET_ERROR, "Expected failure, got %u\n", ret);
-todo_wine
+    todo_wine
     ok(error == WSAEFAULT, "Expected 10014, got %u\n", error);
 
     SetLastError(0xdeadbeef);
     ret = WSAEnumNameSpaceProvidersA(NULL, NULL);
     error = WSAGetLastError();
-todo_wine
+    todo_wine
     ok(ret == SOCKET_ERROR, "Expected failure, got %u\n", ret);
-todo_wine
+    todo_wine
     ok(error == WSAEFAULT, "Expected 10014, got %u\n", error);
 
     SetLastError(0xdeadbeef);
     ret = WSAEnumNameSpaceProvidersA(&len, NULL);
     error = WSAGetLastError();
-todo_wine
+    todo_wine
     ok(ret == SOCKET_ERROR, "Expected failure, got %u\n", ret);
-todo_wine
+    todo_wine
     ok(error == WSAEFAULT, "Expected 10014, got %u\n", error);
 
     name = HeapAlloc(GetProcessHeap(), 0, len);
 
     ret = WSAEnumNameSpaceProvidersA(&len, name);
-todo_wine
+    todo_wine
     ok(ret > 0, "Expected more than zero name space providers\n");
 
     HeapFree(GetProcessHeap(), 0, name);
@@ -2657,40 +2657,40 @@ static void test_WSAEnumNameSpaceProvidersW(void)
     SetLastError(0xdeadbeef);
     ret = WSAEnumNameSpaceProvidersW(&len, name);
     error = WSAGetLastError();
-todo_wine
+    todo_wine
     ok(ret == SOCKET_ERROR, "Expected failure, got %u\n", ret);
-todo_wine
+    todo_wine
     ok(error == WSAEFAULT, "Expected 10014, got %u\n", error);
 
     /* Invalid parameter tests */
     SetLastError(0xdeadbeef);
     ret = WSAEnumNameSpaceProvidersW(NULL, name);
     error = WSAGetLastError();
-todo_wine
+    todo_wine
     ok(ret == SOCKET_ERROR, "Expected failure, got %u\n", ret);
-todo_wine
+    todo_wine
     ok(error == WSAEFAULT, "Expected 10014, got %u\n", error);
 
     SetLastError(0xdeadbeef);
     ret = WSAEnumNameSpaceProvidersW(NULL, NULL);
     error = WSAGetLastError();
-todo_wine
+    todo_wine
     ok(ret == SOCKET_ERROR, "Expected failure, got %u\n", ret);
-todo_wine
+    todo_wine
     ok(error == WSAEFAULT, "Expected 10014, got %u\n", error);
 
     SetLastError(0xdeadbeef);
     ret = WSAEnumNameSpaceProvidersW(&len, NULL);
     error = WSAGetLastError();
-todo_wine
+    todo_wine
     ok(ret == SOCKET_ERROR, "Expected failure, got %u\n", ret);
-todo_wine
+    todo_wine
     ok(error == WSAEFAULT, "Expected 10014, got %u\n", error);
 
     name = HeapAlloc(GetProcessHeap(), 0, len);
 
     ret = WSAEnumNameSpaceProvidersW(&len, name);
-todo_wine
+    todo_wine
     ok(ret > 0, "Expected more than zero name space providers\n");
 
     if (winetest_debug > 1)
@@ -2815,10 +2815,81 @@ static void test_WSCGetProviderPath(void)
     ok(len == 256, "Got unexpected len %d.\n", len);
 }
 
+static void test_startup(void)
+{
+    unsigned int i;
+    WSADATA data;
+    int ret;
+
+    static const struct
+    {
+        WORD version;
+        WORD ret_version;
+    }
+    tests[] =
+    {
+        {MAKEWORD(0, 0), MAKEWORD(2, 2)},
+        {MAKEWORD(0, 1), MAKEWORD(2, 2)},
+        {MAKEWORD(1, 0), MAKEWORD(1, 0)},
+        {MAKEWORD(1, 1), MAKEWORD(1, 1)},
+        {MAKEWORD(1, 2), MAKEWORD(1, 1)},
+        {MAKEWORD(1, 0xff), MAKEWORD(1, 1)},
+        {MAKEWORD(2, 0), MAKEWORD(2, 0)},
+        {MAKEWORD(2, 1), MAKEWORD(2, 1)},
+        {MAKEWORD(2, 2), MAKEWORD(2, 2)},
+        {MAKEWORD(2, 3), MAKEWORD(2, 2)},
+        {MAKEWORD(2, 0xff), MAKEWORD(2, 2)},
+        {MAKEWORD(3, 0), MAKEWORD(2, 2)},
+        {MAKEWORD(0xff, 0), MAKEWORD(2, 2)},
+    };
+
+    for (i = 0; i < ARRAY_SIZE(tests); ++i)
+    {
+        winetest_push_context("Version %#x", tests[i].version);
+
+        memset(&data, 0xcc, sizeof(data));
+        data.lpVendorInfo = (void *)0xdeadbeef;
+        ret = WSAStartup(tests[i].version, &data);
+        ok(ret == (LOBYTE(tests[i].version) ? 0 : WSAVERNOTSUPPORTED), "got %d\n", ret);
+        ok(data.wVersion == tests[i].ret_version, "got version %#x\n", data.wVersion);
+        if (!ret)
+        {
+            ret = WSAStartup(tests[i].version, &data);
+            ok(!ret, "got %d\n", ret);
+
+            WSASetLastError(0xdeadbeef);
+            ret = WSACleanup();
+            ok(!ret, "got %d\n", ret);
+            todo_wine ok(!WSAGetLastError(), "got error %u\n", WSAGetLastError());
+
+            WSASetLastError(0xdeadbeef);
+            ret = WSACleanup();
+            ok(!ret, "got %d\n", ret);
+            todo_wine ok(!WSAGetLastError(), "got error %u\n", WSAGetLastError());
+        }
+        ok(data.lpVendorInfo == (void *)0xdeadbeef, "got vendor info %p\n", data.lpVendorInfo);
+        ok(data.wHighVersion == 0x202, "got maximum version %#x\n", data.wHighVersion);
+        ok(!strcmp(data.szDescription, "WinSock 2.0"), "got description %s\n", debugstr_a(data.szDescription));
+        ok(!strcmp(data.szSystemStatus, "Running"), "got status %s\n", debugstr_a(data.szSystemStatus));
+        ok(data.iMaxSockets == (LOBYTE(tests[i].version) == 1 ? 32767 : 0), "got maximum sockets %u\n", data.iMaxSockets);
+        ok(data.iMaxUdpDg == (LOBYTE(tests[i].version) == 1 ? 65467 : 0), "got maximum datagram size %u\n", data.iMaxUdpDg);
+
+        WSASetLastError(0xdeadbeef);
+        ret = WSACleanup();
+        ok(ret == -1, "got %d\n", ret);
+        ok(WSAGetLastError() == WSANOTINITIALISED, "got error %u\n", WSAGetLastError());
+
+        ret = WSAStartup(tests[i].version, NULL);
+        ok(ret == (LOBYTE(tests[i].version) ? WSAEFAULT : WSAVERNOTSUPPORTED), "got %d\n", ret);
+
+        winetest_pop_context();
+    }
+}
+
 START_TEST( protocol )
 {
     WSADATA data;
-    WORD version = MAKEWORD( 2, 2 );
+    int ret;
 
     pFreeAddrInfoExW = (void *)GetProcAddress(GetModuleHandleA("ws2_32"), "FreeAddrInfoExW");
     pGetAddrInfoExOverlappedResult = (void *)GetProcAddress(GetModuleHandleA("ws2_32"), "GetAddrInfoExOverlappedResult");
@@ -2830,7 +2901,8 @@ START_TEST( protocol )
     pInetPtonW = (void *)GetProcAddress(GetModuleHandleA("ws2_32"), "InetPtonW");
     pWSCGetProviderInfo = (void *)GetProcAddress(GetModuleHandleA("ws2_32"), "WSCGetProviderInfo");
 
-    if (WSAStartup( version, &data )) return;
+    ret = WSAStartup(0x202, &data);
+    ok(!ret, "got %d\n", ret);
 
     test_WSAEnumProtocolsA();
     test_WSAEnumProtocolsW();
@@ -2839,8 +2911,6 @@ START_TEST( protocol )
 
     test_getservbyname();
     test_WSALookupService();
-    test_WSAAsyncGetServByPort();
-    test_WSAAsyncGetServByName();
 
     test_inet_ntoa();
     test_inet_pton();
@@ -2862,4 +2932,20 @@ START_TEST( protocol )
     test_WSAEnumNameSpaceProvidersW();
     test_WSCGetProviderInfo();
     test_WSCGetProviderPath();
+
+    WSACleanup();
+
+    /* These tests are finnicky. If WSAStartup() is ever called with a
+     * version below 2.2, it causes getaddrinfo() to behave differently. */
+
+    test_startup();
+
+    /* And if WSAAsyncGetServBy*() is ever called, it somehow causes
+     * WSAStartup() to succeed with 0.1 instead of failing. */
+
+    ret = WSAStartup(0x202, &data);
+    ok(!ret, "got %d\n", ret);
+
+    test_WSAAsyncGetServByPort();
+    test_WSAAsyncGetServByName();
 }

@@ -752,6 +752,7 @@ static NTSTATUS unix_getaddrinfo( void *args )
         dst->ai_addrlen = sockaddr_from_unix( (const union unix_sockaddr *)src->ai_addr, NULL, 0 );
         dst->ai_addr = next;
         sockaddr_from_unix( (const union unix_sockaddr *)src->ai_addr, dst->ai_addr, dst->ai_addrlen );
+        dst->ai_next = NULL;
         next = (char *)dst->ai_addr + dst->ai_addrlen;
 
         if (dst == params->info || !addrinfo_in_list( params->info, dst ))
@@ -762,8 +763,6 @@ static NTSTATUS unix_getaddrinfo( void *args )
             dst = next;
         }
     }
-
-    dst->ai_next = NULL;
 
     freeaddrinfo( unix_info );
     return 0;
@@ -866,9 +865,9 @@ static NTSTATUS unix_gethostbyaddr( void *args )
         }
 
         if (!unix_host)
-            return (locerr < 0 ? errno_from_unix( errno ) : host_errno_from_unix( locerr ));
-
-        ret = hostent_from_unix( unix_host, params->host, params->size );
+            ret = (locerr < 0 ? errno_from_unix( errno ) : host_errno_from_unix( locerr ));
+        else
+            ret = hostent_from_unix( unix_host, params->host, params->size );
 
         free( unix_buffer );
         return ret;
@@ -916,9 +915,9 @@ static NTSTATUS unix_gethostbyname( void *args )
     }
 
     if (!unix_host)
-        return (locerr < 0 ? errno_from_unix( errno ) : host_errno_from_unix( locerr ));
-
-    ret = hostent_from_unix( unix_host, params->host, params->size );
+        ret = (locerr < 0 ? errno_from_unix( errno ) : host_errno_from_unix( locerr ));
+    else
+        ret = hostent_from_unix( unix_host, params->host, params->size );
 
     free( unix_buffer );
     return ret;

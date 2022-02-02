@@ -35,6 +35,8 @@
 
 static IFileSystem3 *fs3;
 
+static HRESULT (WINAPI *pDoOpenPipeStream)(HANDLE pipe, DWORD mode, ITextStream **stream);
+
 /* w2k and 2k3 error code. */
 #define E_VAR_NOT_SET 0x800a005b
 
@@ -470,6 +472,20 @@ static void test_GetFileName(void)
         SysFreeString(path);
         SysFreeString(result);
     }
+}
+
+static void test_GetTempName(void)
+{
+    BSTR result;
+    HRESULT hr;
+
+    hr = IFileSystem3_GetTempName(fs3, NULL);
+    ok(hr == E_POINTER, "GetTempName returned %x, expected E_POINTER\n", hr);
+    result = (BSTR)0xdeadbeef;
+    hr = IFileSystem3_GetTempName(fs3, &result);
+    ok(hr == S_OK, "GetTempName returned %x, expected S_OK\n", hr);
+    ok(!!wcsstr( result,L".tmp"), "GetTempName returned %s, expected .tmp suffix\n", debugstr_w(result));
+    SysFreeString(result);
 }
 
 static void test_GetBaseName(void)
@@ -2576,6 +2592,91 @@ static void test_MoveFile(void)
     SysFreeString(str);
 }
 
+static void test_DoOpenPipeStream(void)
+{
+    static const char testdata[] = "test";
+    ITextStream *stream_read, *stream_write;
+    SECURITY_ATTRIBUTES pipe_attr;
+    HANDLE piperead, pipewrite;
+    DWORD written;
+    HRESULT hr;
+    BSTR str;
+    BOOL ret;
+
+    pDoOpenPipeStream = (void *)GetProcAddress(GetModuleHandleA("scrrun.dll"), "DoOpenPipeStream");
+
+    pipe_attr.nLength = sizeof(SECURITY_ATTRIBUTES);
+    pipe_attr.bInheritHandle = TRUE;
+    pipe_attr.lpSecurityDescriptor = NULL;
+    ret = CreatePipe(&piperead, &pipewrite, &pipe_attr, 0);
+    ok(ret, "Failed to create pipes.\n");
+
+    hr = pDoOpenPipeStream(piperead, ForReading, &stream_read);
+    todo_wine
+    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+    if (SUCCEEDED(hr))
+    {
+        ok(!!stream_read, "Unexpected stream pointer.\n");
+
+        ret = WriteFile(pipewrite, testdata, sizeof(testdata), &written, NULL);
+        ok(ret, "Failed to write to the pipe.\n");
+        ok(written == sizeof(testdata), "Write to anonymous pipe wrote %d bytes.\n", written);
+
+        hr = ITextStream_Read(stream_read, 4, &str);
+        ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+        ok(!wcscmp(str, L"test"), "Unexpected data read %s.\n", wine_dbgstr_w(str));
+        SysFreeString(str);
+
+        ITextStream_Release(stream_read);
+    }
+
+    ret = CloseHandle(pipewrite);
+    ok(ret, "Unexpected return value.\n");
+    /* Stream takes ownership. */
+    ret = CloseHandle(piperead);
+    todo_wine
+    ok(!ret, "Unexpected return value.\n");
+
+    /* Streams on both ends. */
+    ret = CreatePipe(&piperead, &pipewrite, &pipe_attr, 0);
+    ok(ret, "Failed to create pipes.\n");
+
+    stream_read = NULL;
+    hr = pDoOpenPipeStream(piperead, ForReading, &stream_read);
+    todo_wine
+    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+
+    stream_write = NULL;
+    hr = pDoOpenPipeStream(pipewrite, ForWriting, &stream_write);
+    todo_wine
+    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+
+    if (SUCCEEDED(hr))
+    {
+        str = SysAllocString(L"data");
+        hr = ITextStream_Write(stream_write, str);
+        ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+
+        hr = ITextStream_Write(stream_read, str);
+        ok(hr == CTL_E_BADFILEMODE, "Unexpected hr %#x.\n", hr);
+
+        SysFreeString(str);
+
+        hr = ITextStream_Read(stream_write, 1, &str);
+        ok(hr == CTL_E_BADFILEMODE, "Unexpected hr %#x.\n", hr);
+
+        hr = ITextStream_Read(stream_read, 4, &str);
+        ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+        ok(!wcscmp(str, L"data"), "Unexpected data.\n");
+        SysFreeString(str);
+    }
+
+    if (stream_read)
+        ITextStream_Release(stream_read);
+    if (stream_write)
+        ITextStream_Release(stream_write);
+}
+
 START_TEST(filesystem)
 {
     HRESULT hr;
@@ -2598,6 +2699,7 @@ START_TEST(filesystem)
     test_GetBaseName();
     test_GetAbsolutePathName();
     test_GetFile();
+    test_GetTempName();
     test_CopyFolder();
     test_BuildPath();
     test_GetFolder();
@@ -2617,6 +2719,7 @@ START_TEST(filesystem)
     test_GetExtensionName();
     test_GetSpecialFolder();
     test_MoveFile();
+    test_DoOpenPipeStream();
 
     IFileSystem3_Release(fs3);
 

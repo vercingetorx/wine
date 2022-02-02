@@ -90,8 +90,8 @@ static BOOL is_prefix_bootstrap;  /* are we bootstrapping the prefix? */
 static BOOL imports_fixup_done = FALSE;  /* set once the imports have been fixed up, before attaching them */
 static BOOL process_detaching = FALSE;  /* set on process detach to avoid deadlocks with thread detach */
 static int free_lib_count;   /* recursion depth of LdrUnloadDll calls */
-static ULONG path_safe_mode;  /* path mode set by RtlSetSearchPathMode */
-static ULONG dll_safe_mode = 1;  /* dll search mode */
+static LONG path_safe_mode;  /* path mode set by RtlSetSearchPathMode */
+static LONG dll_safe_mode = 1;  /* dll search mode */
 static UNICODE_STRING dll_directory;  /* extra path for LdrSetDllDirectory */
 static UNICODE_STRING system_dll_path; /* path to search for system dependency dlls */
 static DWORD default_search_flags;  /* default flags set by LdrSetDefaultDllDirectories */
@@ -250,8 +250,8 @@ RTL_UNLOAD_EVENT_TRACE * WINAPI RtlGetUnloadEventTrace(void)
  */
 void WINAPI RtlGetUnloadEventTraceEx(ULONG **size, ULONG **count, void **trace)
 {
-    static unsigned int element_size = sizeof(*unload_traces);
-    static unsigned int element_count = ARRAY_SIZE(unload_traces);
+    static ULONG element_size = sizeof(*unload_traces);
+    static ULONG element_count = ARRAY_SIZE(unload_traces);
 
     *size = &element_size;
     *count = &element_count;
@@ -628,7 +628,7 @@ static BOOL is_import_dll_system( LDR_DATA_TABLE_ENTRY *mod, const IMAGE_IMPORT_
 {
     const char *name = get_rva( mod->DllBase, import->Name );
 
-    return !strcmp( name, "ntdll.dll" ) || !strcmp( name, "kernel32.dll" );
+    return !_stricmp( name, "ntdll.dll" ) || !_stricmp( name, "kernel32.dll" );
 }
 
 /**********************************************************************
@@ -3334,7 +3334,7 @@ NTSTATUS WINAPI LdrQueryProcessModuleInformation(RTL_PROCESS_MODULES *smi,
 }
 
 
-static NTSTATUS query_dword_option( HANDLE hkey, LPCWSTR name, ULONG *value )
+static NTSTATUS query_dword_option( HANDLE hkey, LPCWSTR name, LONG *value )
 {
     NTSTATUS status;
     UNICODE_STRING str;
@@ -4369,7 +4369,7 @@ NTSTATUS WINAPI RtlSetSearchPathMode( ULONG flags )
         val = 0;
         break;
     case BASE_SEARCH_PATH_ENABLE_SAFE_SEARCHMODE | BASE_SEARCH_PATH_PERMANENT:
-        InterlockedExchange( (int *)&path_safe_mode, 2 );
+        InterlockedExchange( &path_safe_mode, 2 );
         return STATUS_SUCCESS;
     default:
         return STATUS_INVALID_PARAMETER;
@@ -4377,9 +4377,9 @@ NTSTATUS WINAPI RtlSetSearchPathMode( ULONG flags )
 
     for (;;)
     {
-        int prev = path_safe_mode;
+        LONG prev = path_safe_mode;
         if (prev == 2) break;  /* permanently set */
-        if (InterlockedCompareExchange( (int *)&path_safe_mode, val, prev ) == prev) return STATUS_SUCCESS;
+        if (InterlockedCompareExchange( &path_safe_mode, val, prev ) == prev) return STATUS_SUCCESS;
     }
     return STATUS_ACCESS_DENIED;
 }
