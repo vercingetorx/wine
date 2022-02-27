@@ -13,7 +13,7 @@ jobs:
       - name: Compile
         run: |
           # Set wine/staging version
-          wine_version="7.2"
+          wine_version="7.3"
           
           # Enable multilib for i386 deps
           echo -e "[multilib]\nInclude = /etc/pacman.d/mirrorlist" >> /etc/pacman.conf
@@ -41,7 +41,7 @@ jobs:
           
       - name: Package
         run: |
-          wine_version="7.2"
+          wine_version="7.3"
           cd /tmp/wine-tkg/
           tar --use-compress-program=unzstd -xvf wine-tkg-*
           mv usr /tmp/caffe-$wine_version-x86_64
@@ -52,7 +52,7 @@ jobs:
           repo_token: "${{ secrets.GITHUB_TOKEN }}"
           draft: false
           prerelease: false
-          automatic_release_tag: "caffe-7.2"
-          title: "Caffe 7.2"
-          files: "/tmp/caffe-7.2-x86_64.tar.xz"
+          automatic_release_tag: "caffe-7.3"
+          title: "Caffe 7.3"
+          files: "/tmp/caffe-7.3-x86_64.tar.xz"
           
