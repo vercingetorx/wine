@@ -1,4 +1,4 @@
-name: build-stable-caffe
+name: build-stable-caffe-fedora
 on:
   push:
     branches: [ caffe ]
