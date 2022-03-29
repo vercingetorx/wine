@@ -1,0 +1,47 @@
+name: caffe-build
+on:
+  workflow_dispatch:
+  push:
+    branches: [ caffe ]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container: fedora:latest
+
+    steps:        
+      - uses: actions/checkout@v2
+      - name: Compile
+        run: |
+          # Set wine/staging version
+          wine_version="7.5"
+          
+          # Clone wine-tkg-git repo
+          git clone https://github.com/Frogging-Family/wine-tkg-git
+          cd wine-tkg-git/wine-tkg-git
+          
+          # Get/set the caffe recipe
+          curl https://raw.githubusercontent.com/bottlesdevs/build-tools/main/runners/vaniglia/wine-tkg.cfg >> customization.cfg
+          sed -i "s/_staging_version=\"\"/_staging_version=\"v$wine_version\"/g" customization.cfg
+          sed -i "s/_plain_version=\"\"/_plain_version=\"wine-$wine_version\"/g" customization.cfg
+          sed -i 's/distro=""/distro="fedora"/' customization.cfg
+          
+          # start build
+          yes|./non-makepkg-build.sh
+          
+      - name: Package
+        run: |
+          wine_version="7.5"
+          cd wine/wine-tkg-git/non-makepkg-builds
+          mv wine-tkg-* caffe-$wine_version-x86_64
+          tar cJvf caffe-$wine_version-x86_64.tar.xz caffe-$wine_version-x86_64
+          mv caffe-$wine_version-x86_64.tar.xz /tmp/caffe-$wine_version-x86_64.tar.xz
+        
+      - uses: "marvinpinto/action-automatic-releases@latest"
+        with:
+          repo_token: "${{ secrets.GITHUB_TOKEN }}"
+          draft: false
+          prerelease: false
+          automatic_release_tag: "caffe-7.5"
+          title: "Caffe 7.5"
+          files: "/tmp/caffe-7.5-x86_64.tar.xz"
+          
