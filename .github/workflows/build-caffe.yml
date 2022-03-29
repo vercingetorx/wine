@@ -20,7 +20,7 @@ jobs:
           
           # Clone wine-tkg-git repo
           git clone https://github.com/Frogging-Family/wine-tkg-git
-          cd wine-tkg-git/wine-tkg-git
+          cd wine-tkg-git/wine-tkg-git/
           
           # Get/set the caffe recipe
           curl https://raw.githubusercontent.com/bottlesdevs/build-tools/main/runners/vaniglia/wine-tkg.cfg >> customization.cfg
@@ -34,7 +34,7 @@ jobs:
       - name: Package
         run: |
           wine_version="7.5"
-          cd wine-tkg-git/wine-tkg-git
+          cd wine-tkg-git/wine-tkg-git/non-makepkg-builds
           ls
           mv wine-tkg-staging-* caffe-$wine_version-x86_64
           tar cJvf caffe-$wine_version-x86_64.tar.xz caffe-$wine_version-x86_64
