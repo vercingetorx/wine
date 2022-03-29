@@ -1,4 +1,4 @@
-name: build-stable-caffe-fd
+name: build-stable-caffe
 on:
   push:
     branches: [ caffe ]
