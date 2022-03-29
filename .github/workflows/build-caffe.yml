@@ -34,7 +34,7 @@ jobs:
       - name: Package
         run: |
           wine_version="7.5"
-          cd wine/wine-tkg-git/non-makepkg-builds
+          cd wine/wine-tkg-git/wine-tkg-git/non-makepkg-builds
           mv wine-tkg-* caffe-$wine_version-x86_64
           tar cJvf caffe-$wine_version-x86_64.tar.xz caffe-$wine_version-x86_64
           mv caffe-$wine_version-x86_64.tar.xz /tmp/caffe-$wine_version-x86_64.tar.xz
