@@ -16,7 +16,7 @@ jobs:
           sudo dnf install git -y
           
           # Set wine/staging version
-          wine_version="7.5"
+          wine_version="7.6"
           
           # Clone wine-tkg-git repo
           git clone https://github.com/Frogging-Family/wine-tkg-git
@@ -33,7 +33,7 @@ jobs:
           
       - name: Package
         run: |
-          wine_version="7.5"
+          wine_version="7.6"
           cd wine-tkg-git/wine-tkg-git/non-makepkg-builds
           ls
           mv wine-tkg-staging-* caffe-$wine_version-x86_64
@@ -45,7 +45,7 @@ jobs:
           repo_token: "${{ secrets.GITHUB_TOKEN }}"
           draft: false
           prerelease: false
-          automatic_release_tag: "caffe-7.5"
-          title: "Caffe 7.5"
-          files: "/tmp/caffe-7.5-x86_64.tar.xz"
+          automatic_release_tag: "caffe-7.6"
+          title: "Caffe 7.6"
+          files: "/tmp/caffe-7.6-x86_64.tar.xz"
           
