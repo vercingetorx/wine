@@ -6,7 +6,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    container: archlinux:latest
+    container: archlinux:base-20220213.0.47747
 
     steps:        
       - uses: actions/checkout@v2
@@ -17,15 +17,11 @@ jobs:
           
           # Enable multilib for i386 deps
           echo -e "[multilib]\nInclude = /etc/pacman.d/mirrorlist" >> /etc/pacman.conf
-          pacman -Syu --noconfirm base-devel texlive-core sudo git wget schedtool
           
-          # mostlyportable-gcc
-          git clone https://github.com/Frogging-Family/mostlyportable-gcc
-          cd mostlyportable-gcc
-          ./mostlyportable-gcc.sh all
-          cd ..
-          ls -l $HOME/PKGBUILDS/mostlyportable-gcc
-          exit
+          # Set pacman archive for old glibc
+          echo "Server=https://archive.archlinux.org/repos/2022/02/08/$repo/os/$arch" > /etc/pacman.d/mirrorlist
+          
+          pacman -Syu --noconfirm base-devel texlive-core sudo git wget schedtool
           
           # Clone wine-tkg-git repo
           git clone https://github.com/Frogging-Family/wine-tkg-git
