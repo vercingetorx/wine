@@ -19,7 +19,7 @@ jobs:
           echo -e "[multilib]\nInclude = /etc/pacman.d/mirrorlist" >> /etc/pacman.conf
           
           # Set pacman archive for old glibc
-          echo "Server=https://archive.archlinux.org/repos/2022/02/08/$repo/os/$arch" > /etc/pacman.d/mirrorlist
+          echo "Server=https://archive.archlinux.org/repos/2022/02/08/\$repo/os/\$arch" > /etc/pacman.d/mirrorlist
           
           pacman -Syyuu --noconfirm base-devel texlive-core sudo git wget schedtool
           
