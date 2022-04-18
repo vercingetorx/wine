@@ -1,0 +1,66 @@
+name: build-stable-caffe-arch
+on:
+  push:
+    branches: [ caffe ]
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+
+    steps:        
+      - uses: actions/checkout@v2
+      - name: Compile
+        run: |
+          # Set wine/staging version
+          wine_version="7.6"
+          
+          # Enable multilib for i386 deps
+          echo -e "[multilib]\nInclude = /etc/pacman.d/mirrorlist" >> /etc/pacman.conf
+          pacman -Syu --noconfirm base-devel texlive-core sudo git wget schedtool
+          
+          # mostlyportable-gcc
+          git clone https://github.com/Frogging-Family/mostlyportable-gcc
+          cd mostlyportable-gcc
+          ./mostlyportable-gcc.sh all
+          cd ..
+          ls -l $HOME/PKGBUILDS/mostlyportable-gcc
+          exit
+          
+          # Clone wine-tkg-git repo
+          git clone https://github.com/Frogging-Family/wine-tkg-git
+          cd wine-tkg-git/wine-tkg-git
+          
+          # Get/set the caffe recipe
+          curl https://raw.githubusercontent.com/bottlesdevs/build-tools/main/runners/vaniglia/wine-tkg.cfg >> customization.cfg
+          sed -i "s/_staging_version=\"\"/_staging_version=\"v$wine_version\"/g" customization.cfg
+          sed -i "s/_plain_version=\"\"/_plain_version=\"wine-$wine_version\"/g" customization.cfg
+          
+          # Set sudoers NOPASSWD rule to avoid asking for sudo password
+          useradd user -G wheel && echo "user ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
+          chown user -R .
+          
+          # Workaround for jack&jack2 conflict https://github.com/Frogging-Family/wine-tkg-git/issues/237
+          sed -i "/'jack2'                 'lib32-jack2'/d" PKGBUILD
+          sed -i "/'gst-plugins-good'      'lib32-gst-plugins-good'/d" PKGBUILD 
+          
+          # start build
+          su user -c "yes|PKGDEST=/tmp/wine-tkg makepkg --noconfirm -s"
+          
+      - name: Package
+        run: |
+          wine_version="7.6"
+          cd /tmp/wine-tkg/
+          tar --use-compress-program=unzstd -xvf wine-tkg-*
+          mv usr /tmp/caffe-$wine_version-x86_64
+          cd /tmp && tar cJvf caffe-$wine_version-x86_64.tar.xz caffe-$wine_version-x86_64
+        
+      - uses: "marvinpinto/action-automatic-releases@latest"
+        with:
+          repo_token: "${{ secrets.GITHUB_TOKEN }}"
+          draft: false
+          prerelease: false
+          automatic_release_tag: "caffe-7.6"
+          title: "Caffe 7.6"
+          files: "/tmp/caffe-7.6-x86_64.tar.xz"
+          
