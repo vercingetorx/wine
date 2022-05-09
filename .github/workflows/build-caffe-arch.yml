@@ -28,7 +28,7 @@ jobs:
           cd wine-tkg-git/wine-tkg-git
           
           # Get/set the caffe recipe
-          curl https://raw.githubusercontent.com/bottlesdevs/build-tools/main/runners/vaniglia/wine-tkg.cfg >> customization.cfg
+          curl https://raw.githubusercontent.com/bottlesdevs/build-tools/main/runners/vaniglia/wine-tkg-protonified.cfg >> customization.cfg
           sed -i "s/_staging_version=\"\"/_staging_version=\"v$wine_version\"/g" customization.cfg
           sed -i "s/_plain_version=\"\"/_plain_version=\"wine-$wine_version\"/g" customization.cfg
           
