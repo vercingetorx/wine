@@ -30,6 +30,7 @@ jobs:
           # Get/set the soda recipe
           curl https://raw.githubusercontent.com/bottlesdevs/build-tools/main/runners/vaniglia/wine-tkg-ge-valve.cfg >> customization.cfg
           sed -i "s/_plain_version=\"\"/_plain_version=\"wine-$wine_version\"/g" customization.cfg
+          export _custom_wine_source="GloriousEggroll"
           
           # Set sudoers NOPASSWD rule to avoid asking for sudo password
           useradd user -G wheel && echo "user ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
