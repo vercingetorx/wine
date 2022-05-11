@@ -28,7 +28,7 @@ jobs:
           cd wine-tkg-git/wine-tkg-git
           
           # Get/set the soda recipe
-          curl https://raw.githubusercontent.com/bottlesdevs/build-tools/main/runners/vaniglia/wine-tkg-protonified.cfg >> customization.cfg
+          curl https://raw.githubusercontent.com/bottlesdevs/build-tools/main/runners/vaniglia/wine-tkg-ge-valve.cfg >> customization.cfg
           sed -i "s/_plain_version=\"\"/_plain_version=\"wine-$wine_version\"/g" customization.cfg
           
           # Set sudoers NOPASSWD rule to avoid asking for sudo password
