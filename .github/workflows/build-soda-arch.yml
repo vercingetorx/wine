@@ -1,0 +1,60 @@
+name: build-stable-soda-arch
+on:
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container: archlinux:base-20220213.0.47747
+
+    steps:        
+      - uses: actions/checkout@v2
+      - name: Compile
+        run: |
+          # Set wine version
+          wine_version="experimental-wine-7.0-20220228"
+          
+          # Enable multilib for i386 deps
+          echo -e "[multilib]\nInclude = /etc/pacman.d/mirrorlist" >> /etc/pacman.conf
+          
+          # Set pacman archive for old glibc
+          echo "Server=https://archive.archlinux.org/repos/2022/02/08/\$repo/os/\$arch" > /etc/pacman.d/mirrorlist
+          
+          pacman -Syyuu --noconfirm base-devel texlive-core sudo git wget schedtool
+          
+          # Clone wine-tkg-git repo
+          git clone https://github.com/Frogging-Family/wine-tkg-git
+          cd wine-tkg-git/wine-tkg-git
+          
+          # Get/set the soda recipe
+          curl https://raw.githubusercontent.com/bottlesdevs/build-tools/main/runners/vaniglia/wine-tkg-protonified.cfg >> customization.cfg
+          sed -i "s/_plain_version=\"\"/_plain_version=\"wine-$wine_version\"/g" customization.cfg
+          
+          # Set sudoers NOPASSWD rule to avoid asking for sudo password
+          useradd user -G wheel && echo "user ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
+          chown user -R .
+          
+          # Workaround for jack&jack2 conflict https://github.com/Frogging-Family/wine-tkg-git/issues/237
+          sed -i "/'jack2'                 'lib32-jack2'/d" PKGBUILD
+          sed -i "/'gst-plugins-good'      'lib32-gst-plugins-good'/d" PKGBUILD 
+          
+          # start build
+          su user -c "yes|PKGDEST=/tmp/wine-tkg makepkg --noconfirm -s"
+          
+      - name: Package
+        run: |
+          wine_version="experimental-wine-7.0-20220228"
+          soda_version="7.0-1"
+          cd /tmp/wine-tkg/
+          tar --use-compress-program=unzstd -xvf wine-tkg-*
+          mv usr /tmp/soda-$soda_version-x86_64
+          cd /tmp && tar cJvf soda-$wine_version-x86_64.tar.xz soda-$soda_version-x86_64
+        
+      - uses: "marvinpinto/action-automatic-releases@latest"
+        with:
+          repo_token: "${{ secrets.GITHUB_TOKEN }}"
+          draft: false
+          prerelease: false
+          automatic_release_tag: "soda-7.0-1"
+          title: "Soda 7.0-1"
+          files: "/tmp/soda-7.0-1-x86_64.tar.xz"
+          
