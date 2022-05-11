@@ -1,8 +1,6 @@
 name: build-stable-soda-arch
 on:
   workflow_dispatch:
-  push:
-    branches: [ caffe ]
 jobs:
   build:
     runs-on: ubuntu-latest
