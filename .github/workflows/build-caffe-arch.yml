@@ -1,7 +1,5 @@
 name: build-stable-caffe-arch
 on:
-  push:
-    branches: [ caffe ]
   workflow_dispatch:
 jobs:
   build:
