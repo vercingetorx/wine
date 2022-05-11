@@ -31,10 +31,9 @@ jobs:
           chown user -R .
           
           # Get/set the soda recipe
-          su user -c "mkdir -p ~/.config/frogminer/"
-          su user -c "curl https://raw.githubusercontent.com/bottlesdevs/build-tools/main/runners/vaniglia/wine-tkg-ge-valve.cfg >> ~/.config/frogminer/wine-tkg.cfg"
+          mkdir -p ~/.config/frogminer/
+          curl https://raw.githubusercontent.com/bottlesdevs/build-tools/main/runners/vaniglia/wine-tkg-ge-valve.cfg >> ~/.config/frogminer/wine-tkg.cfg
           sed -i "s/_plain_version=\"\"/_plain_version=\"wine-$wine_version\"/g" customization.cfg
-          export _custom_wine_source="GloriousEggroll"
           
           # Workaround for jack&jack2 conflict https://github.com/Frogging-Family/wine-tkg-git/issues/237
           sed -i "/'jack2'                 'lib32-jack2'/d" PKGBUILD
