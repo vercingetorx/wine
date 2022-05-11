@@ -32,11 +32,9 @@ jobs:
           
           # Get/set the soda recipe
           mkdir -p /home/user/.config/frogminer
-          chown user -R /home/user
-          su user
           curl https://raw.githubusercontent.com/bottlesdevs/build-tools/main/runners/vaniglia/wine-tkg-ge-valve.cfg > /home/user/.config/frogminer/wine-tkg.cfg
           sed -i "s/_plain_version=\"\"/_plain_version=\"wine-$wine_version\"/g" /home/user/.config/frogminer/wine-tkg.cfg
-          exit
+          chown user -R /home/user
           
           # Workaround for jack&jack2 conflict https://github.com/Frogging-Family/wine-tkg-git/issues/237
           sed -i "/'jack2'                 'lib32-jack2'/d" PKGBUILD
