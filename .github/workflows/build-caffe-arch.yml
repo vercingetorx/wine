@@ -27,16 +27,16 @@ jobs:
           git clone https://github.com/Frogging-Family/wine-tkg-git
           cd wine-tkg-git/wine-tkg-git
           
+          # Set sudoers NOPASSWD rule to avoid asking for sudo password
+          useradd user -G wheel && echo "user ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
+          chown user -R .
+          
           # Get/set the caffe recipe
           mkdir -p /home/user/.config/frogminer
           curl https://raw.githubusercontent.com/bottlesdevs/build-tools/main/runners/vaniglia/wine-tkg-protonified.cfg >> /home/user/.config/frogminer/wine-tkg.cfg
           sed -i "s/_staging_version=\"\"/_staging_version=\"v$wine_version\"/g" /home/user/.config/frogminer/wine-tkg.cfg
           sed -i "s/_plain_version=\"\"/_plain_version=\"wine-$wine_version\"/g" /home/user/.config/frogminer/wine-tkg.cfg
           chown user -R /home/user
-          
-          # Set sudoers NOPASSWD rule to avoid asking for sudo password
-          useradd user -G wheel && echo "user ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
-          chown user -R .
           
           # Workaround for jack&jack2 conflict https://github.com/Frogging-Family/wine-tkg-git/issues/237
           sed -i "/'jack2'                 'lib32-jack2'/d" PKGBUILD
