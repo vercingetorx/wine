@@ -52,7 +52,7 @@ jobs:
           cd /tmp/wine-tkg/
           tar --use-compress-program=unzstd -xvf wine-tkg-*
           mv usr /tmp/soda-$soda_version-x86_64
-          cd /tmp && tar cJvf soda-$wine_version-x86_64.tar.xz soda-$soda_version-x86_64
+          cd /tmp && tar cJvf soda-$soda_version-x86_64.tar.xz soda-$soda_version-x86_64
         
       - uses: "marvinpinto/action-automatic-releases@latest"
         with:
