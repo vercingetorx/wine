@@ -41,7 +41,10 @@ jobs:
           
           # Workaround for jack&jack2 conflict https://github.com/Frogging-Family/wine-tkg-git/issues/237
           sed -i "/'jack2'                 'lib32-jack2'/d" PKGBUILD
-          sed -i "/'gst-plugins-good'      'lib32-gst-plugins-good'/d" PKGBUILD 
+          sed -i "/'gst-plugins-good'      'lib32-gst-plugins-good'/d" PKGBUILD
+          
+          # Patch prepare.sh to allow some proton patches on GE source
+          sed -i "s/GloriousEggroll/_GloriousEggroll/g" wine-tkg-scripts/prepare.sh
           
           # start build
           su user -c "yes|PKGDEST=/tmp/wine-tkg makepkg --noconfirm -s"
