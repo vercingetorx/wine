@@ -13,7 +13,7 @@ jobs:
       - name: Compile
         run: |
           # Set wine/staging version
-          wine_version="7.8"
+          wine_version="7.9"
           
           # Enable multilib for i386 deps
           echo -e "[multilib]\nInclude = /etc/pacman.d/mirrorlist" >> /etc/pacman.conf
@@ -47,7 +47,7 @@ jobs:
           
       - name: Package
         run: |
-          wine_version="7.8-1"
+          wine_version="7.9"
           cd /tmp/wine-tkg/
           tar --use-compress-program=unzstd -xvf wine-tkg-*
           mv usr /tmp/caffe-$wine_version-x86_64
@@ -56,6 +56,6 @@ jobs:
       - name: Upload to Artifacts
         uses: actions/upload-artifact@v2
         with:
-          name: caffe-7.8-1
-          path: /tmp/caffe-7.8-1-x86_64.tar.xz
+          name: caffe-7.9
+          path: /tmp/caffe-7.9-x86_64.tar.xz
           
