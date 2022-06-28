@@ -39,7 +39,7 @@ jobs:
           chown user -R /home/user
           
           # Place custom patches
-          curl -o wine-tkg-userpatches/proton-sdl-joy.mypatch https://raw.githubusercontent.com/Frogging-Family/wine-tkg-git/master/wine-tkg-git/wine-tkg-patches/proton-tkg-specific/proton-sdl-joy/proton-sdl-joy.patch
+          # curl -o wine-tkg-userpatches/proton-sdl-joy.mypatch https://raw.githubusercontent.com/Frogging-Family/wine-tkg-git/master/wine-tkg-git/wine-tkg-patches/proton-tkg-specific/proton-sdl-joy/proton-sdl-joy.patch
           
           # Workaround for jack&jack2 conflict https://github.com/Frogging-Family/wine-tkg-git/issues/237
           sed -i "/'jack2'                 'lib32-jack2'/d" PKGBUILD
