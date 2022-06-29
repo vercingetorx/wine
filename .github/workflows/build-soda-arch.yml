@@ -30,7 +30,7 @@ jobs:
           
           # Get/set the soda recipe
           mkdir -p /home/user/.config/frogminer
-          curl https://raw.githubusercontent.com/bottlesdevs/build-tools/main/runners/vaniglia/wine-tkg-protonified.cfg > /home/user/.config/frogminer/wine-tkg.cfg
+          curl https://raw.githubusercontent.com/bottlesdevs/build-tools/main/runners/vaniglia/wine-tkg-valve.cfg > /home/user/.config/frogminer/wine-tkg.cfg
           chown user -R /home/user
           
           # Workaround for jack&jack2 conflict https://github.com/Frogging-Family/wine-tkg-git/issues/237
