@@ -1,8 +1,8 @@
-name: build-stable-caffe-arch
+name: build-stable-soda-arch
 on:
   workflow_dispatch:
   push:
-    branches: [ caffe ]
+    branches: [ soda ]
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -12,9 +12,6 @@ jobs:
       - uses: actions/checkout@v2
       - name: Compile
         run: |
-          # Set wine/staging version
-          wine_version="7.10"
-          
           # Enable multilib for i386 deps
           echo -e "[multilib]\nInclude = /etc/pacman.d/mirrorlist" >> /etc/pacman.conf
           
@@ -31,15 +28,10 @@ jobs:
           useradd user -G wheel && echo "user ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
           chown user -R .
           
-          # Get/set the caffe recipe
+          # Get/set the soda recipe
           mkdir -p /home/user/.config/frogminer
           curl https://raw.githubusercontent.com/bottlesdevs/build-tools/main/runners/vaniglia/wine-tkg-protonified.cfg > /home/user/.config/frogminer/wine-tkg.cfg
-          sed -i "s/_staging_version=\"\"/_staging_version=\"v$wine_version\"/g" /home/user/.config/frogminer/wine-tkg.cfg
-          sed -i "s/_plain_version=\"\"/_plain_version=\"wine-$wine_version\"/g" /home/user/.config/frogminer/wine-tkg.cfg
           chown user -R /home/user
-          
-          # Place custom patches
-          # curl -o wine-tkg-userpatches/proton-sdl-joy.mypatch https://raw.githubusercontent.com/Frogging-Family/wine-tkg-git/master/wine-tkg-git/wine-tkg-patches/proton-tkg-specific/proton-sdl-joy/proton-sdl-joy.patch
           
           # Workaround for jack&jack2 conflict https://github.com/Frogging-Family/wine-tkg-git/issues/237
           sed -i "/'jack2'                 'lib32-jack2'/d" PKGBUILD
@@ -50,15 +42,14 @@ jobs:
           
       - name: Package
         run: |
-          wine_version="7.10"
           cd /tmp/wine-tkg/
           tar --use-compress-program=unzstd -xvf wine-tkg-*
-          mv usr /tmp/caffe-$wine_version-x86_64
-          cd /tmp && tar cJvf caffe-$wine_version-x86_64.tar.xz caffe-$wine_version-x86_64
+          mv usr /tmp/soda
+          cd /tmp && tar cJvf soda-x86_64.tar.xz soda-x86_64
           
       - name: Upload to Artifacts
         uses: actions/upload-artifact@v2
         with:
-          name: caffe-7.10
-          path: /tmp/caffe-7.10-x86_64.tar.xz
+          name: soda
+          path: /tmp/soda-x86_64.tar.xz
           
