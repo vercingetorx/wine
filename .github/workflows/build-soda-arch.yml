@@ -44,7 +44,7 @@ jobs:
         run: |
           cd /tmp/wine-tkg/
           tar --use-compress-program=unzstd -xvf wine-tkg-*
-          mv usr /tmp/soda
+          mv usr /tmp/soda-x86_64
           cd /tmp && tar cJvf soda-x86_64.tar.xz soda-x86_64
           
       - name: Upload to Artifacts
