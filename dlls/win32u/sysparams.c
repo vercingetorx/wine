@@ -25,9 +25,12 @@
 #endif
 
 #include <pthread.h>
+#include <assert.h>
+
 #include "ntstatus.h"
 #define WIN32_NO_STATUS
 #include "ntgdi_private.h"
+#include "ntuser_private.h"
 #include "devpropdef.h"
 #include "wine/wingdi16.h"
 #include "wine/server.h"
@@ -166,6 +169,16 @@ static const WCHAR displayW[] = {'D','i','s','p','l','a','y',0};
 static const WCHAR monitorW[] = {'M','o','n','i','t','o','r',0};
 static const WCHAR yesW[] = {'Y','e','s',0};
 static const WCHAR noW[] = {'N','o',0};
+static const WCHAR bits_per_pelW[] = {'B','i','t','s','P','e','r','P','e','l',0};
+static const WCHAR x_resolutionW[] = {'X','R','e','s','o','l','u','t','i','o','n',0};
+static const WCHAR y_resolutionW[] = {'Y','R','e','s','o','l','u','t','i','o','n',0};
+static const WCHAR v_refreshW[] = {'V','R','e','f','r','e','s','h',0};
+static const WCHAR flagsW[] = {'F','l','a','g','s',0};
+static const WCHAR x_panningW[] = {'X','P','a','n','n','i','n','g',0};
+static const WCHAR y_panningW[] = {'Y','P','a','n','n','i','n','g',0};
+static const WCHAR orientationW[] = {'O','r','i','e','n','t','a','t','i','o','n',0};
+static const WCHAR fixed_outputW[] = {'F','i','x','e','d','O','u','t','p','u','t',0};
+static const WCHAR mode_countW[] = {'M','o','d','e','C','o','u','n','t',0};
 
 static const char  guid_devclass_displayA[] = "{4D36E968-E325-11CE-BFC1-08002BE10318}";
 static const WCHAR guid_devclass_displayW[] =
@@ -174,8 +187,8 @@ static const WCHAR guid_devclass_displayW[] =
 
 static const char  guid_devclass_monitorA[] = "{4D36E96E-E325-11CE-BFC1-08002BE10318}";
 static const WCHAR guid_devclass_monitorW[] =
-    {'{','4','D','3','6','E','9','6','E','-','E','3','2','5','-','1','1','C','E','-'
-        ,'B','F','C','1','-','0','8','0','0','2','B','E','1','0','3','1','8','}'};
+    {'{','4','D','3','6','E','9','6','E','-','E','3','2','5','-','1','1','C','E','-',
+     'B','F','C','1','-','0','8','0','0','2','B','E','1','0','3','1','8','}',0};
 
 static const WCHAR guid_devinterface_display_adapterW[] =
     {'{','5','B','4','5','2','0','1','D','-','F','2','F','2','-','4','F','3','B','-',
@@ -189,7 +202,7 @@ static const WCHAR guid_devinterface_monitorW[] =
     {'{','E','6','F','0','7','B','5','F','-','E','E','9','7','-','4','A','9','0','-',
      'B','0','7','6','-','3','3','F','5','7','B','F','4','E','A','A','7','}',0};
 
-#define NULLDRV_DEFAULT_HMONITOR ((HMONITOR)(UINT_PTR)(0x10000 + 1))
+#define NEXT_DEVMODEW(mode) ((DEVMODEW *)((char *)((mode) + 1) + (mode)->dmDriverExtra))
 
 /* Cached display device information */
 struct display_device
@@ -204,10 +217,13 @@ struct display_device
 
 struct adapter
 {
+    LONG refcount;
     struct list entry;
     struct display_device dev;
     unsigned int id;
     const WCHAR *config_key;
+    unsigned int mode_count;
+    DEVMODEW *modes;
 };
 
 struct monitor
@@ -220,6 +236,7 @@ struct monitor
     unsigned int flags;
     RECT rc_monitor;
     RECT rc_work;
+    BOOL is_clone;
 };
 
 static struct list adapters = LIST_INIT(adapters);
@@ -227,9 +244,12 @@ static struct list monitors = LIST_INIT(monitors);
 static INT64 last_query_display_time;
 static pthread_mutex_t display_lock = PTHREAD_MUTEX_INITIALIZER;
 
+BOOL enable_thunk_lock = FALSE;
+
+#define VIRTUAL_HMONITOR ((HMONITOR)(UINT_PTR)(0x10000 + 1))
 static struct monitor virtual_monitor =
 {
-    .handle = NULLDRV_DEFAULT_HMONITOR,
+    .handle = VIRTUAL_HMONITOR,
     .flags = MONITORINFOF_PRIMARY,
     .rc_monitor.right = 1024,
     .rc_monitor.bottom = 768,
@@ -355,9 +375,34 @@ union sysparam_all_entry
 
 static UINT system_dpi;
 static RECT work_area;
+static DWORD process_layout = ~0u;
 
 static HDC display_dc;
 static pthread_mutex_t display_dc_lock = PTHREAD_MUTEX_INITIALIZER;
+
+static pthread_mutex_t user_mutex;
+static unsigned int user_lock_thread, user_lock_rec;
+
+void user_lock(void)
+{
+    pthread_mutex_lock( &user_mutex );
+    if (!user_lock_rec++) user_lock_thread = GetCurrentThreadId();
+}
+
+void user_unlock(void)
+{
+    if (!--user_lock_rec) user_lock_thread = 0;
+    pthread_mutex_unlock( &user_mutex );
+}
+
+void user_check_not_lock(void)
+{
+    if (user_lock_thread == GetCurrentThreadId())
+    {
+        ERR( "BUG: holding USER lock\n" );
+        assert( 0 );
+    }
+}
 
 static HANDLE get_display_device_init_mutex( void )
 {
@@ -381,13 +426,214 @@ static void release_display_device_init_mutex( HANDLE mutex )
     NtClose( mutex );
 }
 
+static struct adapter *adapter_acquire( struct adapter *adapter )
+{
+    InterlockedIncrement( &adapter->refcount );
+    return adapter;
+}
+
+static void adapter_release( struct adapter *adapter )
+{
+    if (!InterlockedDecrement( &adapter->refcount ))
+    {
+        free( adapter->modes );
+        free( adapter );
+    }
+}
+
+static BOOL write_adapter_mode( HKEY adapter_key, DWORD index, const DEVMODEW *mode )
+{
+    WCHAR bufferW[MAX_PATH];
+    char buffer[MAX_PATH];
+    BOOL ret = TRUE;
+    HKEY hkey;
+
+    sprintf( buffer, "Modes\\%08X", index );
+    reg_delete_tree( adapter_key, bufferW, asciiz_to_unicode( bufferW, buffer ) - sizeof(WCHAR) );
+    if (!(hkey = reg_create_key( adapter_key, bufferW, asciiz_to_unicode( bufferW, buffer ) - sizeof(WCHAR),
+                                 REG_OPTION_VOLATILE, NULL )))
+        return FALSE;
+
+#define set_mode_field( name, field, flag )                                                      \
+    if ((mode->dmFields & (flag)) &&                                                             \
+        !(ret = set_reg_value( hkey, (name), REG_DWORD, &mode->field,                            \
+                               sizeof(mode->field) )))                                           \
+        goto done
+
+    set_mode_field( bits_per_pelW, dmBitsPerPel, DM_BITSPERPEL );
+    set_mode_field( x_resolutionW, dmPelsWidth, DM_PELSWIDTH );
+    set_mode_field( y_resolutionW, dmPelsHeight, DM_PELSHEIGHT );
+    set_mode_field( v_refreshW, dmDisplayFrequency, DM_DISPLAYFREQUENCY );
+    set_mode_field( flagsW, dmDisplayFlags, DM_DISPLAYFLAGS );
+    set_mode_field( orientationW, dmDisplayOrientation, DM_DISPLAYORIENTATION );
+    set_mode_field( fixed_outputW, dmDisplayFixedOutput, DM_DISPLAYFIXEDOUTPUT );
+    if (index == ENUM_CURRENT_SETTINGS || index == ENUM_REGISTRY_SETTINGS)
+    {
+        set_mode_field( x_panningW, dmPosition.x, DM_POSITION );
+        set_mode_field( y_panningW, dmPosition.y, DM_POSITION );
+    }
+
+#undef set_mode_field
+
+done:
+    NtClose( hkey );
+    return ret;
+}
+
+static BOOL read_adapter_mode( HKEY adapter_key, DWORD index, DEVMODEW *mode )
+{
+    char value_buf[offsetof(KEY_VALUE_PARTIAL_INFORMATION, Data[sizeof(DWORD)])];
+    KEY_VALUE_PARTIAL_INFORMATION *value = (void *)value_buf;
+    WCHAR bufferW[MAX_PATH];
+    char buffer[MAX_PATH];
+    HKEY hkey;
+
+    sprintf( buffer, "Modes\\%08X", index );
+    if (!(hkey = reg_open_key( adapter_key, bufferW, asciiz_to_unicode( bufferW, buffer ) - sizeof(WCHAR) )))
+        return FALSE;
+
+#define query_mode_field( name, field, flag )                                                      \
+    do                                                                                             \
+    {                                                                                              \
+        if (query_reg_value( hkey, (name), value, sizeof(value_buf) ) &&                           \
+            value->Type == REG_DWORD)                                                              \
+        {                                                                                          \
+            mode->field = *(const DWORD *)value->Data;                                             \
+            mode->dmFields |= (flag);                                                              \
+        }                                                                                          \
+    } while (0)
+
+    query_mode_field( bits_per_pelW, dmBitsPerPel, DM_BITSPERPEL );
+    query_mode_field( x_resolutionW, dmPelsWidth, DM_PELSWIDTH );
+    query_mode_field( y_resolutionW, dmPelsHeight, DM_PELSHEIGHT );
+    query_mode_field( v_refreshW, dmDisplayFrequency, DM_DISPLAYFREQUENCY );
+    query_mode_field( flagsW, dmDisplayFlags, DM_DISPLAYFLAGS );
+    query_mode_field( orientationW, dmDisplayOrientation, DM_DISPLAYORIENTATION );
+    query_mode_field( fixed_outputW, dmDisplayFixedOutput, DM_DISPLAYFIXEDOUTPUT );
+    if (index == ENUM_CURRENT_SETTINGS || index == ENUM_REGISTRY_SETTINGS)
+    {
+        query_mode_field( x_panningW, dmPosition.x, DM_POSITION );
+        query_mode_field( y_panningW, dmPosition.y, DM_POSITION );
+    }
+
+#undef query_mode_field
+
+    NtClose( hkey );
+    return TRUE;
+}
+
+static BOOL adapter_get_registry_settings( const struct adapter *adapter, DEVMODEW *mode )
+{
+    BOOL ret = FALSE;
+    HANDLE mutex;
+    HKEY hkey;
+
+    mutex = get_display_device_init_mutex();
+
+    if (!config_key && !(config_key = reg_open_key( NULL, config_keyW, sizeof(config_keyW) ))) ret = FALSE;
+    else if (!(hkey = reg_open_key( config_key, adapter->config_key, lstrlenW( adapter->config_key ) * sizeof(WCHAR) ))) ret = FALSE;
+    else
+    {
+        ret = read_adapter_mode( hkey, ENUM_REGISTRY_SETTINGS, mode );
+        NtClose( hkey );
+    }
+
+    release_display_device_init_mutex( mutex );
+    return ret;
+}
+
+static BOOL adapter_set_registry_settings( const struct adapter *adapter, const DEVMODEW *mode )
+{
+    HANDLE mutex;
+    HKEY hkey;
+    BOOL ret;
+
+    mutex = get_display_device_init_mutex();
+
+    if (!config_key && !(config_key = reg_open_key( NULL, config_keyW, sizeof(config_keyW) ))) ret = FALSE;
+    if (!(hkey = reg_open_key( config_key, adapter->config_key, lstrlenW( adapter->config_key ) * sizeof(WCHAR) ))) ret = FALSE;
+    else
+    {
+        ret = write_adapter_mode( hkey, ENUM_REGISTRY_SETTINGS, mode );
+        NtClose( hkey );
+    }
+
+    release_display_device_init_mutex( mutex );
+    return ret;
+}
+
+static int mode_compare(const void *p1, const void *p2)
+{
+    BOOL a_interlaced, b_interlaced, a_stretched, b_stretched;
+    DWORD a_width, a_height, b_width, b_height;
+    const DEVMODEW *a = p1, *b = p2;
+    int ret;
+
+    /* Depth in descending order */
+    if ((ret = b->dmBitsPerPel - a->dmBitsPerPel)) return ret;
+
+    /* Use the width and height in landscape mode for comparison */
+    if (a->dmDisplayOrientation == DMDO_DEFAULT || a->dmDisplayOrientation == DMDO_180)
+    {
+        a_width = a->dmPelsWidth;
+        a_height = a->dmPelsHeight;
+    }
+    else
+    {
+        a_width = a->dmPelsHeight;
+        a_height = a->dmPelsWidth;
+    }
+
+    if (b->dmDisplayOrientation == DMDO_DEFAULT || b->dmDisplayOrientation == DMDO_180)
+    {
+        b_width = b->dmPelsWidth;
+        b_height = b->dmPelsHeight;
+    }
+    else
+    {
+        b_width = b->dmPelsHeight;
+        b_height = b->dmPelsWidth;
+    }
+
+    /* Width in ascending order */
+    if ((ret = a_width - b_width)) return ret;
+
+    /* Height in ascending order */
+    if ((ret = a_height - b_height)) return ret;
+
+    /* Frequency in descending order */
+    if ((ret = b->dmDisplayFrequency - a->dmDisplayFrequency)) return ret;
+
+    /* Orientation in ascending order */
+    if ((ret = a->dmDisplayOrientation - b->dmDisplayOrientation)) return ret;
+
+    if (!(a->dmFields & DM_DISPLAYFLAGS)) a_interlaced = FALSE;
+    else a_interlaced = !!(a->dmDisplayFlags & DM_INTERLACED);
+    if (!(b->dmFields & DM_DISPLAYFLAGS)) b_interlaced = FALSE;
+    else b_interlaced = !!(b->dmDisplayFlags & DM_INTERLACED);
+
+    /* Interlaced in ascending order */
+    if ((ret = a_interlaced - b_interlaced)) return ret;
+
+    if (!(a->dmFields & DM_DISPLAYFIXEDOUTPUT)) a_stretched = FALSE;
+    else a_stretched = a->dmDisplayFixedOutput == DMDFO_STRETCH;
+    if (!(b->dmFields & DM_DISPLAYFIXEDOUTPUT)) b_stretched = FALSE;
+    else b_stretched = b->dmDisplayFixedOutput == DMDFO_STRETCH;
+
+    /* Stretched in ascending order */
+    if ((ret = a_stretched - b_stretched)) return ret;
+
+    return 0;
+}
+
 static BOOL read_display_adapter_settings( unsigned int index, struct adapter *info )
 {
     char buffer[4096];
     KEY_VALUE_PARTIAL_INFORMATION *value = (void *)buffer;
     WCHAR *value_str = (WCHAR *)value->Data;
+    DEVMODEW *mode;
+    DWORD i, size;
     HKEY hkey;
-    DWORD size;
 
     if (!enum_key && !(enum_key = reg_open_key( NULL, enum_keyW, sizeof(enum_keyW) )))
         return FALSE;
@@ -426,10 +672,28 @@ static BOOL read_display_adapter_settings( unsigned int index, struct adapter *i
     /* Interface name */
     info->dev.interface_name[0] = 0;
 
+    /* ModeCount */
+    if (query_reg_value( hkey, mode_countW, value, sizeof(buffer) ) && value->Type == REG_DWORD)
+        info->mode_count = *(const DWORD *)value->Data;
+
+    /* Modes, allocate an extra mode for easier iteration */
+    if ((info->modes = calloc( info->mode_count + 1, sizeof(DEVMODEW) )))
+    {
+        for (i = 0, mode = info->modes; i < info->mode_count; i++)
+        {
+            mode->dmSize = offsetof(DEVMODEW, dmICMMethod);
+            if (!read_adapter_mode( hkey, i, mode )) break;
+            mode = NEXT_DEVMODEW(mode);
+        }
+        info->mode_count = i;
+
+        qsort(info->modes, info->mode_count, sizeof(*info->modes) + info->modes->dmDriverExtra, mode_compare);
+    }
+
     /* DeviceID */
     size = query_reg_value( hkey, gpu_idW, value, sizeof(buffer) );
     NtClose( hkey );
-    if (!size || value->Type != REG_SZ) return FALSE;
+    if (!size || value->Type != REG_SZ || !info->mode_count || !info->modes) return FALSE;
 
     if (!(hkey = reg_open_key( enum_key, value_str, value->DataLength - sizeof(WCHAR) )))
         return FALSE;
@@ -673,7 +937,6 @@ static void cleanup_devices(void)
 
     hkey = reg_open_key( enum_key, pciW, sizeof(pciW) );
 
-restart:
     while (!NtEnumerateKey( hkey, i++, KeyNodeInformation, key, sizeof(buffer), &size ))
     {
         unsigned int j = 0;
@@ -706,7 +969,7 @@ restart:
             NtClose( device_key );
 
             if (!present && reg_delete_tree( subkey, bufferW, lstrlenW( bufferW ) * sizeof(WCHAR) ))
-                goto restart;
+                j = 0;
         }
 
         NtClose( subkey );
@@ -769,12 +1032,12 @@ struct device_manager_ctx
     unsigned int video_count;
     unsigned int monitor_count;
     unsigned int output_count;
+    unsigned int mode_count;
     HANDLE mutex;
     WCHAR gpuid[128];
     WCHAR gpu_guid[64];
     LUID gpu_luid;
     HKEY adapter_key;
-    BOOL virtual_monitor;
 };
 
 static void link_device( const WCHAR *instance, const WCHAR *class )
@@ -859,6 +1122,7 @@ static void add_gpu( const struct gdi_gpu *gpu, void *param )
     gpu_index = ctx->gpu_count++;
     ctx->adapter_count = 0;
     ctx->monitor_count = 0;
+    ctx->mode_count = 0;
 
     if (!enum_key && !(enum_key = reg_create_key( NULL, enum_keyW, sizeof(enum_keyW), 0, NULL )))
         return;
@@ -979,13 +1243,6 @@ static void add_adapter( const struct gdi_adapter *adapter, void *param )
 
     TRACE( "\n" );
 
-    if (!ctx->gpu_count)
-    {
-        static const struct gdi_gpu default_gpu;
-        TRACE( "adding default fake GPU\n" );
-        add_gpu( &default_gpu, ctx );
-    }
-
     if (ctx->adapter_key)
     {
         NtClose( ctx->adapter_key );
@@ -995,6 +1252,7 @@ static void add_adapter( const struct gdi_adapter *adapter, void *param )
     adapter_index = ctx->adapter_count++;
     video_index = ctx->video_count++;
     ctx->monitor_count = 0;
+    ctx->mode_count = 0;
 
     len = asciiz_to_unicode( bufferW, "\\Registry\\Machine\\System\\CurrentControlSet\\"
                              "Control\\Video\\" ) / sizeof(WCHAR) - 1;
@@ -1048,25 +1306,8 @@ static void add_monitor( const struct gdi_monitor *monitor, void *param )
     static const WCHAR default_monitorW[] =
         {'M','O','N','I','T','O','R','\\','D','e','f','a','u','l','t','_','M','o','n','i','t','o','r',0,0};
 
-    if (!monitor)
-    {
-        ctx->virtual_monitor = TRUE;
-        return;
-    }
-
     TRACE( "%s %s %s\n", debugstr_w(monitor->name), wine_dbgstr_rect(&monitor->rc_monitor),
            wine_dbgstr_rect(&monitor->rc_work) );
-
-    if (!ctx->adapter_count)
-    {
-        static const struct gdi_adapter default_adapter =
-        {
-            .state_flags = DISPLAY_DEVICE_ATTACHED_TO_DESKTOP | DISPLAY_DEVICE_PRIMARY_DEVICE |
-                           DISPLAY_DEVICE_VGA_COMPATIBLE,
-        };
-        TRACE( "adding default fake adapter\n" );
-        add_adapter( &default_adapter, ctx );
-    }
 
     monitor_index = ctx->monitor_count++;
     output_index = ctx->output_count++;
@@ -1093,8 +1334,13 @@ static void add_monitor( const struct gdi_monitor *monitor, void *param )
 
     if ((subkey = reg_create_key( hkey, device_parametersW, sizeof(device_parametersW), 0, NULL )))
     {
+        static const WCHAR bad_edidW[] = {'B','A','D','_','E','D','I','D',0};
         static const WCHAR edidW[] = {'E','D','I','D',0};
-        set_reg_value( subkey, edidW, REG_BINARY, monitor->edid, monitor->edid_len );
+
+        if (monitor->edid_len)
+            set_reg_value( subkey, edidW, REG_BINARY, monitor->edid, monitor->edid_len );
+        else
+            set_reg_value( subkey, bad_edidW, REG_BINARY, NULL, 0 );
         NtClose( subkey );
     }
 
@@ -1162,11 +1408,33 @@ static void add_monitor( const struct gdi_monitor *monitor, void *param )
     if (hkey) NtClose( hkey );
 }
 
+static void add_mode( const DEVMODEW *mode, void *param )
+{
+    struct device_manager_ctx *ctx = param;
+
+    if (!ctx->adapter_count)
+    {
+        static const struct gdi_adapter default_adapter =
+        {
+            .state_flags = DISPLAY_DEVICE_ATTACHED_TO_DESKTOP | DISPLAY_DEVICE_PRIMARY_DEVICE | DISPLAY_DEVICE_VGA_COMPATIBLE,
+        };
+        TRACE( "adding default fake adapter\n" );
+        add_adapter( &default_adapter, ctx );
+    }
+
+    if (write_adapter_mode( ctx->adapter_key, ctx->mode_count, mode ))
+    {
+        ctx->mode_count++;
+        set_reg_value( ctx->adapter_key, mode_countW, REG_DWORD, &ctx->mode_count, sizeof(ctx->mode_count) );
+    }
+}
+
 static const struct gdi_device_manager device_manager =
 {
     add_gpu,
     add_adapter,
     add_monitor,
+    add_mode,
 };
 
 static void release_display_manager_ctx( struct device_manager_ctx *ctx )
@@ -1198,6 +1466,7 @@ static void clear_display_devices(void)
     while (!list_empty( &monitors ))
     {
         monitor = LIST_ENTRY( list_head( &monitors ), struct monitor, entry );
+        adapter_release( monitor->adapter );
         list_remove( &monitor->entry );
         free( monitor );
     }
@@ -1206,16 +1475,16 @@ static void clear_display_devices(void)
     {
         adapter = LIST_ENTRY( list_head( &adapters ), struct adapter, entry );
         list_remove( &adapter->entry );
-        free( adapter );
+        adapter_release( adapter );
     }
 }
 
 static BOOL update_display_cache_from_registry(void)
 {
     DWORD adapter_id, monitor_id, monitor_count = 0, size;
-    KEY_FULL_INFORMATION key;
+    KEY_BASIC_INFORMATION key;
     struct adapter *adapter;
-    struct monitor *monitor;
+    struct monitor *monitor, *monitor2;
     HANDLE mutex = NULL;
     NTSTATUS status;
     BOOL ret;
@@ -1225,7 +1494,8 @@ static BOOL update_display_cache_from_registry(void)
                                                   sizeof(devicemap_video_keyW) )))
         return FALSE;
 
-    status = NtQueryKey( video_key, KeyFullInformation, &key, sizeof(key), &size );
+    status = NtQueryKey( video_key, KeyBasicInformation, &key,
+                         offsetof(KEY_BASIC_INFORMATION, Name), &size );
     if (status && status != STATUS_BUFFER_OVERFLOW)
         return FALSE;
 
@@ -1239,11 +1509,12 @@ static BOOL update_display_cache_from_registry(void)
     for (adapter_id = 0;; adapter_id++)
     {
         if (!(adapter = calloc( 1, sizeof(*adapter) ))) break;
+        adapter->refcount = 1;
         adapter->id = adapter_id;
 
         if (!read_display_adapter_settings( adapter_id, adapter ))
         {
-            free( adapter );
+            adapter_release( adapter );
             break;
         }
 
@@ -1251,13 +1522,22 @@ static BOOL update_display_cache_from_registry(void)
         for (monitor_id = 0;; monitor_id++)
         {
             if (!(monitor = calloc( 1, sizeof(*monitor) ))) break;
-            monitor->id = monitor_id;
-            monitor->adapter = adapter;
-
             if (!read_monitor_settings( adapter, monitor_id, monitor ))
             {
                 free( monitor );
                 break;
+            }
+
+            monitor->id = monitor_id;
+            monitor->adapter = adapter_acquire( adapter );
+
+            LIST_FOR_EACH_ENTRY(monitor2, &monitors, struct monitor, entry)
+            {
+                if (EqualRect(&monitor2->rc_monitor, &monitor->rc_monitor))
+                {
+                    monitor->is_clone = TRUE;
+                    break;
+                }
             }
 
             monitor->handle = UlongToHandle( ++monitor_count );
@@ -1274,16 +1554,23 @@ static BOOL update_display_cache_from_registry(void)
 
 static BOOL update_display_cache(void)
 {
-    struct device_manager_ctx ctx = { 0 };
+    HWINSTA winstation = NtUserGetProcessWindowStation();
+    struct device_manager_ctx ctx = {0};
+    USEROBJECTFLAGS flags;
+
+    /* services do not have any adapters, only a virtual monitor */
+    if (NtUserGetObjectInformation( winstation, UOI_FLAGS, &flags, sizeof(flags), NULL )
+        && !(flags.dwFlags & WSF_VISIBLE))
+    {
+        pthread_mutex_lock( &display_lock );
+        clear_display_devices();
+        list_add_tail( &monitors, &virtual_monitor.entry );
+        pthread_mutex_unlock( &display_lock );
+        return TRUE;
+    }
 
     user_driver->pUpdateDisplayDevices( &device_manager, FALSE, &ctx );
     release_display_manager_ctx( &ctx );
-    if (ctx.virtual_monitor)
-    {
-        clear_display_devices();
-        list_add_tail( &monitors, &virtual_monitor.entry );
-        return TRUE;
-    }
 
     if (update_display_cache_from_registry()) return TRUE;
     if (ctx.gpu_count)
@@ -1292,7 +1579,41 @@ static BOOL update_display_cache(void)
         return FALSE;
     }
 
-    user_driver->pUpdateDisplayDevices( &device_manager, TRUE, &ctx );
+    if (!user_driver->pUpdateDisplayDevices( &device_manager, TRUE, &ctx ))
+    {
+        static const DEVMODEW modes[] =
+        {
+            { .dmFields = DM_DISPLAYORIENTATION | DM_BITSPERPEL | DM_PELSWIDTH | DM_PELSHEIGHT | DM_DISPLAYFLAGS | DM_DISPLAYFREQUENCY,
+              .dmBitsPerPel = 32, .dmPelsWidth = 640, .dmPelsHeight = 480, .dmDisplayFrequency = 60, },
+            { .dmFields = DM_DISPLAYORIENTATION | DM_BITSPERPEL | DM_PELSWIDTH | DM_PELSHEIGHT | DM_DISPLAYFLAGS | DM_DISPLAYFREQUENCY,
+              .dmBitsPerPel = 32, .dmPelsWidth = 800, .dmPelsHeight = 600, .dmDisplayFrequency = 60, },
+            { .dmFields = DM_DISPLAYORIENTATION | DM_BITSPERPEL | DM_PELSWIDTH | DM_PELSHEIGHT | DM_DISPLAYFLAGS | DM_DISPLAYFREQUENCY,
+              .dmBitsPerPel = 32, .dmPelsWidth = 1024, .dmPelsHeight = 768, .dmDisplayFrequency = 60, },
+            { .dmFields = DM_DISPLAYORIENTATION | DM_BITSPERPEL | DM_PELSWIDTH | DM_PELSHEIGHT | DM_DISPLAYFLAGS | DM_DISPLAYFREQUENCY,
+              .dmBitsPerPel = 16, .dmPelsWidth = 640, .dmPelsHeight = 480, .dmDisplayFrequency = 60, },
+            { .dmFields = DM_DISPLAYORIENTATION | DM_BITSPERPEL | DM_PELSWIDTH | DM_PELSHEIGHT | DM_DISPLAYFLAGS | DM_DISPLAYFREQUENCY,
+              .dmBitsPerPel = 16, .dmPelsWidth = 800, .dmPelsHeight = 600, .dmDisplayFrequency = 60, },
+            { .dmFields = DM_DISPLAYORIENTATION | DM_BITSPERPEL | DM_PELSWIDTH | DM_PELSHEIGHT | DM_DISPLAYFLAGS | DM_DISPLAYFREQUENCY,
+              .dmBitsPerPel = 16, .dmPelsWidth = 1024, .dmPelsHeight = 768, .dmDisplayFrequency = 60, },
+        };
+        static const struct gdi_gpu gpu;
+        static const struct gdi_adapter adapter =
+        {
+            .state_flags = DISPLAY_DEVICE_ATTACHED_TO_DESKTOP | DISPLAY_DEVICE_PRIMARY_DEVICE | DISPLAY_DEVICE_VGA_COMPATIBLE,
+        };
+        struct gdi_monitor monitor =
+        {
+            .state_flags = DISPLAY_DEVICE_ACTIVE | DISPLAY_DEVICE_ATTACHED,
+            .rc_monitor = {.right = modes[2].dmPelsWidth, .bottom = modes[2].dmPelsHeight},
+            .rc_work = {.right = modes[2].dmPelsWidth, .bottom = modes[2].dmPelsHeight},
+        };
+        UINT i;
+
+        add_gpu( &gpu, &ctx );
+        add_adapter( &adapter, &ctx );
+        add_monitor( &monitor, &ctx );
+        for (i = 0; i < ARRAY_SIZE(modes); ++i) add_mode( modes + i, &ctx );
+    }
     release_display_manager_ctx( &ctx );
 
     if (!update_display_cache_from_registry())
@@ -1300,7 +1621,6 @@ static BOOL update_display_cache(void)
         ERR( "failed to read display config\n" );
         return FALSE;
     }
-
     return TRUE;
 }
 
@@ -1316,7 +1636,7 @@ static void unlock_display_devices(void)
     pthread_mutex_unlock( &display_lock );
 }
 
-HDC get_display_dc(void)
+static HDC get_display_dc(void)
 {
     pthread_mutex_lock( &display_dc_lock );
     if (!display_dc)
@@ -1334,7 +1654,7 @@ HDC get_display_dc(void)
     return display_dc;
 }
 
-void release_display_dc( HDC hdc )
+static void release_display_dc( HDC hdc )
 {
     pthread_mutex_unlock( &display_dc_lock );
 }
@@ -1342,7 +1662,16 @@ void release_display_dc( HDC hdc )
 /**********************************************************************
  *           get_monitor_dpi
  */
-static UINT get_monitor_dpi( HMONITOR monitor )
+UINT get_monitor_dpi( HMONITOR monitor )
+{
+    /* FIXME: use the monitor DPI instead */
+    return system_dpi;
+}
+
+/**********************************************************************
+ *              get_win_monitor_dpi
+ */
+UINT get_win_monitor_dpi( HWND hwnd )
 {
     /* FIXME: use the monitor DPI instead */
     return system_dpi;
@@ -1351,9 +1680,9 @@ static UINT get_monitor_dpi( HMONITOR monitor )
 /**********************************************************************
  *           get_thread_dpi_awareness
  */
-static DPI_AWARENESS get_thread_dpi_awareness(void)
+DPI_AWARENESS get_thread_dpi_awareness(void)
 {
-    struct user_thread_info *info = get_user_thread_info();
+    struct ntuser_thread_info *info = NtUserGetThreadInfo();
     ULONG_PTR context = info->dpi_awareness;
 
     if (!context) context = NtUserGetProcessDpiAwarenessContext( NULL );
@@ -1376,10 +1705,15 @@ static DPI_AWARENESS get_thread_dpi_awareness(void)
     }
 }
 
+DWORD get_process_layout(void)
+{
+    return process_layout == ~0u ? 0 : process_layout;
+}
+
 /**********************************************************************
  *              get_thread_dpi
  */
-static UINT get_thread_dpi(void)
+UINT get_thread_dpi(void)
 {
     switch (get_thread_dpi_awareness())
     {
@@ -1396,6 +1730,50 @@ UINT get_system_dpi(void)
     return system_dpi;
 }
 
+/* see GetAwarenessFromDpiAwarenessContext */
+static DPI_AWARENESS get_awareness_from_dpi_awareness_context( DPI_AWARENESS_CONTEXT context )
+{
+    switch ((ULONG_PTR)context)
+    {
+    case 0x10:
+    case 0x11:
+    case 0x12:
+    case 0x80000010:
+    case 0x80000011:
+    case 0x80000012:
+        return (ULONG_PTR)context & 3;
+    case (ULONG_PTR)DPI_AWARENESS_CONTEXT_UNAWARE:
+    case (ULONG_PTR)DPI_AWARENESS_CONTEXT_SYSTEM_AWARE:
+    case (ULONG_PTR)DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE:
+        return ~(ULONG_PTR)context;
+    default:
+        return DPI_AWARENESS_INVALID;
+    }
+}
+
+/**********************************************************************
+ *           SetThreadDpiAwarenessContext   (win32u.so)
+ */
+DPI_AWARENESS_CONTEXT WINAPI SetThreadDpiAwarenessContext( DPI_AWARENESS_CONTEXT context )
+{
+    struct ntuser_thread_info *info = NtUserGetThreadInfo();
+    DPI_AWARENESS prev, val = get_awareness_from_dpi_awareness_context( context );
+
+    if (val == DPI_AWARENESS_INVALID)
+    {
+        RtlSetLastWin32Error( ERROR_INVALID_PARAMETER );
+        return 0;
+    }
+    if (!(prev = info->dpi_awareness))
+    {
+        prev = NtUserGetProcessDpiAwarenessContext( GetCurrentProcess() ) & 3;
+        prev |= 0x80000010;  /* restore to process default */
+    }
+    if (((ULONG_PTR)context & ~(ULONG_PTR)0x13) == 0x80000000) info->dpi_awareness = 0;
+    else info->dpi_awareness = val | 0x10;
+    return ULongToHandle( prev );
+}
+
 /**********************************************************************
  *              map_dpi_rect
  */
@@ -1409,6 +1787,55 @@ RECT map_dpi_rect( RECT rect, UINT dpi_from, UINT dpi_to )
         rect.bottom = muldiv( rect.bottom, dpi_to, dpi_from );
     }
     return rect;
+}
+
+/**********************************************************************
+ *              map_dpi_point
+ */
+POINT map_dpi_point( POINT pt, UINT dpi_from, UINT dpi_to )
+{
+    if (dpi_from && dpi_to && dpi_from != dpi_to)
+    {
+        pt.x = muldiv( pt.x, dpi_to, dpi_from );
+        pt.y = muldiv( pt.y, dpi_to, dpi_from );
+    }
+    return pt;
+}
+
+/**********************************************************************
+ *              point_win_to_phys_dpi
+ */
+static POINT point_win_to_phys_dpi( HWND hwnd, POINT pt )
+{
+    return map_dpi_point( pt, get_dpi_for_window( hwnd ), get_win_monitor_dpi( hwnd ) );
+}
+
+/**********************************************************************
+ *              point_phys_to_win_dpi
+ */
+POINT point_phys_to_win_dpi( HWND hwnd, POINT pt )
+{
+    return map_dpi_point( pt, get_win_monitor_dpi( hwnd ), get_dpi_for_window( hwnd ));
+}
+
+/**********************************************************************
+ *              point_thread_to_win_dpi
+ */
+POINT point_thread_to_win_dpi( HWND hwnd, POINT pt )
+{
+    UINT dpi = get_thread_dpi();
+    if (!dpi) dpi = get_win_monitor_dpi( hwnd );
+    return map_dpi_point( pt, dpi, get_dpi_for_window( hwnd ));
+}
+
+/**********************************************************************
+ *              rect_thread_to_win_dpi
+ */
+RECT rect_thread_to_win_dpi( HWND hwnd, RECT rect )
+{
+    UINT dpi = get_thread_dpi();
+    if (!dpi) dpi = get_win_monitor_dpi( hwnd );
+    return map_dpi_rect( rect, dpi, get_dpi_for_window( hwnd ) );
 }
 
 /* map value from system dpi to standard 96 dpi for storing in the registry */
@@ -1442,6 +1869,27 @@ RECT get_virtual_screen_rect( UINT dpi )
     return rect;
 }
 
+static BOOL is_window_rect_full_screen( const RECT *rect )
+{
+    struct monitor *monitor;
+    BOOL ret = FALSE;
+
+    if (!lock_display_devices()) return FALSE;
+
+    LIST_FOR_EACH_ENTRY( monitor, &monitors, struct monitor, entry )
+    {
+        if (rect->left <= monitor->rc_monitor.left && rect->right >= monitor->rc_monitor.right &&
+            rect->top <= monitor->rc_monitor.top && rect->bottom >= monitor->rc_monitor.bottom)
+        {
+            ret = TRUE;
+            break;
+        }
+    }
+
+    unlock_display_devices();
+    return ret;
+}
+
 RECT get_display_rect( const WCHAR *display )
 {
     struct monitor *monitor;
@@ -1460,7 +1908,7 @@ RECT get_display_rect( const WCHAR *display )
     return map_dpi_rect( rect, system_dpi, get_thread_dpi() );
 }
 
-static RECT get_primary_monitor_rect(void)
+RECT get_primary_monitor_rect( UINT dpi )
 {
     struct monitor *monitor;
     RECT rect = {0};
@@ -1475,7 +1923,7 @@ static RECT get_primary_monitor_rect(void)
     }
 
     unlock_display_devices();
-    return map_dpi_rect( rect, system_dpi, get_thread_dpi() );
+    return map_dpi_rect( rect, system_dpi, dpi );
 }
 
 /**********************************************************************
@@ -1525,18 +1973,63 @@ LONG WINAPI NtUserGetDisplayConfigBufferSizes( UINT32 flags, UINT32 *num_path_in
     return ERROR_SUCCESS;
 }
 
-static struct adapter *find_adapter( UNICODE_STRING *name )
+/* display_lock mutex must be held */
+static struct display_device *find_monitor_device( struct display_device *adapter, DWORD index )
+{
+    struct monitor *monitor;
+
+    LIST_FOR_EACH_ENTRY(monitor, &monitors, struct monitor, entry)
+        if (&monitor->adapter->dev == adapter && index == monitor->id)
+            return &monitor->dev;
+
+    WARN( "Failed to find adapter %s monitor with id %u.\n", debugstr_w(adapter->device_name), index );
+    return NULL;
+}
+
+/* display_lock mutex must be held */
+static struct display_device *find_adapter_device_by_id( DWORD index )
 {
     struct adapter *adapter;
 
     LIST_FOR_EACH_ENTRY(adapter, &adapters, struct adapter, entry)
-    {
-        if (!name || !name->Length) return adapter; /* use primary adapter */
-        if (!wcsnicmp( name->Buffer, adapter->dev.device_name, name->Length / sizeof(WCHAR) ) &&
-            !adapter->dev.device_name[name->Length / sizeof(WCHAR)])
-            return adapter;
-    }
+        if (index == adapter->id) return &adapter->dev;
+
+    WARN( "Failed to find adapter with id %u.\n", index );
     return NULL;
+}
+
+/* display_lock mutex must be held */
+static struct display_device *find_adapter_device_by_name( UNICODE_STRING *name )
+{
+    SIZE_T len = name->Length / sizeof(WCHAR);
+    struct adapter *adapter;
+
+    LIST_FOR_EACH_ENTRY(adapter, &adapters, struct adapter, entry)
+        if (!wcsnicmp( name->Buffer, adapter->dev.device_name, len ) && !adapter->dev.device_name[len])
+            return &adapter->dev;
+
+    WARN( "Failed to find adapter with name %s.\n", debugstr_us(name) );
+    return NULL;
+}
+
+/* Find and acquire the adapter matching name, or primary adapter if name is NULL.
+ * If not NULL, the returned adapter needs to be released with adapter_release.
+ */
+static struct adapter *find_adapter( UNICODE_STRING *name )
+{
+    struct display_device *device;
+    struct adapter *adapter;
+
+    if (!lock_display_devices()) return NULL;
+
+    if (name && name->Length) device = find_adapter_device_by_name( name );
+    else device = find_adapter_device_by_id( 0 ); /* use primary adapter */
+
+    if (!device) adapter = NULL;
+    else adapter = adapter_acquire( CONTAINING_RECORD( device, struct adapter, dev ) );
+
+    unlock_display_devices();
+    return adapter;
 }
 
 /***********************************************************************
@@ -1546,8 +2039,6 @@ NTSTATUS WINAPI NtUserEnumDisplayDevices( UNICODE_STRING *device, DWORD index,
                                           DISPLAY_DEVICEW *info, DWORD flags )
 {
     struct display_device *found = NULL;
-    struct adapter *adapter;
-    struct monitor *monitor;
 
     TRACE( "%s %u %p %#x\n", debugstr_us( device ), index, info, flags );
 
@@ -1555,30 +2046,8 @@ NTSTATUS WINAPI NtUserEnumDisplayDevices( UNICODE_STRING *device, DWORD index,
 
     if (!lock_display_devices()) return STATUS_UNSUCCESSFUL;
 
-    if (!device || !device->Length)
-    {
-        /* Enumerate adapters */
-        LIST_FOR_EACH_ENTRY(adapter, &adapters, struct adapter, entry)
-        {
-            if (index == adapter->id)
-            {
-                found = &adapter->dev;
-                break;
-            }
-        }
-    }
-    else if ((adapter = find_adapter( device )))
-    {
-        /* Enumerate monitors */
-        LIST_FOR_EACH_ENTRY(monitor, &monitors, struct monitor, entry)
-        {
-            if (monitor->adapter == adapter && index == monitor->id)
-            {
-                found = &monitor->dev;
-                break;
-            }
-        }
-    }
+    if (!device || !device->Length) found = find_adapter_device_by_id( index );
+    else if ((found = find_adapter_device_by_name( device ))) found = find_monitor_device( found, index );
 
     if (found)
     {
@@ -1676,125 +2145,444 @@ static BOOL is_detached_mode( const DEVMODEW *mode )
            mode->dmPelsHeight == 0;
 }
 
-/***********************************************************************
- *	     NtUserChangeDisplaySettingsExW    (win32u.@)
- */
-LONG WINAPI NtUserChangeDisplaySettings( UNICODE_STRING *devname, DEVMODEW *devmode, HWND hwnd,
-                                         DWORD flags, void *lparam )
+static const DEVMODEW *find_display_mode( const DEVMODEW *modes, DEVMODEW *devmode )
 {
-    WCHAR device_name[CCHDEVICENAME];
-    struct adapter *adapter;
-    BOOL def_mode = TRUE;
-    DEVMODEW dm;
-    LONG ret;
+    const DEVMODEW *mode;
 
-    TRACE( "%s %p %p %#x %p\n", debugstr_us(devname), devmode, hwnd, flags, lparam );
-    TRACE( "flags=%s\n", _CDS_flags(flags) );
+    if (is_detached_mode( devmode )) return devmode;
 
-    if ((!devname || !devname->Length) && !devmode)
+    for (mode = modes; mode && mode->dmSize; mode = NEXT_DEVMODEW(mode))
     {
-        ret = user_driver->pChangeDisplaySettingsEx( NULL, NULL, hwnd, flags, lparam );
-        if (ret != DISP_CHANGE_SUCCESSFUL)
-            ERR( "Restoring all displays to their registry settings returned %d.\n", ret );
-        return ret;
+        if ((mode->dmFields & DM_DISPLAYFLAGS) && (mode->dmDisplayFlags & WINE_DM_UNSUPPORTED))
+            continue;
+        if ((devmode->dmFields & DM_BITSPERPEL) && devmode->dmBitsPerPel && devmode->dmBitsPerPel != mode->dmBitsPerPel)
+            continue;
+        if ((devmode->dmFields & DM_PELSWIDTH) && devmode->dmPelsWidth != mode->dmPelsWidth)
+            continue;
+        if ((devmode->dmFields & DM_PELSHEIGHT) && devmode->dmPelsHeight != mode->dmPelsHeight)
+            continue;
+        if ((devmode->dmFields & DM_DISPLAYFREQUENCY) && devmode->dmDisplayFrequency != mode->dmDisplayFrequency
+            && devmode->dmDisplayFrequency > 1 && mode->dmDisplayFrequency)
+            continue;
+        if ((devmode->dmFields & DM_DISPLAYORIENTATION) && devmode->dmDisplayOrientation != mode->dmDisplayOrientation)
+            continue;
+        if ((devmode->dmFields & DM_DISPLAYFLAGS) && (mode->dmFields & DM_DISPLAYFLAGS) &&
+            (devmode->dmDisplayFlags & DM_INTERLACED) != (mode->dmDisplayFlags & DM_INTERLACED))
+            continue;
+        if ((devmode->dmFields & DM_DISPLAYFIXEDOUTPUT) && (mode->dmFields & DM_DISPLAYFIXEDOUTPUT) &&
+            devmode->dmDisplayFixedOutput != mode->dmDisplayFixedOutput)
+            continue;
+
+        return mode;
     }
 
-    if (!lock_display_devices()) return DISP_CHANGE_FAILED;
-    if ((adapter = find_adapter( devname ))) lstrcpyW( device_name, adapter->dev.device_name );
-    unlock_display_devices();
-    if (!adapter)
-    {
-        WARN( "Invalid device name %s.\n", debugstr_us(devname) );
-        return DISP_CHANGE_BADPARAM;
-    }
+    return NULL;
+}
+
+static BOOL adapter_get_full_mode( const struct adapter *adapter, const DEVMODEW *devmode, DEVMODEW *full_mode )
+{
+    const DEVMODEW *adapter_mode;
 
     if (devmode)
     {
         trace_devmode( devmode );
 
-        if (devmode->dmSize < FIELD_OFFSET(DEVMODEW, dmICMMethod))
-            return DISP_CHANGE_BADMODE;
-
-        if (is_detached_mode(devmode) ||
-            ((devmode->dmFields & DM_BITSPERPEL) && devmode->dmBitsPerPel) ||
-            ((devmode->dmFields & DM_PELSWIDTH) && devmode->dmPelsWidth) ||
-            ((devmode->dmFields & DM_PELSHEIGHT) && devmode->dmPelsHeight) ||
-            ((devmode->dmFields & DM_DISPLAYFREQUENCY) && devmode->dmDisplayFrequency))
-            def_mode = FALSE;
+        if (devmode->dmSize < offsetof(DEVMODEW, dmICMMethod)) return FALSE;
+        if (!is_detached_mode( devmode ) &&
+            (!(devmode->dmFields & DM_BITSPERPEL) || !devmode->dmBitsPerPel) &&
+            (!(devmode->dmFields & DM_PELSWIDTH) || !devmode->dmPelsWidth) &&
+            (!(devmode->dmFields & DM_PELSHEIGHT) || !devmode->dmPelsHeight) &&
+            (!(devmode->dmFields & DM_DISPLAYFREQUENCY) || !devmode->dmDisplayFrequency))
+            devmode = NULL;
     }
 
-    if (def_mode)
+    if (devmode) memcpy( full_mode, devmode, devmode->dmSize );
+    else
     {
-        memset( &dm, 0, sizeof(dm) );
-        dm.dmSize = sizeof(dm);
-        if (!NtUserEnumDisplaySettings( devname, ENUM_REGISTRY_SETTINGS, &dm, 0 ))
-        {
-            ERR( "Default mode not found!\n" );
-            return DISP_CHANGE_BADMODE;
-        }
-
+        if (!adapter_get_registry_settings( adapter, full_mode )) return FALSE;
         TRACE( "Return to original display mode\n" );
-        devmode = &dm;
     }
 
-    if ((devmode->dmFields & (DM_PELSWIDTH | DM_PELSHEIGHT)) != (DM_PELSWIDTH | DM_PELSHEIGHT))
+    if ((full_mode->dmFields & (DM_PELSWIDTH | DM_PELSHEIGHT)) != (DM_PELSWIDTH | DM_PELSHEIGHT))
     {
-        WARN( "devmode doesn't specify the resolution: %#x\n", devmode->dmFields );
-        return DISP_CHANGE_BADMODE;
+        WARN( "devmode doesn't specify the resolution: %#x\n", full_mode->dmFields );
+        return FALSE;
     }
 
-    if (!is_detached_mode(devmode) && (!devmode->dmPelsWidth || !devmode->dmPelsHeight))
+    if (!is_detached_mode( full_mode ) && (!full_mode->dmPelsWidth || !full_mode->dmPelsHeight || !(full_mode->dmFields & DM_POSITION)))
     {
-        memset(&dm, 0, sizeof(dm));
-        dm.dmSize = sizeof(dm);
-        if (!NtUserEnumDisplaySettings( devname, ENUM_CURRENT_SETTINGS, &dm, 0 ))
+        DEVMODEW current_mode = {.dmSize = sizeof(DEVMODEW)};
+        if (!user_driver->pGetCurrentDisplaySettings( adapter->dev.device_name, &current_mode )) return FALSE;
+        if (!full_mode->dmPelsWidth) full_mode->dmPelsWidth = current_mode.dmPelsWidth;
+        if (!full_mode->dmPelsHeight) full_mode->dmPelsHeight = current_mode.dmPelsHeight;
+        if (!(full_mode->dmFields & DM_POSITION))
         {
-            ERR( "Current mode not found!\n" );
-            return DISP_CHANGE_BADMODE;
+            full_mode->dmPosition = current_mode.dmPosition;
+            full_mode->dmFields |= DM_POSITION;
+        }
+    }
+
+    if ((adapter_mode = find_display_mode( adapter->modes, full_mode )) && adapter_mode != full_mode)
+    {
+        POINTL position = full_mode->dmPosition;
+        *full_mode = *adapter_mode;
+        full_mode->dmFields |= DM_POSITION;
+        full_mode->dmPosition = position;
+    }
+
+    return adapter_mode != NULL;
+}
+
+static DEVMODEW *get_display_settings( const WCHAR *devname, const DEVMODEW *devmode )
+{
+    DEVMODEW *mode, *displays;
+    struct adapter *adapter;
+    BOOL ret;
+
+    if (!lock_display_devices()) return NULL;
+
+    /* allocate an extra mode for easier iteration */
+    if (!(displays = calloc( list_count( &adapters ) + 1, sizeof(DEVMODEW) ))) goto done;
+    mode = displays;
+
+    LIST_FOR_EACH_ENTRY( adapter, &adapters, struct adapter, entry )
+    {
+        mode->dmSize = sizeof(DEVMODEW);
+        if (devmode && !wcsicmp( devname, adapter->dev.device_name ))
+            memcpy( &mode->dmFields, &devmode->dmFields, devmode->dmSize - offsetof(DEVMODEW, dmFields) );
+        else
+        {
+            if (!devname) ret = adapter_get_registry_settings( adapter, mode );
+            else ret = user_driver->pGetCurrentDisplaySettings( adapter->dev.device_name, mode );
+            if (!ret) goto done;
         }
 
-        if (!devmode->dmPelsWidth)
-            devmode->dmPelsWidth = dm.dmPelsWidth;
-        if (!devmode->dmPelsHeight)
-            devmode->dmPelsHeight = dm.dmPelsHeight;
+        lstrcpyW( mode->dmDeviceName, adapter->dev.device_name );
+        mode = NEXT_DEVMODEW(mode);
     }
 
-    ret = user_driver->pChangeDisplaySettingsEx( device_name, devmode, hwnd, flags, lparam );
-    if (ret != DISP_CHANGE_SUCCESSFUL)
-        ERR( "Changing %s display settings returned %d.\n", debugstr_us(devname), ret );
+    unlock_display_devices();
+    return displays;
+
+done:
+    unlock_display_devices();
+    free( displays );
+    return NULL;
+}
+
+static INT offset_length( POINT offset )
+{
+    return offset.x * offset.x + offset.y * offset.y;
+}
+
+static void set_rect_from_devmode( RECT *rect, const DEVMODEW *mode )
+{
+    SetRect( rect, mode->dmPosition.x, mode->dmPosition.y, mode->dmPosition.x + mode->dmPelsWidth,
+             mode->dmPosition.y + mode->dmPelsHeight );
+}
+
+/* Check if a rect overlaps with placed display rects */
+static BOOL overlap_placed_displays( const RECT *rect, const DEVMODEW *displays )
+{
+    const DEVMODEW *mode;
+    RECT intersect;
+
+    for (mode = displays; mode->dmSize; mode = NEXT_DEVMODEW(mode))
+    {
+        set_rect_from_devmode( &intersect, mode );
+        if ((mode->dmFields & DM_POSITION) && intersect_rect( &intersect, &intersect, rect )) return TRUE;
+    }
+
+    return FALSE;
+}
+
+/* Get the offset with minimum length to place a display next to the placed displays with no spacing and overlaps */
+static POINT get_placement_offset( const DEVMODEW *displays, const DEVMODEW *placing )
+{
+    POINT points[8], left_top, offset, min_offset = {0, 0};
+    INT point_idx, point_count, vertex_idx;
+    BOOL has_placed = FALSE, first = TRUE;
+    RECT desired_rect, rect;
+    const DEVMODEW *mode;
+    INT width, height;
+
+    set_rect_from_devmode( &desired_rect, placing );
+
+    /* If the display to be placed is detached, no offset is needed to place it */
+    if (IsRectEmpty( &desired_rect )) return min_offset;
+
+    /* If there is no placed and attached display, place this display as it is */
+    for (mode = displays; mode->dmSize; mode = NEXT_DEVMODEW(mode))
+    {
+        set_rect_from_devmode( &rect, mode );
+        if ((mode->dmFields & DM_POSITION) && !IsRectEmpty( &rect ))
+        {
+            has_placed = TRUE;
+            break;
+        }
+    }
+
+    if (!has_placed) return min_offset;
+
+    /* Try to place this display with each of its four vertices at every vertex of the placed
+     * displays and see which combination has the minimum offset length */
+    width = desired_rect.right - desired_rect.left;
+    height = desired_rect.bottom - desired_rect.top;
+
+    for (mode = displays; mode->dmSize; mode = NEXT_DEVMODEW(mode))
+    {
+        set_rect_from_devmode( &rect, mode );
+        if (!(mode->dmFields & DM_POSITION) || IsRectEmpty( &rect )) continue;
+
+        /* Get four vertices of the placed display rectangle */
+        points[0].x = rect.left;
+        points[0].y = rect.top;
+        points[1].x = rect.left;
+        points[1].y = rect.bottom;
+        points[2].x = rect.right;
+        points[2].y = rect.top;
+        points[3].x = rect.right;
+        points[3].y = rect.bottom;
+        point_count = 4;
+
+        /* Intersected points when moving the display to be placed horizontally */
+        if (desired_rect.bottom >= rect.top && desired_rect.top <= rect.bottom)
+        {
+            points[point_count].x = rect.left;
+            points[point_count++].y = desired_rect.top;
+            points[point_count].x = rect.right;
+            points[point_count++].y = desired_rect.top;
+        }
+        /* Intersected points when moving the display to be placed vertically */
+        if (desired_rect.left <= rect.right && desired_rect.right >= rect.left)
+        {
+            points[point_count].x = desired_rect.left;
+            points[point_count++].y = rect.top;
+            points[point_count].x = desired_rect.left;
+            points[point_count++].y = rect.bottom;
+        }
+
+        /* Try moving each vertex of the display rectangle to each points */
+        for (point_idx = 0; point_idx < point_count; ++point_idx)
+        {
+            for (vertex_idx = 0; vertex_idx < 4; ++vertex_idx)
+            {
+                switch (vertex_idx)
+                {
+                /* Move the bottom right vertex to the point */
+                case 0:
+                    left_top.x = points[point_idx].x - width;
+                    left_top.y = points[point_idx].y - height;
+                    break;
+                /* Move the bottom left vertex to the point */
+                case 1:
+                    left_top.x = points[point_idx].x;
+                    left_top.y = points[point_idx].y - height;
+                    break;
+                /* Move the top right vertex to the point */
+                case 2:
+                    left_top.x = points[point_idx].x - width;
+                    left_top.y = points[point_idx].y;
+                    break;
+                /* Move the top left vertex to the point */
+                case 3:
+                    left_top.x = points[point_idx].x;
+                    left_top.y = points[point_idx].y;
+                    break;
+                }
+
+                offset.x = left_top.x - desired_rect.left;
+                offset.y = left_top.y - desired_rect.top;
+                rect = desired_rect;
+                OffsetRect( &rect, offset.x, offset.y );
+                if (!overlap_placed_displays( &rect, displays ))
+                {
+                    if (first)
+                    {
+                        min_offset = offset;
+                        first = FALSE;
+                        continue;
+                    }
+
+                    if (offset_length( offset ) < offset_length( min_offset )) min_offset = offset;
+                }
+            }
+        }
+    }
+
+    return min_offset;
+}
+
+static void place_all_displays( DEVMODEW *displays )
+{
+    POINT min_offset, offset;
+    DEVMODEW *mode, *placing;
+
+    for (mode = displays; mode->dmSize; mode = NEXT_DEVMODEW(mode))
+        mode->dmFields &= ~DM_POSITION;
+
+    /* Place all displays with no extra space between them and no overlapping */
+    while (1)
+    {
+        /* Place the unplaced display with the minimum offset length first */
+        placing = NULL;
+        for (mode = displays; mode->dmSize; mode = NEXT_DEVMODEW(mode))
+        {
+            if (mode->dmFields & DM_POSITION) continue;
+
+            offset = get_placement_offset( displays, mode );
+            if (!placing || offset_length( offset ) < offset_length( min_offset ))
+            {
+                min_offset = offset;
+                placing = mode;
+            }
+        }
+
+        /* If all displays are placed */
+        if (!placing) break;
+
+        placing->dmPosition.x += min_offset.x;
+        placing->dmPosition.y += min_offset.y;
+        placing->dmFields |= DM_POSITION;
+    }
+}
+
+static BOOL all_detached_settings( const DEVMODEW *displays )
+{
+    const DEVMODEW *mode;
+
+    for (mode = displays; mode->dmSize; mode = NEXT_DEVMODEW(mode))
+        if (!is_detached_mode( mode )) return FALSE;
+
+    return TRUE;
+}
+
+static LONG apply_display_settings( const WCHAR *devname, const DEVMODEW *devmode,
+                                    HWND hwnd, DWORD flags, void *lparam )
+{
+    struct adapter *adapter;
+    DEVMODEW *displays;
+    LONG ret;
+
+    displays = get_display_settings( devname, devmode );
+    if (!displays) return DISP_CHANGE_FAILED;
+
+    if (all_detached_settings( displays ))
+    {
+        WARN( "Detaching all modes is not permitted.\n" );
+        free( displays );
+        return DISP_CHANGE_SUCCESSFUL;
+    }
+
+    place_all_displays( displays );
+
+    ret = user_driver->pChangeDisplaySettings( displays, hwnd, flags, lparam );
+
+    free( displays );
+    if (ret) return ret;
+
+    if ((adapter = find_adapter( NULL )))
+    {
+        DEVMODEW current_mode = {.dmSize = sizeof(DEVMODEW)};
+        user_driver->pGetCurrentDisplaySettings( adapter->dev.device_name, &current_mode );
+        adapter_release( adapter );
+
+        send_message_timeout( HWND_BROADCAST, WM_DISPLAYCHANGE, current_mode.dmBitsPerPel,
+                              MAKELPARAM( current_mode.dmPelsWidth, current_mode.dmPelsHeight ),
+                              SMTO_ABORTIFHUNG, 2000, FALSE );
+    }
+
     return ret;
+}
+
+/***********************************************************************
+ *	     NtUserChangeDisplaySettings    (win32u.@)
+ */
+LONG WINAPI NtUserChangeDisplaySettings( UNICODE_STRING *devname, DEVMODEW *devmode, HWND hwnd,
+                                         DWORD flags, void *lparam )
+{
+    DEVMODEW full_mode = {.dmSize = sizeof(DEVMODEW)};
+    LONG ret = DISP_CHANGE_SUCCESSFUL;
+    struct adapter *adapter;
+
+    TRACE( "%s %p %p %#x %p\n", debugstr_us(devname), devmode, hwnd, flags, lparam );
+    TRACE( "flags=%s\n", _CDS_flags(flags) );
+
+    if ((!devname || !devname->Length) && !devmode) return apply_display_settings( NULL, NULL, hwnd, flags, lparam );
+
+    if (!(adapter = find_adapter( devname ))) return DISP_CHANGE_BADPARAM;
+
+    if (!adapter_get_full_mode( adapter, devmode, &full_mode )) ret = DISP_CHANGE_BADMODE;
+    else if ((flags & CDS_UPDATEREGISTRY) && !adapter_set_registry_settings( adapter, &full_mode )) ret = DISP_CHANGE_NOTUPDATED;
+    else if (flags & (CDS_TEST | CDS_NORESET)) ret = DISP_CHANGE_SUCCESSFUL;
+    else ret = apply_display_settings( adapter->dev.device_name, &full_mode, hwnd, flags, lparam );
+    adapter_release( adapter );
+
+    if (ret) ERR( "Changing %s display settings returned %d.\n", debugstr_us(devname), ret );
+    return ret;
+}
+
+static BOOL adapter_enum_display_settings( const struct adapter *adapter, DWORD index, DEVMODEW *devmode, DWORD flags )
+{
+    DEVMODEW current_mode = {.dmSize = sizeof(DEVMODEW)};
+    const DEVMODEW *adapter_mode;
+
+    if (!(flags & EDS_ROTATEDMODE) && !user_driver->pGetCurrentDisplaySettings( adapter->dev.device_name, &current_mode ))
+    {
+        WARN( "Failed to query current display mode for EDS_ROTATEDMODE flag.\n" );
+        return FALSE;
+    }
+
+    for (adapter_mode = adapter->modes; adapter_mode->dmSize; adapter_mode = NEXT_DEVMODEW(adapter_mode))
+    {
+        if (!(flags & EDS_ROTATEDMODE) && (adapter_mode->dmFields & DM_DISPLAYORIENTATION) &&
+            adapter_mode->dmDisplayOrientation != current_mode.dmDisplayOrientation)
+            continue;
+        if (!(flags & EDS_RAWMODE) && (adapter_mode->dmFields & DM_DISPLAYFLAGS) &&
+            (adapter_mode->dmDisplayFlags & WINE_DM_UNSUPPORTED))
+            continue;
+        if (!index--)
+        {
+            memcpy( &devmode->dmFields, &adapter_mode->dmFields, devmode->dmSize - FIELD_OFFSET(DEVMODEW, dmFields) );
+            devmode->dmDisplayFlags &= ~WINE_DM_UNSUPPORTED;
+            return TRUE;
+        }
+    }
+
+    WARN( "device %s, index %#x, flags %#x display mode not found.\n",
+          debugstr_w( adapter->dev.device_name ), index, flags );
+    RtlSetLastWin32Error( ERROR_NO_MORE_FILES );
+    return FALSE;
 }
 
 /***********************************************************************
  *	     NtUserEnumDisplaySettings    (win32u.@)
  */
-BOOL WINAPI NtUserEnumDisplaySettings( UNICODE_STRING *device, DWORD mode,
-                                       DEVMODEW *dev_mode, DWORD flags )
+BOOL WINAPI NtUserEnumDisplaySettings( UNICODE_STRING *device, DWORD index, DEVMODEW *devmode, DWORD flags )
 {
-    WCHAR device_name[CCHDEVICENAME];
+    static const WCHAR wine_display_driverW[] = {'W','i','n','e',' ','D','i','s','p','l','a','y',' ','D','r','i','v','e','r',0};
     struct adapter *adapter;
     BOOL ret;
 
-    TRACE( "%s %#x %p %#x\n", debugstr_us(device), mode, dev_mode, flags );
+    TRACE( "device %s, index %#x, devmode %p, flags %#x\n", debugstr_us(device), index, devmode, flags );
 
-    if (!lock_display_devices()) return FALSE;
-    if ((adapter = find_adapter( device ))) lstrcpyW( device_name, adapter->dev.device_name );
-    unlock_display_devices();
-    if (!adapter)
-    {
-        WARN( "Invalid device name %s.\n", debugstr_us(device) );
-        return FALSE;
-    }
+    if (!(adapter = find_adapter( device ))) return FALSE;
 
-    ret = user_driver->pEnumDisplaySettingsEx( device_name, mode, dev_mode, flags );
-    if (ret)
-        TRACE( "device:%s mode index:%#x position:(%d,%d) resolution:%ux%u frequency:%uHz "
-               "depth:%ubits orientation:%#x.\n", debugstr_w(device_name), mode,
-               dev_mode->dmPosition.x, dev_mode->dmPosition.y, dev_mode->dmPelsWidth,
-               dev_mode->dmPelsHeight, dev_mode->dmDisplayFrequency, dev_mode->dmBitsPerPel,
-               dev_mode->dmDisplayOrientation );
-    else
-        WARN( "Failed to query %s display settings.\n", wine_dbgstr_w(device_name) );
+    lstrcpynW( devmode->dmDeviceName, wine_display_driverW, ARRAY_SIZE(devmode->dmDeviceName) );
+    devmode->dmSpecVersion = DM_SPECVERSION;
+    devmode->dmDriverVersion = DM_SPECVERSION;
+    devmode->dmSize = offsetof(DEVMODEW, dmICMMethod);
+    devmode->dmDriverExtra = 0;
+
+    if (index == ENUM_REGISTRY_SETTINGS) ret = adapter_get_registry_settings( adapter, devmode );
+    else if (index == ENUM_CURRENT_SETTINGS) ret = user_driver->pGetCurrentDisplaySettings( adapter->dev.device_name, devmode );
+    else ret = adapter_enum_display_settings( adapter, index, devmode, flags );
+    adapter_release( adapter );
+
+    if (!ret) WARN( "Failed to query %s display settings.\n", debugstr_us(device) );
+    else TRACE( "position %dx%d, resolution %ux%u, frequency %u, depth %u, orientation %#x.\n",
+                devmode->dmPosition.x, devmode->dmPosition.y, devmode->dmPelsWidth, devmode->dmPelsHeight,
+                devmode->dmDisplayFrequency, devmode->dmBitsPerPel, devmode->dmDisplayOrientation );
     return ret;
 }
 
@@ -1865,8 +2653,9 @@ BOOL WINAPI NtUserEnumDisplayMonitors( HDC hdc, RECT *rect, MONITORENUMPROC proc
 
         monrect = map_dpi_rect( monitor->rc_monitor, get_monitor_dpi( monitor->handle ),
                                 get_thread_dpi() );
-        offset_rect( &monrect, -origin.x, -origin.y );
+        OffsetRect( &monrect, -origin.x, -origin.y );
         if (!intersect_rect( &monrect, &monrect, &limit )) continue;
+        if (monitor->is_clone) continue;
 
         enum_info[count].handle = monitor->handle;
         enum_info[count].rect = monrect;
@@ -1880,9 +2669,12 @@ BOOL WINAPI NtUserEnumDisplayMonitors( HDC hdc, RECT *rect, MONITORENUMPROC proc
     params.lparam = lparam;
     for (i = 0; i < count; i++)
     {
+        void *ret_ptr;
+        ULONG ret_len;
         params.monitor = enum_info[i].handle;
         params.rect = enum_info[i].rect;
-        if (!user32_call( NtUserCallEnumDisplayMonitor, &params, sizeof(params) ))
+        if (!KeUserModeCallback( NtUserCallEnumDisplayMonitor, &params, sizeof(params),
+                                 &ret_ptr, &ret_len ))
         {
             ret = FALSE;
             break;
@@ -1892,7 +2684,7 @@ BOOL WINAPI NtUserEnumDisplayMonitors( HDC hdc, RECT *rect, MONITORENUMPROC proc
     return ret;
 }
 
-static BOOL get_monitor_info( HMONITOR handle, MONITORINFO *info )
+BOOL get_monitor_info( HMONITOR handle, MONITORINFO *info )
 {
     struct monitor *monitor;
     UINT dpi_from, dpi_to;
@@ -1932,8 +2724,102 @@ static BOOL get_monitor_info( HMONITOR handle, MONITORINFO *info )
 
     unlock_display_devices();
     WARN( "invalid handle %p\n", handle );
-    SetLastError( ERROR_INVALID_MONITOR_HANDLE );
+    RtlSetLastWin32Error( ERROR_INVALID_MONITOR_HANDLE );
     return FALSE;
+}
+
+HMONITOR monitor_from_rect( const RECT *rect, DWORD flags, UINT dpi )
+{
+    HMONITOR primary = 0, nearest = 0, ret = 0;
+    UINT max_area = 0, min_distance = ~0u;
+    struct monitor *monitor;
+    RECT r;
+
+    r = map_dpi_rect( *rect, dpi, system_dpi );
+    if (IsRectEmpty( &r ))
+    {
+        r.right = r.left + 1;
+        r.bottom = r.top + 1;
+    }
+
+    if (!lock_display_devices()) return 0;
+
+    LIST_FOR_EACH_ENTRY(monitor, &monitors, struct monitor, entry)
+    {
+        RECT intersect;
+        RECT monitor_rect = map_dpi_rect( monitor->rc_monitor, get_monitor_dpi( monitor->handle ),
+                                          system_dpi );
+
+        if (intersect_rect( &intersect, &monitor_rect, &r ))
+        {
+            /* check for larger intersecting area */
+            UINT area = (intersect.right - intersect.left) * (intersect.bottom - intersect.top);
+            if (area > max_area)
+            {
+                max_area = area;
+                ret = monitor->handle;
+            }
+        }
+        else if (!max_area)  /* if not intersecting, check for min distance */
+        {
+            UINT distance;
+            UINT x, y;
+
+            if (r.right <= monitor_rect.left) x = monitor_rect.left - r.right;
+            else if (monitor_rect.right <= r.left) x = r.left - monitor_rect.right;
+            else x = 0;
+            if (r.bottom <= monitor_rect.top) y = monitor_rect.top - r.bottom;
+            else if (monitor_rect.bottom <= r.top) y = r.top - monitor_rect.bottom;
+            else y = 0;
+            distance = x * x + y * y;
+            if (distance < min_distance)
+            {
+                min_distance = distance;
+                nearest = monitor->handle;
+            }
+        }
+
+        if (monitor->flags & MONITORINFOF_PRIMARY) primary = monitor->handle;
+    }
+
+    unlock_display_devices();
+
+    if (!ret)
+    {
+        if (flags & MONITOR_DEFAULTTOPRIMARY) ret = primary;
+        else if (flags & MONITOR_DEFAULTTONEAREST) ret = nearest;
+    }
+
+    TRACE( "%s flags %x returning %p\n", wine_dbgstr_rect(rect), flags, ret );
+    return ret;
+}
+
+HMONITOR monitor_from_point( POINT pt, DWORD flags, UINT dpi )
+{
+    RECT rect;
+    SetRect( &rect, pt.x, pt.y, pt.x + 1, pt.y + 1 );
+    return monitor_from_rect( &rect, flags, dpi );
+}
+
+/* see MonitorFromWindow */
+HMONITOR monitor_from_window( HWND hwnd, DWORD flags, UINT dpi )
+{
+    RECT rect;
+    WINDOWPLACEMENT wp;
+
+    TRACE( "(%p, 0x%08x)\n", hwnd, flags );
+
+    wp.length = sizeof(wp);
+    if (is_iconic( hwnd ) && NtUserGetWindowPlacement( hwnd, &wp ))
+        return monitor_from_rect( &wp.rcNormalPosition, flags, dpi );
+
+    if (get_window_rect( hwnd, &rect, dpi ))
+        return monitor_from_rect( &rect, flags, dpi );
+
+    if (!(flags & (MONITOR_DEFAULTTOPRIMARY|MONITOR_DEFAULTTONEAREST))) return 0;
+    /* retrieve the primary */
+    SetRect( &rect, 0, 0, 1, 1 );
+    return monitor_from_rect( &rect, flags, dpi );
 }
 
 /***********************************************************************
@@ -1957,12 +2843,12 @@ BOOL WINAPI NtUserGetDpiForMonitor( HMONITOR monitor, UINT type, UINT *x, UINT *
 {
     if (type > 2)
     {
-        SetLastError( ERROR_BAD_ARGUMENTS );
+        RtlSetLastWin32Error( ERROR_BAD_ARGUMENTS );
         return FALSE;
     }
     if (!x || !y)
     {
-        SetLastError( ERROR_INVALID_ADDRESS );
+        RtlSetLastWin32Error( ERROR_INVALID_ADDRESS );
         return FALSE;
     }
     switch (get_thread_dpi_awareness())
@@ -1972,6 +2858,36 @@ BOOL WINAPI NtUserGetDpiForMonitor( HMONITOR monitor, UINT type, UINT *x, UINT *
     default:                         *x = *y = get_monitor_dpi( monitor ); break;
     }
     return TRUE;
+}
+
+/**********************************************************************
+ *           LogicalToPhysicalPointForPerMonitorDPI   (win32u.@)
+ */
+BOOL WINAPI NtUserLogicalToPerMonitorDPIPhysicalPoint( HWND hwnd, POINT *pt )
+{
+    RECT rect;
+
+    if (!get_window_rect( hwnd, &rect, get_thread_dpi() )) return FALSE;
+    if (pt->x < rect.left || pt->y < rect.top || pt->x > rect.right || pt->y > rect.bottom) return FALSE;
+    *pt = point_win_to_phys_dpi( hwnd, *pt );
+    return TRUE;
+}
+
+/**********************************************************************
+ *           NtUserPerMonitorDPIPhysicalToLogicalPoint   (win32u.@)
+ */
+BOOL WINAPI NtUserPerMonitorDPIPhysicalToLogicalPoint( HWND hwnd, POINT *pt )
+{
+    RECT rect;
+    BOOL ret = FALSE;
+
+    if (get_window_rect( hwnd, &rect, 0 ) &&
+        pt->x >= rect.left && pt->y >= rect.top && pt->x <= rect.right && pt->y <= rect.bottom)
+    {
+        *pt = point_phys_to_win_dpi( hwnd, *pt );
+        ret = TRUE;
+    }
+    return ret;
 }
 
 /* retrieve the cached base keys for a given entry */
@@ -2460,7 +3376,7 @@ static void logfont16to32( const LOGFONT16 *font16, LPLOGFONTW font32 )
     font32->lfClipPrecision = font16->lfClipPrecision;
     font32->lfQuality = font16->lfQuality;
     font32->lfPitchAndFamily = font16->lfPitchAndFamily;
-    win32u_mbtowc( NULL, font32->lfFaceName, LF_FACESIZE, font16->lfFaceName,
+    win32u_mbtowc( &ansi_cp, font32->lfFaceName, LF_FACESIZE, font16->lfFaceName,
                    strlen( font16->lfFaceName ));
     font32->lfFaceName[LF_FACESIZE-1] = 0;
 }
@@ -2482,36 +3398,63 @@ static void get_real_fontname( LOGFONTW *lf, WCHAR fullname[LF_FACESIZE] )
         lstrcpyW( fullname, lf->lfFaceName );
 }
 
+LONG get_char_dimensions( HDC hdc, TEXTMETRICW *metric, LONG *height )
+{
+    SIZE sz;
+    static const WCHAR abcdW[] =
+        {'a','b','c','d','e','f','g','h','i','j','k','l','m','n','o','p','q',
+         'r','s','t','u','v','w','x','y','z','A','B','C','D','E','F','G','H',
+         'I','J','K','L','M','N','O','P','Q','R','S','T','U','V','W','X','Y','Z'};
+
+    if (metric && !NtGdiGetTextMetricsW( hdc, metric, 0 )) return 0;
+
+    if (!NtGdiGetTextExtentExW( hdc, abcdW, ARRAYSIZE(abcdW), 0, NULL, NULL, &sz, 0 ))
+        return 0;
+
+    if (height) *height = sz.cy;
+    return (sz.cx / 26 + 1) / 2;
+}
+
 /* get text metrics and/or "average" char width of the specified logfont
  * for the specified dc */
-static void get_text_metr_size( HDC hdc, LOGFONTW *plf, TEXTMETRICW * ptm, UINT *psz)
+static void get_text_metr_size( HDC hdc, LOGFONTW *lf, TEXTMETRICW *metric, UINT *psz )
 {
-    ENUMLOGFONTEXDVW exdv = { .elfEnumLogfontEx.elfLogFont = *plf };
     HFONT hfont, hfontsav;
     TEXTMETRICW tm;
-    if (!ptm) ptm = &tm;
-    hfont = NtGdiHfontCreate( &exdv, sizeof(exdv), 0, 0, NULL );
+    UINT ret;
+    if (!metric) metric = &tm;
+    hfont = NtGdiHfontCreate( lf, sizeof(*lf), 0, 0, NULL );
     if (!hfont || !(hfontsav = NtGdiSelectFont( hdc, hfont )))
     {
-        ptm->tmHeight = -1;
+        metric->tmHeight = -1;
         if (psz) *psz = 10;
         if (hfont) NtGdiDeleteObjectApp( hfont );
         return;
     }
-    NtGdiGetTextMetricsW( hdc, ptm, 0 );
-    if (psz)
-    {
-        SIZE sz;
-        static const WCHAR abcdW[] =
-            {'a','b','c','d','e','f','g','h','i','j','k','l','m','n','o','p','q',
-             'r','s','t','u','v','w','x','y','z','A','B','C','D','E','F','G','H',
-             'I','J','K','L','M','N','O','P','Q','R','S','T','U','V','W','X','Y','Z'};
-        if (NtGdiGetTextExtentExW( hdc, abcdW, ARRAYSIZE(abcdW), 0, NULL, NULL, &sz, 0 ))
-            *psz = (sz.cx / 26 + 1) / 2;
-        else *psz = 10;
-    }
+    ret = get_char_dimensions( hdc, metric, NULL );
+    if (psz) *psz = ret ? ret : 10;
     NtGdiSelectFont( hdc, hfontsav );
     NtGdiDeleteObjectApp( hfont );
+}
+
+DWORD get_dialog_base_units(void)
+{
+    static LONG cx, cy;
+
+    if (!cx)
+    {
+        HDC hdc;
+
+        if ((hdc = NtUserGetDCEx( 0, 0, DCX_CACHE | DCX_WINDOW )))
+        {
+            cx = get_char_dimensions( hdc, NULL, &cy );
+            NtUserReleaseDC( 0, hdc );
+        }
+        TRACE( "base units = %d,%d\n", cx, cy );
+    }
+
+    return MAKELONG( muldiv( cx, get_system_dpi(), USER_DEFAULT_SCREEN_DPI ),
+                     muldiv( cy, get_system_dpi(), USER_DEFAULT_SCREEN_DPI ));
 }
 
 /* adjust some of the raw values found in the registry */
@@ -2562,7 +3505,7 @@ static BOOL get_font_entry( union sysparam_all_entry *entry, UINT int_param, voi
                   debugstr_a( entry->hdr.regval ));
             /* fall through */
         case 0: /* use the default GUI font */
-            NtGdiExtGetObjectW( get_stock_object( DEFAULT_GUI_FONT ), sizeof(font), &font );
+            NtGdiExtGetObjectW( GetStockObject( DEFAULT_GUI_FONT ), sizeof(font), &font );
             font.lfHeight = map_from_system_dpi( font.lfHeight );
             font.lfWeight = entry->font.weight;
             entry->font.val = font;
@@ -2601,7 +3544,7 @@ static BOOL set_font_entry( union sysparam_all_entry *entry, UINT int_param, voi
 /* initialize a font (binary) parameter */
 static BOOL init_font_entry( union sysparam_all_entry *entry )
 {
-    NtGdiExtGetObjectW( get_stock_object( DEFAULT_GUI_FONT ), sizeof(entry->font.val), &entry->font.val );
+    NtGdiExtGetObjectW( GetStockObject( DEFAULT_GUI_FONT ), sizeof(entry->font.val), &entry->font.val );
     entry->font.val.lfHeight = map_from_system_dpi( entry->font.val.lfHeight );
     entry->font.val.lfWeight = entry->font.weight;
     get_real_fontname( &entry->font.val, entry->font.fullname );
@@ -2921,6 +3864,7 @@ void sysparams_init(void)
 
     DWORD i, dispos, dpi_scaling;
     WCHAR layout[KL_NAMELENGTH];
+    pthread_mutexattr_t attr;
     HKEY hkey;
 
     static const WCHAR software_wineW[] = {'S','o','f','t','w','a','r','e','\\','W','i','n','e'};
@@ -2930,6 +3874,11 @@ void sysparams_init(void)
     static const WCHAR oneW[] = {'1',0};
     static const WCHAR kl_preloadW[] =
         {'K','e','y','b','o','a','r','d',' ','L','a','y','o','u','t','\\','P','r','e','l','o','a','d'};
+
+    pthread_mutexattr_init( &attr );
+    pthread_mutexattr_settype( &attr, PTHREAD_MUTEX_RECURSIVE );
+    pthread_mutex_init( &user_mutex, &attr );
+    pthread_mutexattr_destroy( &attr );
 
     if ((hkey = reg_create_key( hkcu_key, kl_preloadW, sizeof(kl_preloadW), 0, NULL )))
     {
@@ -2965,7 +3914,7 @@ void sysparams_init(void)
 
         if ((hkey = reg_open_key( config_key, software_fontsW, sizeof(software_fontsW) )))
         {
-            char buffer[sizeof(KEY_VALUE_PARTIAL_INFORMATION) + sizeof(DWORD)];
+            char buffer[offsetof(KEY_VALUE_PARTIAL_INFORMATION, Data[sizeof(DWORD)])];
             KEY_VALUE_PARTIAL_INFORMATION *value = (void *)buffer;
 
             if (query_reg_value( hkey, log_pixelsW, value, sizeof(buffer) ) && value->Type == REG_DWORD)
@@ -3040,7 +3989,7 @@ BOOL WINAPI NtUserSystemParametersInfoForDpi( UINT action, UINT val, PVOID ptr, 
 	break;
     }
     default:
-        SetLastError( ERROR_INVALID_PARAMETER );
+        RtlSetLastWin32Error( ERROR_INVALID_PARAMETER );
         break;
     }
     return ret;
@@ -3082,7 +4031,7 @@ BOOL WINAPI NtUserSystemParametersInfo( UINT action, UINT val, void *ptr, UINT w
                 FIXME( "Unimplemented action: %u (%s)\n", x, #x ); \
             } \
         } \
-        SetLastError( ERROR_INVALID_SPI_VALUE ); \
+        RtlSetLastWin32Error( ERROR_INVALID_SPI_VALUE ); \
         ret = FALSE; \
         break
 #define WINE_SPI_WARN(x) \
@@ -3889,7 +4838,7 @@ BOOL WINAPI NtUserSystemParametersInfo( UINT action, UINT val, void *ptr, UINT w
     }
     default:
 	FIXME( "Unknown action: %u\n", action );
-	SetLastError( ERROR_INVALID_SPI_VALUE );
+	RtlSetLastWin32Error( ERROR_INVALID_SPI_VALUE );
 	ret = FALSE;
 	break;
     }
@@ -3898,9 +4847,8 @@ BOOL WINAPI NtUserSystemParametersInfo( UINT action, UINT val, void *ptr, UINT w
     {
         static const WCHAR emptyW[1];
         if (winini & (SPIF_SENDWININICHANGE | SPIF_SENDCHANGE))
-            user_callbacks->pSendMessageTimeoutW( HWND_BROADCAST, WM_SETTINGCHANGE,
-                                                  action, (LPARAM) emptyW,
-                                                  SMTO_ABORTIFHUNG, 2000, NULL );
+            send_message_timeout( HWND_BROADCAST, WM_SETTINGCHANGE, action, (LPARAM) emptyW,
+                                  SMTO_ABORTIFHUNG, 2000, FALSE );
     }
     TRACE( "(%u, %u, %p, %u) ret %d\n", action, val, ptr, winini, ret );
     return ret;
@@ -4025,7 +4973,7 @@ int get_system_metrics( int index )
     case SM_PENWINDOWS:
         return 0;
     case SM_DBCSENABLED:
-        return get_cptable(get_acp())->MaximumCharacterSize > 1;
+        return ansi_cp.MaximumCharacterSize > 1;
     case SM_CMOUSEBUTTONS:
         return 3;
     case SM_SECURE:
@@ -4116,10 +5064,10 @@ int get_system_metrics( int index )
     case SM_MOUSEWHEELPRESENT:
         return 1;
     case SM_CXSCREEN:
-        rect = get_primary_monitor_rect();
+        rect = get_primary_monitor_rect( get_thread_dpi() );
         return rect.right - rect.left;
     case SM_CYSCREEN:
-        rect = get_primary_monitor_rect();
+        rect = get_primary_monitor_rect( get_thread_dpi() );
         return rect.bottom - rect.top;
     case SM_XVIRTUALSCREEN:
         rect = get_virtual_screen_rect( get_thread_dpi() );
@@ -4252,7 +5200,7 @@ static int get_system_metrics_for_dpi( int index, unsigned int dpi )
     }
 }
 
-static COLORREF get_sys_color( int index )
+COLORREF get_sys_color( int index )
 {
     COLORREF ret = 0;
 
@@ -4261,7 +5209,7 @@ static COLORREF get_sys_color( int index )
     return ret;
 }
 
-static HBRUSH get_55aa_brush(void)
+HBRUSH get_55aa_brush(void)
 {
     static const WORD pattern[] = { 0x5555, 0xaaaa, 0x5555, 0xaaaa, 0x5555, 0xaaaa, 0x5555, 0xaaaa };
     static HBRUSH brush_55aa;
@@ -4281,7 +5229,7 @@ static HBRUSH get_55aa_brush(void)
     return brush_55aa;
 }
 
-static HBRUSH get_sys_color_brush( unsigned int index )
+HBRUSH get_sys_color_brush( unsigned int index )
 {
     if (index == COLOR_55AA_BRUSH) return get_55aa_brush();
     if (index >= ARRAY_SIZE( system_colors )) return 0;
@@ -4299,7 +5247,7 @@ static HBRUSH get_sys_color_brush( unsigned int index )
     return system_colors[index].brush;
 }
 
-static HPEN get_sys_color_pen( unsigned int index )
+HPEN get_sys_color_pen( unsigned int index )
 {
     if (index >= ARRAY_SIZE( system_colors )) return 0;
 
@@ -4342,11 +5290,10 @@ BOOL WINAPI NtUserSetSysColors( INT count, const INT *colors, const COLORREF *va
             set_entry( &system_colors[colors[i]], values[i], 0, 0 );
 
     /* Send WM_SYSCOLORCHANGE message to all windows */
-    user_callbacks->pSendMessageTimeoutW( HWND_BROADCAST, WM_SYSCOLORCHANGE, 0, 0,
-                                          SMTO_ABORTIFHUNG, 2000, NULL );
+    send_message_timeout( HWND_BROADCAST, WM_SYSCOLORCHANGE, 0, 0,
+                          SMTO_ABORTIFHUNG, 2000, FALSE );
     /* Repaint affected portions of all visible windows */
-    user_callbacks->pRedrawWindow( 0, NULL, 0, RDW_INVALIDATE | RDW_ERASE | RDW_UPDATENOW |
-                                   RDW_ALLCHILDREN );
+    NtUserRedrawWindow( 0, NULL, 0, RDW_INVALIDATE | RDW_ERASE | RDW_UPDATENOW | RDW_ALLCHILDREN );
     return TRUE;
 }
 
@@ -4367,7 +5314,7 @@ BOOL WINAPI NtUserSetProcessDpiAwarenessContext( ULONG awareness, ULONG unknown 
     case NTUSER_DPI_PER_UNAWARE_GDISCALED:
         break;
     default:
-        SetLastError( ERROR_INVALID_PARAMETER );
+        RtlSetLastWin32Error( ERROR_INVALID_PARAMETER );
         return FALSE;
     }
 
@@ -4389,6 +5336,81 @@ ULONG WINAPI NtUserGetProcessDpiAwarenessContext( HANDLE process )
     return dpi_awareness;
 }
 
+BOOL message_beep( UINT i )
+{
+    BOOL active = TRUE;
+    NtUserSystemParametersInfo( SPI_GETBEEP, 0, &active, FALSE );
+    if (active) user_driver->pBeep();
+    return TRUE;
+}
+
+static DWORD exiting_thread_id;
+
+/**********************************************************************
+ *           is_exiting_thread
+ */
+BOOL is_exiting_thread( DWORD tid )
+{
+    return tid == exiting_thread_id;
+}
+
+static void thread_detach(void)
+{
+    struct user_thread_info *thread_info = get_user_thread_info();
+
+    user_driver->pThreadDetach();
+
+    free( thread_info->key_state );
+    thread_info->key_state = 0;
+    free( thread_info->rawinput );
+
+    destroy_thread_windows();
+    cleanup_imm_thread();
+    NtClose( thread_info->server_queue );
+
+    exiting_thread_id = 0;
+}
+
+/***********************************************************************
+ *	     NtUserCallNoParam    (win32u.@)
+ */
+ULONG_PTR WINAPI NtUserCallNoParam( ULONG code )
+{
+    switch(code)
+    {
+    case NtUserCallNoParam_DestroyCaret:
+        return destroy_caret();
+
+    case NtUserCallNoParam_GetDesktopWindow:
+        return HandleToUlong( get_desktop_window() );
+
+    case NtUserCallNoParam_GetDialogBaseUnits:
+        return get_dialog_base_units();
+
+    case NtUserCallNoParam_GetInputState:
+        return get_input_state();
+
+    case NtUserCallNoParam_GetProcessDefaultLayout:
+        return process_layout;
+
+    case NtUserCallNoParam_ReleaseCapture:
+        return release_capture();
+
+    /* temporary exports */
+    case NtUserExitingThread:
+        exiting_thread_id = GetCurrentThreadId();
+        return 0;
+
+    case NtUserThreadDetach:
+        thread_detach();
+        return 0;
+
+    default:
+        FIXME( "invalid code %u\n", code );
+        return 0;
+    }
+}
+
 /***********************************************************************
  *	     NtUserCallOneParam    (win32u.@)
  */
@@ -4396,18 +5418,80 @@ ULONG_PTR WINAPI NtUserCallOneParam( ULONG_PTR arg, ULONG code )
 {
     switch(code)
     {
-    case NtUserGetSysColor:
+    case NtUserCallOneParam_BeginDeferWindowPos:
+        return HandleToUlong( begin_defer_window_pos( arg ));
+
+    case NtUserCallOneParam_CreateCursorIcon:
+        return HandleToUlong( alloc_cursoricon_handle( arg ));
+
+    case NtUserCallOneParam_CreateMenu:
+        return HandleToUlong( create_menu( arg ) );
+
+    case NtUserCallOneParam_EnableDC:
+        return set_dce_flags( UlongToHandle(arg), DCHF_ENABLEDC );
+
+    case NtUserCallOneParam_EnableThunkLock:
+        enable_thunk_lock = arg;
+        return 0;
+
+    case NtUserCallOneParam_EnumClipboardFormats:
+        return enum_clipboard_formats( arg );
+
+    case NtUserCallOneParam_GetClipCursor:
+        return get_clip_cursor( (RECT *)arg );
+
+    case NtUserCallOneParam_GetCursorPos:
+        return get_cursor_pos( (POINT *)arg );
+
+    case NtUserCallOneParam_GetIconParam:
+        return get_icon_param( UlongToHandle(arg) );
+
+    case NtUserCallOneParam_GetMenuItemCount:
+        return get_menu_item_count( UlongToHandle(arg) );
+
+    case NtUserCallOneParam_GetSysColor:
         return get_sys_color( arg );
-    case NtUserRealizePalette:
+
+    case NtUserCallOneParam_IsWindowRectFullScreen:
+        return is_window_rect_full_screen( (const RECT *)arg );
+
+    case NtUserCallOneParam_RealizePalette:
         return realize_palette( UlongToHandle(arg) );
-    case NtUserGetSysColorBrush:
+
+    case NtUserCallOneParam_GetPrimaryMonitorRect:
+        *(RECT *)arg = get_primary_monitor_rect( 0 );
+        return 1;
+
+    case NtUserCallOneParam_GetSysColorBrush:
         return HandleToUlong( get_sys_color_brush(arg) );
-    case NtUserGetSysColorPen:
+
+    case NtUserCallOneParam_GetSysColorPen:
         return HandleToUlong( get_sys_color_pen(arg) );
-    case NtUserGetSystemMetrics:
+
+    case NtUserCallOneParam_GetSystemMetrics:
         return get_system_metrics( arg );
+
+    case NtUserCallOneParam_GetVirtualScreenRect:
+        *(RECT *)arg = get_virtual_screen_rect( 0 );
+        return 1;
+
+    case NtUserCallOneParam_MessageBeep:
+        return message_beep( arg );
+
+    case NtUserCallOneParam_ReplyMessage:
+        return reply_message_result( arg );
+
+    case NtUserCallOneParam_SetCaretBlinkTime:
+        return set_caret_blink_time( arg );
+
+    case NtUserCallOneParam_SetProcessDefaultLayout:
+        process_layout = arg;
+        return TRUE;
+
+    /* temporary exports */
     case NtUserGetDeskPattern:
         return get_entry( &entry_DESKPATTERN, 256, (WCHAR *)arg );
+
     default:
         FIXME( "invalid code %u\n", code );
         return 0;
@@ -4421,12 +5505,34 @@ ULONG_PTR WINAPI NtUserCallTwoParam( ULONG_PTR arg1, ULONG_PTR arg2, ULONG code 
 {
     switch(code)
     {
-    case NtUserGetMonitorInfo:
+    case NtUserCallTwoParam_GetDialogProc:
+        return (ULONG_PTR)get_dialog_proc( (DLGPROC)arg1, arg2 );
+
+    case NtUserCallTwoParam_GetMenuInfo:
+        return get_menu_info( UlongToHandle(arg1), (MENUINFO *)arg2 );
+
+    case NtUserCallTwoParam_GetMonitorInfo:
         return get_monitor_info( UlongToHandle(arg1), (MONITORINFO *)arg2 );
-    case NtUserGetSystemMetricsForDpi:
+
+    case NtUserCallTwoParam_GetSystemMetricsForDpi:
         return get_system_metrics_for_dpi( arg1, arg2 );
-    case NtUserMirrorRgn:
-        return mirror_window_region( UlongToHandle(arg1), UlongToHandle(arg2) );
+
+    case NtUserCallTwoParam_MonitorFromRect:
+        return HandleToUlong( monitor_from_rect( (const RECT *)arg1, arg2, get_thread_dpi() ));
+
+    case NtUserCallTwoParam_SetCaretPos:
+        return set_caret_pos( arg1, arg2 );
+
+    case NtUserCallTwoParam_SetIconParam:
+        return set_icon_param( UlongToHandle(arg1), arg2 );
+
+    case NtUserCallTwoParam_UnhookWindowsHook:
+        return unhook_windows_hook( arg1, (HOOKPROC)arg2 );
+
+    /* temporary exports */
+    case NtUserAllocWinProc:
+        return (UINT_PTR)alloc_winproc( (WNDPROC)arg1, arg2 );
+
     default:
         FIXME( "invalid code %u\n", code );
         return 0;

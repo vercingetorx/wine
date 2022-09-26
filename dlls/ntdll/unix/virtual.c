@@ -238,7 +238,7 @@ static void mmap_add_reserved_area( void *addr, SIZE_T size )
     struct reserved_area *area;
     struct list *ptr;
 
-    if (!((char *)addr + size)) size--;  /* avoid wrap-around */
+    if (!((intptr_t)addr + size)) size--;  /* avoid wrap-around */
 
     LIST_FOR_EACH( ptr, &reserved_areas )
     {
@@ -287,7 +287,7 @@ static void mmap_remove_reserved_area( void *addr, SIZE_T size )
     struct reserved_area *area;
     struct list *ptr;
 
-    if (!((char *)addr + size)) size--;  /* avoid wrap-around */
+    if (!((intptr_t)addr + size)) size--;  /* avoid wrap-around */
 
     ptr = list_head( &reserved_areas );
     /* find the first area covering address */
@@ -2539,7 +2539,7 @@ static NTSTATUS virtual_map_section( HANDLE handle, PVOID *addr_ptr, ULONG_PTR z
     {
         filename = (WCHAR *)(image_info + 1);
         /* check if we can replace that mapping with the builtin */
-        res = load_builtin( image_info, filename, addr_ptr, size_ptr );
+        res = load_builtin( image_info, filename, addr_ptr, size_ptr, zero_bits );
         if (res == STATUS_IMAGE_ALREADY_LOADED)
             res = virtual_map_image( handle, access, addr_ptr, size_ptr, zero_bits, shared_file,
                                      alloc_type, image_info, filename, FALSE );
@@ -2756,8 +2756,8 @@ void virtual_get_system_info( SYSTEM_BASIC_INFORMATION *info, BOOL wow64 )
 /***********************************************************************
  *           virtual_map_builtin_module
  */
-NTSTATUS virtual_map_builtin_module( HANDLE mapping, void **module, SIZE_T *size,
-                                     SECTION_IMAGE_INFORMATION *info, WORD machine, BOOL prefer_native )
+NTSTATUS virtual_map_builtin_module( HANDLE mapping, void **module, SIZE_T *size, SECTION_IMAGE_INFORMATION *info,
+                                     ULONG_PTR zero_bits, WORD machine, BOOL prefer_native )
 {
     mem_size_t full_size;
     unsigned int sec_flags;
@@ -2794,7 +2794,7 @@ NTSTATUS virtual_map_builtin_module( HANDLE mapping, void **module, SIZE_T *size
     else
     {
         status = virtual_map_image( mapping, SECTION_MAP_READ | SECTION_MAP_EXECUTE,
-                                    module, size, 0, shared_file, 0, image_info, filename, TRUE );
+                                    module, size, zero_bits, shared_file, 0, image_info, filename, TRUE );
         virtual_fill_image_information( image_info, info );
     }
 
@@ -4203,7 +4203,9 @@ static NTSTATUS get_working_set_ex( HANDLE process, LPCVOID addr,
                                     MEMORY_WORKING_SET_EX_INFORMATION *info,
                                     SIZE_T len, SIZE_T *res_len )
 {
-    FILE *f = NULL;
+#if !defined(HAVE_LIBPROCSTAT)
+    static int pagemap_fd = -2;
+#endif
     MEMORY_WORKING_SET_EX_INFORMATION *p;
     sigset_t sigset;
 
@@ -4237,16 +4239,17 @@ static NTSTATUS get_working_set_ex( HANDLE process, LPCVOID addr,
              BYTE vprot;
              struct file_view *view;
 
-             for (i = 0; i < vmentry_count && entry == NULL; i++)
-             {
-                 if (vmentries[i].kve_start <= (ULONG_PTR)p->VirtualAddress && (ULONG_PTR)p->VirtualAddress <= vmentries[i].kve_end)
-                     entry = &vmentries[i];
-             }
              memset( &p->VirtualAttributes, 0, sizeof(p->VirtualAttributes) );
              if ((view = find_view( p->VirtualAddress, 0 )) &&
                  get_committed_size( view, p->VirtualAddress, &vprot, VPROT_COMMITTED ) &&
                  (vprot & VPROT_COMMITTED))
              {
+                 for (i = 0; i < vmentry_count && entry == NULL; i++)
+                 {
+                     if (vmentries[i].kve_start <= (ULONG_PTR)p->VirtualAddress && (ULONG_PTR)p->VirtualAddress <= vmentries[i].kve_end)
+                         entry = &vmentries[i];
+                 }
+
                  p->VirtualAttributes.Valid = !(vprot & VPROT_GUARD) && (vprot & 0x0f) && entry && entry->kve_type != KVME_TYPE_SWAP;
                  p->VirtualAttributes.Shared = !is_view_valloc( view );
                  if (p->VirtualAttributes.Shared && p->VirtualAttributes.Valid)
@@ -4265,14 +4268,18 @@ static NTSTATUS get_working_set_ex( HANDLE process, LPCVOID addr,
             procstat_close( pstat );
     }
 #else
-    f = fopen( "/proc/self/pagemap", "rb" );
-    if (!f)
+    server_enter_uninterrupted_section( &virtual_mutex, &sigset );
+    if (pagemap_fd == -2)
     {
-        static int once;
-        if (!once++) WARN( "unable to open /proc/self/pagemap\n" );
+#ifdef O_CLOEXEC
+        if ((pagemap_fd = open( "/proc/self/pagemap", O_RDONLY | O_CLOEXEC, 0 )) == -1 && errno == EINVAL)
+#endif
+            pagemap_fd = open( "/proc/self/pagemap", O_RDONLY, 0 );
+
+        if (pagemap_fd == -1) WARN( "unable to open /proc/self/pagemap\n" );
+        else fcntl(pagemap_fd, F_SETFD, FD_CLOEXEC);  /* in case O_CLOEXEC isn't supported */
     }
 
-    server_enter_uninterrupted_section( &virtual_mutex, &sigset );
     for (p = info; (UINT_PTR)(p + 1) <= (UINT_PTR)info + len; p++)
     {
         BYTE vprot;
@@ -4281,17 +4288,17 @@ static NTSTATUS get_working_set_ex( HANDLE process, LPCVOID addr,
 
         memset( &p->VirtualAttributes, 0, sizeof(p->VirtualAttributes) );
 
-        /* If we don't have pagemap information, default to invalid. */
-        if (!f || fseek( f, ((UINT_PTR)p->VirtualAddress >> 12) * sizeof(pagemap), SEEK_SET ) == -1 ||
-                fread( &pagemap, sizeof(pagemap), 1, f ) != 1)
-        {
-            pagemap = 0;
-        }
-
         if ((view = find_view( p->VirtualAddress, 0 )) &&
             get_committed_size( view, p->VirtualAddress, &vprot, VPROT_COMMITTED ) &&
             (vprot & VPROT_COMMITTED))
         {
+            if (pagemap_fd == -1 ||
+                pread( pagemap_fd, &pagemap, sizeof(pagemap), ((UINT_PTR)p->VirtualAddress >> page_shift) * sizeof(pagemap) ) != sizeof(pagemap))
+            {
+                /* If we don't have pagemap information, default to invalid. */
+                pagemap = 0;
+            }
+
             p->VirtualAttributes.Valid = !(vprot & VPROT_GUARD) && (vprot & 0x0f) && (pagemap >> 63);
             p->VirtualAttributes.Shared = !is_view_valloc( view ) && ((pagemap >> 61) & 1);
             if (p->VirtualAttributes.Shared && p->VirtualAttributes.Valid)
@@ -4303,8 +4310,6 @@ static NTSTATUS get_working_set_ex( HANDLE process, LPCVOID addr,
     server_leave_uninterrupted_section( &virtual_mutex, &sigset );
 #endif
 
-    if (f)
-        fclose( f );
     if (res_len)
         *res_len = (UINT_PTR)p - (UINT_PTR)info;
     return STATUS_SUCCESS;
@@ -4536,6 +4541,18 @@ NTSTATUS WINAPI NtMapViewOfSection( HANDLE handle, HANDLE process, PVOID *addr_p
                                 offset_ptr, size_ptr, alloc_type, protect );
 }
 
+/***********************************************************************
+ *             NtMapViewOfSectionEx   (NTDLL.@)
+ *             ZwMapViewOfSectionEx   (NTDLL.@)
+ */
+NTSTATUS WINAPI NtMapViewOfSectionEx( HANDLE handle, HANDLE process, PVOID *addr_ptr, const LARGE_INTEGER *offset_ptr,
+        SIZE_T *size_ptr, ULONG alloc_type, ULONG protect, MEM_EXTENDED_PARAMETER *params, ULONG params_count )
+{
+    if (params)
+        FIXME("Ignoring extended parameters.\n");
+
+    return NtMapViewOfSection( handle, process, addr_ptr, 0, 0, offset_ptr, size_ptr, ViewShare, alloc_type, protect );
+}
 
 /***********************************************************************
  *             NtUnmapViewOfSection   (NTDLL.@)
@@ -4598,6 +4615,15 @@ NTSTATUS WINAPI NtUnmapViewOfSection( HANDLE process, PVOID addr )
     return status;
 }
 
+/***********************************************************************
+ *             NtUnmapViewOfSectionEx   (NTDLL.@)
+ *             ZwUnmapViewOfSectionEx   (NTDLL.@)
+ */
+NTSTATUS WINAPI NtUnmapViewOfSectionEx( HANDLE process, PVOID addr, ULONG flags )
+{
+    if (flags) FIXME("Ignoring flags %#x.\n", flags);
+    return NtUnmapViewOfSection( process, addr );
+}
 
 /******************************************************************************
  *             virtual_fill_image_information
@@ -4907,6 +4933,65 @@ NTSTATUS WINAPI NtAreMappedFilesTheSame(PVOID addr1, PVOID addr2)
 
     server_leave_uninterrupted_section( &virtual_mutex, &sigset );
     return status;
+}
+
+
+static NTSTATUS prefetch_memory( HANDLE process, ULONG_PTR count,
+                                 PMEMORY_RANGE_ENTRY addresses, ULONG flags )
+{
+    ULONG_PTR i;
+    PVOID base;
+    SIZE_T size;
+    static unsigned int once;
+
+    if (!once++)
+    {
+        FIXME( "(process=%p,flags=%u) NtSetInformationVirtualMemory(VmPrefetchInformation) partial stub\n",
+                process, flags );
+    }
+
+    for (i = 0; i < count; i++)
+    {
+        if (!addresses[i].NumberOfBytes) return STATUS_INVALID_PARAMETER_4;
+    }
+
+    if (process != NtCurrentProcess()) return STATUS_SUCCESS;
+
+    for (i = 0; i < count; i++)
+    {
+        base = ROUND_ADDR( addresses[i].VirtualAddress, page_mask );
+        size = ROUND_SIZE( addresses[i].VirtualAddress, addresses[i].NumberOfBytes );
+        madvise( base, size, MADV_WILLNEED );
+    }
+
+    return STATUS_SUCCESS;
+}
+
+/***********************************************************************
+ *           NtSetInformationVirtualMemory   (NTDLL.@)
+ *           ZwSetInformationVirtualMemory   (NTDLL.@)
+ */
+NTSTATUS WINAPI NtSetInformationVirtualMemory( HANDLE process,
+                                               VIRTUAL_MEMORY_INFORMATION_CLASS info_class,
+                                               ULONG_PTR count, PMEMORY_RANGE_ENTRY addresses,
+                                               PVOID ptr, ULONG size )
+{
+    TRACE("(%p, info_class=%d, %lu, %p, %p, %u)\n",
+          process, info_class, count, addresses, ptr, size);
+
+    switch (info_class)
+    {
+    case VmPrefetchInformation:
+        if (!ptr) return STATUS_INVALID_PARAMETER_5;
+        if (size != sizeof(ULONG)) return STATUS_INVALID_PARAMETER_6;
+        if (!count) return STATUS_INVALID_PARAMETER_3;
+        return prefetch_memory( process, count, addresses, *(ULONG *)ptr );
+
+    default:
+        FIXME("(%p,info_class=%d,%lu,%p,%p,%u) Unknown information class\n",
+              process, info_class, count, addresses, ptr, size);
+        return STATUS_INVALID_PARAMETER_2;
+    }
 }
 
 

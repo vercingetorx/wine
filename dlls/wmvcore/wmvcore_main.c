@@ -26,11 +26,11 @@
 WINE_DEFAULT_DEBUG_CHANNEL(wmvcore);
 
 HRESULT WINAPI winegstreamer_create_wm_async_reader(IWMReader **reader);
-HRESULT WINAPI winegstreamer_create_wm_sync_reader(IWMSyncReader **reader);
+HRESULT WINAPI winegstreamer_create_wm_sync_reader(IUnknown *outer, void **out);
 
 HRESULT WINAPI WMCreateReader(IUnknown *reserved, DWORD rights, IWMReader **reader)
 {
-    TRACE("reserved %p, rights %#x, reader %p.\n", reserved, rights, reader);
+    TRACE("reserved %p, rights %#lx, reader %p.\n", reserved, rights, reader);
 
     return winegstreamer_create_wm_async_reader(reader);
 }
@@ -44,16 +44,16 @@ HRESULT WINAPI WMCreateReaderPriv(IWMReader **reader)
 
 HRESULT WINAPI WMCreateSyncReader(IUnknown *reserved, DWORD rights, IWMSyncReader **reader)
 {
-    TRACE("reserved %p, rights %#x, reader %p.\n", reserved, rights, reader);
+    TRACE("reserved %p, rights %#lx, reader %p.\n", reserved, rights, reader);
 
-    return winegstreamer_create_wm_sync_reader(reader);
+    return winegstreamer_create_wm_sync_reader(NULL, (void **)reader);
 }
 
 HRESULT WINAPI WMCreateSyncReaderPriv(IWMSyncReader **reader)
 {
     TRACE("reader %p.\n", reader);
 
-    return winegstreamer_create_wm_sync_reader(reader);
+    return winegstreamer_create_wm_sync_reader(NULL, (void **)reader);
 }
 
 HRESULT WINAPI WMCheckURLExtension(const WCHAR *url)
@@ -144,7 +144,7 @@ static ULONG WINAPI WMProfileManager_AddRef(IWMProfileManager2 *iface)
     WMProfileManager *This = impl_from_IWMProfileManager2(iface);
     LONG ref = InterlockedIncrement(&This->ref);
 
-    TRACE("(%p) ref=%d\n", This, ref);
+    TRACE("(%p) ref=%ld\n", This, ref);
 
     return ref;
 }
@@ -154,7 +154,7 @@ static ULONG WINAPI WMProfileManager_Release(IWMProfileManager2 *iface)
     WMProfileManager *This = impl_from_IWMProfileManager2(iface);
     LONG ref = InterlockedDecrement(&This->ref);
 
-    TRACE("(%p) ref=%d\n", This, ref);
+    TRACE("(%p) ref=%ld\n", This, ref);
 
     if(!ref)
         heap_free(This);
@@ -200,7 +200,7 @@ static HRESULT WINAPI WMProfileManager_GetSystemProfileCount(IWMProfileManager2 
 static HRESULT WINAPI WMProfileManager_LoadSystemProfile(IWMProfileManager2 *iface, DWORD index, IWMProfile **ret)
 {
     WMProfileManager *This = impl_from_IWMProfileManager2(iface);
-    FIXME("(%p)->(%d %p)\n", This, index, ret);
+    FIXME("(%p)->(%ld %p)\n", This, index, ret);
     return E_NOTIMPL;
 }
 

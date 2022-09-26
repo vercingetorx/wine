@@ -51,6 +51,7 @@ typedef struct {
     nsIURI *referrer;
     char *content_type;
     char *charset;
+    nsresult status;
     UINT32 response_status;
     char *response_status_text;
     REQUEST_METHOD request_method;
@@ -103,6 +104,8 @@ struct nsChannelBSC {
     nsChannel *nschannel;
     nsIStreamListener *nslistener;
     nsISupports *nscontext;
+    ULONG progress;
+    ULONG total;
     BOOL is_js;
     BOOL is_doc_channel;
     BOOL response_processed;
@@ -116,7 +119,7 @@ struct BSCallbackVtbl {
     HRESULT (*start_binding)(BSCallback*);
     HRESULT (*stop_binding)(BSCallback*,HRESULT);
     HRESULT (*read_data)(BSCallback*,IStream*);
-    HRESULT (*on_progress)(BSCallback*,ULONG,LPCWSTR);
+    HRESULT (*on_progress)(BSCallback*,ULONG,ULONG,ULONG,LPCWSTR);
     HRESULT (*on_response)(BSCallback*,DWORD,LPCWSTR);
     HRESULT (*beginning_transaction)(BSCallback*,WCHAR**);
 };

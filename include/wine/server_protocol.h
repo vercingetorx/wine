@@ -1764,14 +1764,16 @@ struct recv_socket_request
     struct request_header __header;
     int          oob;
     async_data_t async;
-    unsigned int status;
-    unsigned int total;
+    int          force_async;
+    char __pad_60[4];
 };
 struct recv_socket_reply
 {
     struct reply_header __header;
     obj_handle_t wait;
     unsigned int options;
+    int          nonblocking;
+    char __pad_20[4];
 };
 
 
@@ -1781,14 +1783,47 @@ struct send_socket_request
     struct request_header __header;
     char __pad_12[4];
     async_data_t async;
-    unsigned int status;
-    unsigned int total;
+    int          force_async;
+    char __pad_60[4];
 };
 struct send_socket_reply
 {
     struct reply_header __header;
     obj_handle_t wait;
     unsigned int options;
+    int          nonblocking;
+    char __pad_20[4];
+};
+
+
+
+struct socket_send_icmp_id_request
+{
+    struct request_header __header;
+    obj_handle_t   handle;
+    unsigned short icmp_id;
+    unsigned short icmp_seq;
+    char __pad_20[4];
+};
+struct socket_send_icmp_id_reply
+{
+    struct reply_header __header;
+};
+
+
+
+struct socket_get_icmp_id_request
+{
+    struct request_header __header;
+    obj_handle_t   handle;
+    unsigned short icmp_seq;
+    char __pad_18[6];
+};
+struct socket_get_icmp_id_reply
+{
+    struct reply_header __header;
+    unsigned short icmp_id;
+    char __pad_10[6];
 };
 
 
@@ -2187,7 +2222,7 @@ struct create_key_reply
 {
     struct reply_header __header;
     obj_handle_t hkey;
-    int          created;
+    char __pad_12[4];
 };
 
 
@@ -2374,6 +2409,19 @@ struct set_registry_notification_request
     char __pad_28[4];
 };
 struct set_registry_notification_reply
+{
+    struct reply_header __header;
+};
+
+
+
+struct rename_key_request
+{
+    struct request_header __header;
+    obj_handle_t hkey;
+    /* VARARG(name,unicode_str); */
+};
+struct rename_key_reply
 {
     struct reply_header __header;
 };
@@ -2905,6 +2953,23 @@ struct get_async_result_reply
 
 
 
+struct set_async_direct_result_request
+{
+    struct request_header __header;
+    obj_handle_t   handle;
+    apc_param_t    information;
+    unsigned int   status;
+    int            mark_pending;
+};
+struct set_async_direct_result_reply
+{
+    struct reply_header __header;
+    obj_handle_t   handle;
+    char __pad_12[4];
+};
+
+
+
 struct read_request
 {
     struct request_header __header;
@@ -3112,12 +3177,12 @@ struct set_window_info_request
     user_handle_t  handle;
     unsigned int   style;
     unsigned int   ex_style;
-    unsigned int   id;
+    data_size_t    extra_size;
     mod_handle_t   instance;
     lparam_t       user_data;
-    int            extra_offset;
-    data_size_t    extra_size;
     lparam_t       extra_value;
+    int            extra_offset;
+    char __pad_60[4];
 };
 struct set_window_info_reply
 {
@@ -3127,8 +3192,7 @@ struct set_window_info_reply
     mod_handle_t   old_instance;
     lparam_t       old_user_data;
     lparam_t       old_extra_value;
-    unsigned int   old_id;
-    char __pad_44[4];
+    lparam_t       old_id;
 };
 #define SET_WIN_STYLE     0x01
 #define SET_WIN_EXSTYLE   0x02
@@ -4459,6 +4523,8 @@ struct get_token_groups_request
 {
     struct request_header __header;
     obj_handle_t    handle;
+    unsigned int    attr_mask;
+    char __pad_20[4];
 };
 struct get_token_groups_reply
 {
@@ -4626,10 +4692,10 @@ struct get_directory_entry_request
 struct get_directory_entry_reply
 {
     struct reply_header __header;
+    data_size_t    total_len;
     data_size_t    name_len;
     /* VARARG(name,unicode_str,name_len); */
     /* VARARG(type,unicode_str); */
-    char __pad_12[4];
 };
 
 
@@ -5250,20 +5316,6 @@ struct update_rawinput_devices_reply
 };
 
 
-struct get_rawinput_devices_request
-{
-    struct request_header __header;
-    char __pad_12[4];
-};
-struct get_rawinput_devices_reply
-{
-    struct reply_header __header;
-    unsigned int device_count;
-    /* VARARG(devices,rawinput_devices); */
-    char __pad_12[4];
-};
-
-
 struct create_job_request
 {
     struct request_header __header;
@@ -5481,6 +5533,8 @@ enum request
     REQ_unlock_file,
     REQ_recv_socket,
     REQ_send_socket,
+    REQ_socket_send_icmp_id,
+    REQ_socket_get_icmp_id,
     REQ_get_next_console_request,
     REQ_read_directory_changes,
     REQ_read_change,
@@ -5516,6 +5570,7 @@ enum request
     REQ_unload_registry,
     REQ_save_registry,
     REQ_set_registry_notification,
+    REQ_rename_key,
     REQ_create_timer,
     REQ_open_timer,
     REQ_set_timer,
@@ -5548,6 +5603,7 @@ enum request
     REQ_register_async,
     REQ_cancel_async,
     REQ_get_async_result,
+    REQ_set_async_direct_result,
     REQ_read,
     REQ_write,
     REQ_ioctl,
@@ -5687,7 +5743,6 @@ enum request
     REQ_get_cursor_history,
     REQ_get_rawinput_buffer,
     REQ_update_rawinput_devices,
-    REQ_get_rawinput_devices,
     REQ_create_job,
     REQ_open_job,
     REQ_assign_job,
@@ -5762,6 +5817,8 @@ union generic_request
     struct unlock_file_request unlock_file_request;
     struct recv_socket_request recv_socket_request;
     struct send_socket_request send_socket_request;
+    struct socket_send_icmp_id_request socket_send_icmp_id_request;
+    struct socket_get_icmp_id_request socket_get_icmp_id_request;
     struct get_next_console_request_request get_next_console_request_request;
     struct read_directory_changes_request read_directory_changes_request;
     struct read_change_request read_change_request;
@@ -5797,6 +5854,7 @@ union generic_request
     struct unload_registry_request unload_registry_request;
     struct save_registry_request save_registry_request;
     struct set_registry_notification_request set_registry_notification_request;
+    struct rename_key_request rename_key_request;
     struct create_timer_request create_timer_request;
     struct open_timer_request open_timer_request;
     struct set_timer_request set_timer_request;
@@ -5829,6 +5887,7 @@ union generic_request
     struct register_async_request register_async_request;
     struct cancel_async_request cancel_async_request;
     struct get_async_result_request get_async_result_request;
+    struct set_async_direct_result_request set_async_direct_result_request;
     struct read_request read_request;
     struct write_request write_request;
     struct ioctl_request ioctl_request;
@@ -5968,7 +6027,6 @@ union generic_request
     struct get_cursor_history_request get_cursor_history_request;
     struct get_rawinput_buffer_request get_rawinput_buffer_request;
     struct update_rawinput_devices_request update_rawinput_devices_request;
-    struct get_rawinput_devices_request get_rawinput_devices_request;
     struct create_job_request create_job_request;
     struct open_job_request open_job_request;
     struct assign_job_request assign_job_request;
@@ -6041,6 +6099,8 @@ union generic_reply
     struct unlock_file_reply unlock_file_reply;
     struct recv_socket_reply recv_socket_reply;
     struct send_socket_reply send_socket_reply;
+    struct socket_send_icmp_id_reply socket_send_icmp_id_reply;
+    struct socket_get_icmp_id_reply socket_get_icmp_id_reply;
     struct get_next_console_request_reply get_next_console_request_reply;
     struct read_directory_changes_reply read_directory_changes_reply;
     struct read_change_reply read_change_reply;
@@ -6076,6 +6136,7 @@ union generic_reply
     struct unload_registry_reply unload_registry_reply;
     struct save_registry_reply save_registry_reply;
     struct set_registry_notification_reply set_registry_notification_reply;
+    struct rename_key_reply rename_key_reply;
     struct create_timer_reply create_timer_reply;
     struct open_timer_reply open_timer_reply;
     struct set_timer_reply set_timer_reply;
@@ -6108,6 +6169,7 @@ union generic_reply
     struct register_async_reply register_async_reply;
     struct cancel_async_reply cancel_async_reply;
     struct get_async_result_reply get_async_result_reply;
+    struct set_async_direct_result_reply set_async_direct_result_reply;
     struct read_reply read_reply;
     struct write_reply write_reply;
     struct ioctl_reply ioctl_reply;
@@ -6247,7 +6309,6 @@ union generic_reply
     struct get_cursor_history_reply get_cursor_history_reply;
     struct get_rawinput_buffer_reply get_rawinput_buffer_reply;
     struct update_rawinput_devices_reply update_rawinput_devices_reply;
-    struct get_rawinput_devices_reply get_rawinput_devices_reply;
     struct create_job_reply create_job_reply;
     struct open_job_reply open_job_reply;
     struct assign_job_reply assign_job_reply;
@@ -6263,7 +6324,7 @@ union generic_reply
 
 /* ### protocol_version begin ### */
 
-#define SERVER_PROTOCOL_VERSION 742
+#define SERVER_PROTOCOL_VERSION 755
 
 /* ### protocol_version end ### */
 

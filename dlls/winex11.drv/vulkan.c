@@ -20,6 +20,10 @@
 /* NOTE: If making changes here, consider whether they should be reflected in
  * the other drivers. */
 
+#if 0
+#pragma makedep unix
+#endif
+
 #include "config.h"
 
 #include <stdarg.h>
@@ -30,7 +34,6 @@
 #include "winbase.h"
 
 #include "wine/debug.h"
-#include "wine/heap.h"
 #include "x11drv.h"
 
 #define VK_NO_PROTOTYPES
@@ -44,14 +47,7 @@ WINE_DEFAULT_DEBUG_CHANNEL(vulkan);
 #ifdef SONAME_LIBVULKAN
 WINE_DECLARE_DEBUG_CHANNEL(fps);
 
-static CRITICAL_SECTION context_section;
-static CRITICAL_SECTION_DEBUG critsect_debug =
-{
-    0, 0, &context_section,
-    { &critsect_debug.ProcessLocksList, &critsect_debug.ProcessLocksList },
-      0, 0, { (DWORD_PTR)(__FILE__ ": context_section") }
-};
-static CRITICAL_SECTION context_section = { &critsect_debug, -1, 0, 0, 0, 0 };
+static pthread_mutex_t vulkan_mutex;
 
 static XContext vulkan_hwnd_context;
 
@@ -109,12 +105,14 @@ static inline struct wine_vk_surface *surface_from_handle(VkSurfaceKHR handle)
 
 static void *vulkan_handle;
 
-static BOOL WINAPI wine_vk_init(INIT_ONCE *once, void *param, void **context)
+static void wine_vk_init(void)
 {
+    init_recursive_mutex(&vulkan_mutex);
+
     if (!(vulkan_handle = dlopen(SONAME_LIBVULKAN, RTLD_NOW)))
     {
         ERR("Failed to load %s.\n", SONAME_LIBVULKAN);
-        return TRUE;
+        return;
     }
 
 #define LOAD_FUNCPTR(f) if (!(p##f = dlsym(vulkan_handle, #f))) goto fail
@@ -143,13 +141,11 @@ static BOOL WINAPI wine_vk_init(INIT_ONCE *once, void *param, void **context)
 #undef LOAD_OPTIONAL_FUNCPTR
 
     vulkan_hwnd_context = XUniqueContext();
-
-    return TRUE;
+    return;
 
 fail:
     dlclose(vulkan_handle);
     vulkan_handle = NULL;
-    return TRUE;
 }
 
 /* Helper function for converting between win32 and X11 compatible VkInstanceCreateInfo.
@@ -172,7 +168,7 @@ static VkResult wine_vk_instance_convert_create_info(const VkInstanceCreateInfo 
 
     if (src->enabledExtensionCount > 0)
     {
-        enabled_extensions = heap_calloc(src->enabledExtensionCount, sizeof(*src->ppEnabledExtensionNames));
+        enabled_extensions = calloc(src->enabledExtensionCount, sizeof(*src->ppEnabledExtensionNames));
         if (!enabled_extensions)
         {
             ERR("Failed to allocate memory for enabled extensions\n");
@@ -213,21 +209,21 @@ static void wine_vk_surface_release(struct wine_vk_surface *surface)
 
     if (surface->entry.next)
     {
-        EnterCriticalSection(&context_section);
+        pthread_mutex_lock(&vulkan_mutex);
         list_remove(&surface->entry);
-        LeaveCriticalSection(&context_section);
+        pthread_mutex_unlock(&vulkan_mutex);
     }
 
     if (surface->window)
         XDestroyWindow(gdi_display, surface->window);
 
-    heap_free(surface);
+    free(surface);
 }
 
 void wine_vk_surface_destroy(HWND hwnd)
 {
     struct wine_vk_surface *surface;
-    EnterCriticalSection(&context_section);
+    pthread_mutex_lock(&vulkan_mutex);
     if (!XFindContext(gdi_display, (XID)hwnd, vulkan_hwnd_context, (char **)&surface))
     {
         surface->hwnd_thread_id = 0;
@@ -235,7 +231,7 @@ void wine_vk_surface_destroy(HWND hwnd)
         wine_vk_surface_release(surface);
     }
     XDeleteContext(gdi_display, (XID)hwnd, vulkan_hwnd_context);
-    LeaveCriticalSection(&context_section);
+    pthread_mutex_unlock(&vulkan_mutex);
 }
 
 void vulkan_thread_detach(void)
@@ -243,7 +239,7 @@ void vulkan_thread_detach(void)
     struct wine_vk_surface *surface, *next;
     DWORD thread_id = GetCurrentThreadId();
 
-    EnterCriticalSection(&context_section);
+    pthread_mutex_lock(&vulkan_mutex);
     LIST_FOR_EACH_ENTRY_SAFE(surface, next, &surface_list, struct wine_vk_surface, entry)
     {
         if (surface->hwnd_thread_id != thread_id)
@@ -254,7 +250,7 @@ void vulkan_thread_detach(void)
         XSync(gdi_display, False);
         wine_vk_surface_destroy(surface->hwnd);
     }
-    LeaveCriticalSection(&context_section);
+    pthread_mutex_unlock(&vulkan_mutex);
 }
 
 static VkResult X11DRV_vkCreateInstance(const VkInstanceCreateInfo *create_info,
@@ -280,7 +276,7 @@ static VkResult X11DRV_vkCreateInstance(const VkInstanceCreateInfo *create_info,
 
     res = pvkCreateInstance(&create_info_host, NULL /* allocator */, instance);
 
-    heap_free((void *)create_info_host.ppEnabledExtensionNames);
+    free((void *)create_info_host.ppEnabledExtensionNames);
     return res;
 }
 
@@ -318,13 +314,13 @@ static VkResult X11DRV_vkCreateWin32SurfaceKHR(VkInstance instance,
         FIXME("Support for allocation callbacks not implemented yet\n");
 
     /* TODO: support child window rendering. */
-    if (create_info->hwnd && GetAncestor(create_info->hwnd, GA_PARENT) != GetDesktopWindow())
+    if (create_info->hwnd && NtUserGetAncestor(create_info->hwnd, GA_PARENT) != NtUserGetDesktopWindow())
     {
         FIXME("Application requires child window rendering, which is not implemented yet!\n");
         return VK_ERROR_INCOMPATIBLE_DRIVER;
     }
 
-    x11_surface = heap_alloc_zero(sizeof(*x11_surface));
+    x11_surface = calloc(1, sizeof(*x11_surface));
     if (!x11_surface)
         return VK_ERROR_OUT_OF_HOST_MEMORY;
 
@@ -333,7 +329,7 @@ static VkResult X11DRV_vkCreateWin32SurfaceKHR(VkInstance instance,
     if (x11_surface->hwnd)
     {
         x11_surface->window = create_client_window(create_info->hwnd, &default_visual);
-        x11_surface->hwnd_thread_id = GetWindowThreadProcessId(x11_surface->hwnd, NULL);
+        x11_surface->hwnd_thread_id = NtUserGetWindowThread(x11_surface->hwnd, NULL);
     }
     else
     {
@@ -362,14 +358,14 @@ static VkResult X11DRV_vkCreateWin32SurfaceKHR(VkInstance instance,
         goto err;
     }
 
-    EnterCriticalSection(&context_section);
+    pthread_mutex_lock(&vulkan_mutex);
     if (x11_surface->hwnd)
     {
         wine_vk_surface_destroy( x11_surface->hwnd );
         XSaveContext(gdi_display, (XID)create_info->hwnd, vulkan_hwnd_context, (char *)wine_vk_surface_grab(x11_surface));
     }
     list_add_tail(&surface_list, &x11_surface->entry);
-    LeaveCriticalSection(&context_section);
+    pthread_mutex_unlock(&vulkan_mutex);
 
     *surface = (uintptr_t)x11_surface;
 
@@ -585,7 +581,7 @@ static VkResult X11DRV_vkGetPhysicalDeviceSurfaceFormats2KHR(VkPhysicalDevice ph
     if (!formats)
         return pvkGetPhysicalDeviceSurfaceFormatsKHR(phys_dev, surface_info_host.surface, count, NULL);
 
-    formats_host = heap_calloc(*count, sizeof(*formats_host));
+    formats_host = calloc(*count, sizeof(*formats_host));
     if (!formats_host) return VK_ERROR_OUT_OF_HOST_MEMORY;
     result = pvkGetPhysicalDeviceSurfaceFormatsKHR(phys_dev, surface_info_host.surface, count, formats_host);
     if (result == VK_SUCCESS || result == VK_INCOMPLETE)
@@ -594,7 +590,7 @@ static VkResult X11DRV_vkGetPhysicalDeviceSurfaceFormats2KHR(VkPhysicalDevice ph
             formats[i].surfaceFormat = formats_host[i];
     }
 
-    heap_free(formats_host);
+    free(formats_host);
     return result;
 }
 
@@ -658,7 +654,7 @@ static VkResult X11DRV_vkQueuePresentKHR(VkQueue queue, const VkPresentInfoKHR *
         static long prev_time, start_time;
         DWORD time;
 
-        time = GetTickCount();
+        time = NtGetTickCount();
         frames++;
         frames_total++;
         if (time - prev_time > 1500)
@@ -723,7 +719,7 @@ static void *X11DRV_get_vk_instance_proc_addr(VkInstance instance, const char *n
 
 const struct vulkan_funcs *get_vulkan_driver(UINT version)
 {
-    static INIT_ONCE init_once = INIT_ONCE_STATIC_INIT;
+    static pthread_once_t init_once = PTHREAD_ONCE_INIT;
 
     if (version != WINE_VULKAN_DRIVER_VERSION)
     {
@@ -731,7 +727,7 @@ const struct vulkan_funcs *get_vulkan_driver(UINT version)
         return NULL;
     }
 
-    InitOnceExecuteOnce(&init_once, wine_vk_init, NULL, NULL);
+    pthread_once(&init_once, wine_vk_init);
     if (vulkan_handle)
         return &vulkan_funcs;
 

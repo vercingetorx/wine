@@ -1810,6 +1810,44 @@ static NTSTATUS fill_name_info( const char *unix_name, FILE_NAME_INFORMATION *in
 }
 
 
+static NTSTATUS get_full_size_info(int fd, FILE_FS_FULL_SIZE_INFORMATION *info) {
+    struct stat st;
+    ULONGLONG bsize;
+
+#if !defined(linux) || !defined(HAVE_FSTATFS)
+    struct statvfs stfs;
+#else
+    struct statfs stfs;
+#endif
+
+    if (fstat( fd, &st ) < 0) return errno_to_status( errno );
+    if (!S_ISREG(st.st_mode) && !S_ISDIR(st.st_mode)) return STATUS_INVALID_DEVICE_REQUEST;
+
+    /* Linux's fstatvfs is buggy */
+#if !defined(linux) || !defined(HAVE_FSTATFS)
+    if (fstatvfs( fd, &stfs ) < 0) return errno_to_status( errno );
+    bsize = stfs.f_frsize;
+#else
+    if (fstatfs( fd, &stfs ) < 0) return errno_to_status( errno );
+    bsize = stfs.f_bsize;
+#endif
+    if (bsize == 2048)  /* assume CD-ROM */
+    {
+        info->BytesPerSector = 2048;
+        info->SectorsPerAllocationUnit = 1;
+    }
+    else
+    {
+        info->BytesPerSector = 512;
+        info->SectorsPerAllocationUnit = 8;
+    }
+    info->TotalAllocationUnits.QuadPart = bsize * stfs.f_blocks / (info->BytesPerSector * info->SectorsPerAllocationUnit);
+    info->CallerAvailableAllocationUnits.QuadPart = bsize * stfs.f_bavail / (info->BytesPerSector * info->SectorsPerAllocationUnit);
+    info->ActualAvailableAllocationUnits.QuadPart = bsize * stfs.f_bfree / (info->BytesPerSector * info->SectorsPerAllocationUnit);
+    return STATUS_SUCCESS;
+}
+
+
 static NTSTATUS server_get_file_info( HANDLE handle, IO_STATUS_BLOCK *io, void *buffer,
                                       ULONG length, FILE_INFORMATION_CLASS info_class )
 {
@@ -2594,7 +2632,7 @@ static NTSTATUS find_file_in_dir( char *unix_name, int pos, const WCHAR *name, i
 
 not_found:
     unix_name[pos - 1] = 0;
-    return STATUS_OBJECT_PATH_NOT_FOUND;
+    return STATUS_OBJECT_NAME_NOT_FOUND;
 }
 
 
@@ -3187,7 +3225,7 @@ static NTSTATUS lookup_unix_name( const WCHAR *name, int name_len, char **buffer
 
         /* grow the buffer if needed */
 
-        if (unix_len - pos < MAX_DIR_ENTRY_LEN + 2)
+        if (unix_len - pos < MAX_DIR_ENTRY_LEN + 3)
         {
             char *new_name;
             unix_len += 2 * MAX_DIR_ENTRY_LEN;
@@ -3200,16 +3238,17 @@ static NTSTATUS lookup_unix_name( const WCHAR *name, int name_len, char **buffer
         /* if this is the last element, not finding it is not necessarily fatal */
         if (!name_len)
         {
-            if (status == STATUS_OBJECT_PATH_NOT_FOUND)
+            if (status == STATUS_OBJECT_NAME_NOT_FOUND)
             {
-                status = STATUS_OBJECT_NAME_NOT_FOUND;
                 if (disposition != FILE_OPEN && disposition != FILE_OVERWRITE)
                 {
                     ret = ntdll_wcstoumbs( name, end - name, unix_name + pos + 1, MAX_DIR_ENTRY_LEN + 1, TRUE );
                     if (ret > 0 && ret <= MAX_DIR_ENTRY_LEN)
                     {
                         unix_name[pos] = '/';
-                        unix_name[pos + 1 + ret] = 0;
+                        pos += ret + 1;
+                        if (end < next) unix_name[pos++] = '/';
+                        unix_name[pos] = 0;
                         status = STATUS_NO_SUCH_FILE;
                         break;
                     }
@@ -3219,7 +3258,9 @@ static NTSTATUS lookup_unix_name( const WCHAR *name, int name_len, char **buffer
             {
                 status = STATUS_OBJECT_NAME_COLLISION;
             }
+            if (end < next) strcat( unix_name, "/" );
         }
+        else if (status == STATUS_OBJECT_NAME_NOT_FOUND) status = STATUS_OBJECT_PATH_NOT_FOUND;
 
         if (status != STATUS_SUCCESS) break;
 
@@ -4021,7 +4062,7 @@ NTSTATUS WINAPI NtQueryAttributesFile( const OBJECT_ATTRIBUTES *attr, FILE_BASIC
  *              NtQueryInformationFile   (NTDLL.@)
  */
 NTSTATUS WINAPI NtQueryInformationFile( HANDLE handle, IO_STATUS_BLOCK *io,
-                                        void *ptr, LONG len, FILE_INFORMATION_CLASS class )
+                                        void *ptr, ULONG len, FILE_INFORMATION_CLASS class )
 {
     static const size_t info_sizes[] =
     {
@@ -4765,7 +4806,7 @@ static BOOL async_write_proc( void *user, ULONG_PTR *info, NTSTATUS *status )
                                           &needs_close, &type, NULL )))
             break;
 
-        if (!fileio->count && (type == FD_TYPE_MAILSLOT || type == FD_TYPE_SOCKET))
+        if (!fileio->count && type == FD_TYPE_MAILSLOT)
             result = send( fd, fileio->buffer, 0, 0 );
         else
             result = write( fd, &fileio->buffer[fileio->already], fileio->count - fileio->already );
@@ -5174,6 +5215,12 @@ NTSTATUS WINAPI NtReadFile( HANDLE handle, HANDLE event, PIO_APC_ROUTINE apc, vo
             goto done;
         }
     }
+    else if (type == FD_TYPE_SOCKET)
+    {
+        status = sock_read( handle, unix_handle, event, apc, apc_user, io, buffer, length );
+        if (needs_close) close( unix_handle );
+        return status;
+    }
 
     if (type == FD_TYPE_SERIAL && async_read && length)
     {
@@ -5489,11 +5536,17 @@ NTSTATUS WINAPI NtWriteFile( HANDLE handle, HANDLE event, PIO_APC_ROUTINE apc, v
             goto done;
         }
     }
+    else if (type == FD_TYPE_SOCKET)
+    {
+        status = sock_write( handle, unix_handle, event, apc, apc_user, io, buffer, length );
+        if (needs_close) close( unix_handle );
+        return status;
+    }
 
     for (;;)
     {
         /* zero-length writes on sockets may not work with plain write(2) */
-        if (!length && (type == FD_TYPE_MAILSLOT || type == FD_TYPE_SOCKET))
+        if (!length && type == FD_TYPE_MAILSLOT)
             result = send( unix_handle, buffer, 0, 0 );
         else
             result = write( unix_handle, (const char *)buffer + total, length - total );
@@ -5706,6 +5759,11 @@ NTSTATUS WINAPI NtDeviceIoControlFile( HANDLE handle, HANDLE event, PIO_APC_ROUT
 
     TRACE( "(%p,%p,%p,%p,%p,0x%08x,%p,0x%08x,%p,0x%08x)\n",
            handle, event, apc, apc_context, io, code, in_buffer, in_size, out_buffer, out_size );
+
+    /* some broken applications call this frequently with INVALID_HANDLE_VALUE,
+     * and run slowly if we make a server call every time */
+    if (HandleToLong( handle ) == ~0)
+        return STATUS_INVALID_HANDLE;
 
     switch (device)
     {
@@ -6391,7 +6449,6 @@ NTSTATUS WINAPI NtQueryVolumeInformationFile( HANDLE handle, IO_STATUS_BLOCK *io
                                               FS_INFORMATION_CLASS info_class )
 {
     int fd, needs_close;
-    struct stat st;
     NTSTATUS status;
 
     status = server_get_unix_fd( handle, 0, &fd, &needs_close, NULL, NULL );
@@ -6441,52 +6498,15 @@ NTSTATUS WINAPI NtQueryVolumeInformationFile( HANDLE handle, IO_STATUS_BLOCK *io
         else
         {
             FILE_FS_SIZE_INFORMATION *info = buffer;
+            FILE_FS_FULL_SIZE_INFORMATION full_info;
 
-            if (fstat( fd, &st ) < 0)
+            if ((status = get_full_size_info(fd, &full_info)) == STATUS_SUCCESS)
             {
-                status = errno_to_status( errno );
-                break;
-            }
-            if (!S_ISREG(st.st_mode) && !S_ISDIR(st.st_mode))
-            {
-                status = STATUS_INVALID_DEVICE_REQUEST;
-            }
-            else
-            {
-                ULONGLONG bsize;
-                /* Linux's fstatvfs is buggy */
-#if !defined(linux) || !defined(HAVE_FSTATFS)
-                struct statvfs stfs;
-
-                if (fstatvfs( fd, &stfs ) < 0)
-                {
-                    status = errno_to_status( errno );
-                    break;
-                }
-                bsize = stfs.f_frsize;
-#else
-                struct statfs stfs;
-                if (fstatfs( fd, &stfs ) < 0)
-                {
-                    status = errno_to_status( errno );
-                    break;
-                }
-                bsize = stfs.f_bsize;
-#endif
-                if (bsize == 2048)  /* assume CD-ROM */
-                {
-                    info->BytesPerSector = 2048;
-                    info->SectorsPerAllocationUnit = 1;
-                }
-                else
-                {
-                    info->BytesPerSector = 512;
-                    info->SectorsPerAllocationUnit = 8;
-                }
-                info->TotalAllocationUnits.QuadPart = bsize * stfs.f_blocks / (info->BytesPerSector * info->SectorsPerAllocationUnit);
-                info->AvailableAllocationUnits.QuadPart = bsize * stfs.f_bavail / (info->BytesPerSector * info->SectorsPerAllocationUnit);
+                info->TotalAllocationUnits = full_info.TotalAllocationUnits;
+                info->AvailableAllocationUnits = full_info.CallerAvailableAllocationUnits;
+                info->SectorsPerAllocationUnit = full_info.SectorsPerAllocationUnit;
+                info->BytesPerSector = full_info.BytesPerSector;
                 io->Information = sizeof(*info);
-                status = STATUS_SUCCESS;
             }
         }
         break;
@@ -6630,8 +6650,14 @@ NTSTATUS WINAPI NtQueryVolumeInformationFile( HANDLE handle, IO_STATUS_BLOCK *io
         break;
 
     case FileFsFullSizeInformation:
-        FIXME( "%p: full size info not supported\n", handle );
-        status = STATUS_NOT_IMPLEMENTED;
+        if (length < sizeof(FILE_FS_FULL_SIZE_INFORMATION))
+            status = STATUS_BUFFER_TOO_SMALL;
+        else
+        {
+            FILE_FS_FULL_SIZE_INFORMATION *info = buffer;
+            if ((status = get_full_size_info(fd, info)) == STATUS_SUCCESS)
+                io->Information = sizeof(*info);
+        }
         break;
 
     case FileFsObjectIdInformation:

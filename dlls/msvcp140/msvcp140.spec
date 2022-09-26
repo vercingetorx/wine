@@ -1085,9 +1085,9 @@
 @ stub -arch=win64 ?CaptureCallstack@platform@details@Concurrency@@YA_KPEAPEAX_K1@Z
 @ cdecl ?GetCurrentThreadId@platform@details@Concurrency@@YAJXZ() kernel32.GetCurrentThreadId
 @ stub ?GetNextAsyncId@platform@details@Concurrency@@YAIXZ
-@ stub -arch=arm ?ReportUnhandledError@_ExceptionHolder@details@Concurrency@@AAAXXZ
-@ stub -arch=i386 ?ReportUnhandledError@_ExceptionHolder@details@Concurrency@@AAEXXZ
-@ stub -arch=win64 ?ReportUnhandledError@_ExceptionHolder@details@Concurrency@@AEAAXXZ
+@ cdecl -arch=arm ?ReportUnhandledError@_ExceptionHolder@details@Concurrency@@AAAXXZ(ptr) _ExceptionHolder__ReportUnhandledError
+@ thiscall -arch=i386 ?ReportUnhandledError@_ExceptionHolder@details@Concurrency@@AAEXXZ(ptr) _ExceptionHolder__ReportUnhandledError
+@ cdecl -arch=win64 ?ReportUnhandledError@_ExceptionHolder@details@Concurrency@@AEAAXXZ(ptr) _ExceptionHolder__ReportUnhandledError
 @ cdecl -arch=arm ?_Addcats@_Locinfo@std@@QAAAAV12@HPBD@Z(ptr long str) _Locinfo__Addcats
 @ thiscall -arch=i386 ?_Addcats@_Locinfo@std@@QAEAAV12@HPBD@Z(ptr long str) _Locinfo__Addcats
 @ cdecl -arch=win64 ?_Addcats@_Locinfo@std@@QEAAAEAV12@HPEBD@Z(ptr long str) _Locinfo__Addcats
@@ -3632,7 +3632,7 @@
 @ cdecl _Cnd_timedwait(ptr ptr ptr)
 @ cdecl _Cnd_unregister_at_thread_exit(ptr)
 @ cdecl _Cnd_wait(ptr ptr)
-@ stub _Copy_file
+@ cdecl _Copy_file(wstr wstr)
 @ stub _Cosh
 @ cdecl _Current_get(ptr)
 @ cdecl _Current_set(wstr) tr2_sys__Current_set_wchar
@@ -3672,18 +3672,18 @@
 @ cdecl _Lstat(wstr ptr)
 @ cdecl _Make_dir(wstr) tr2_sys__Make_dir_wchar
 @ cdecl _Mbrtowc(ptr ptr long ptr ptr)
-@ stub _Mtx_clear_owner
-@ cdecl _Mtx_current_owns(ptr) _Mtx_current_owns
-@ cdecl _Mtx_destroy(ptr) _Mtx_destroy
-@ cdecl _Mtx_destroy_in_situ(ptr) _Mtx_destroy_in_situ
-@ cdecl _Mtx_getconcrtcs(ptr) _Mtx_getconcrtcs
-@ cdecl _Mtx_init(ptr long) _Mtx_init
-@ cdecl _Mtx_init_in_situ(ptr long) _Mtx_init_in_situ
-@ cdecl _Mtx_lock(ptr) _Mtx_lock
-@ stub _Mtx_reset_owner
+@ cdecl _Mtx_clear_owner(ptr)
+@ cdecl _Mtx_current_owns(ptr)
+@ cdecl _Mtx_destroy(ptr)
+@ cdecl _Mtx_destroy_in_situ(ptr)
+@ cdecl _Mtx_getconcrtcs(ptr)
+@ cdecl _Mtx_init(ptr long)
+@ cdecl _Mtx_init_in_situ(ptr long)
+@ cdecl _Mtx_lock(ptr)
+@ cdecl _Mtx_reset_owner(ptr)
 @ stub _Mtx_timedlock
-@ cdecl _Mtx_trylock(ptr) _Mtx_trylock
-@ cdecl _Mtx_unlock(ptr) _Mtx_unlock
+@ cdecl _Mtx_trylock(ptr)
+@ cdecl _Mtx_unlock(ptr)
 @ stub _Mtxdst
 @ stub _Mtxinit
 @ stub _Mtxlock

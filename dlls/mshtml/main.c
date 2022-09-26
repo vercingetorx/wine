@@ -102,7 +102,7 @@ UINT cp_from_charset_string(BSTR charset)
 
     hres = IMultiLanguage2_GetCharsetInfo(mlang, charset, &info);
     if(FAILED(hres)) {
-        FIXME("GetCharsetInfo failed: %08x\n", hres);
+        FIXME("GetCharsetInfo failed: %08lx\n", hres);
         return CP_UTF8;
     }
 
@@ -119,7 +119,7 @@ BSTR charset_string_from_cp(UINT cp)
 
     hres = IMultiLanguage2_GetCodePageInfo(mlang, cp, GetUserDefaultUILanguage(), &info);
     if(FAILED(hres)) {
-        ERR("GetCodePageInfo failed: %08x\n", hres);
+        ERR("GetCodePageInfo failed: %08lx\n", hres);
         return SysAllocString(NULL);
     }
 
@@ -154,7 +154,7 @@ static BOOL read_compat_mode(HKEY key, compat_mode_t *r)
     if(status != ERROR_SUCCESS || type != REG_SZ)
         return FALSE;
 
-    return parse_compat_version(version, r);
+    return parse_compat_version(version, r) != NULL;
 }
 
 static BOOL WINAPI load_compat_settings(INIT_ONCE *once, void *param, void **context)
@@ -182,7 +182,7 @@ static BOOL WINAPI load_compat_settings(INIT_ONCE *once, void *param, void **con
             break;
         index++;
         if(res != ERROR_SUCCESS) {
-            WARN("RegEnumKey failed: %u\n", GetLastError());
+            WARN("RegEnumKey failed: %lu\n", GetLastError());
             continue;
         }
 
@@ -215,7 +215,7 @@ compat_mode_t get_max_compat_mode(IUri *uri)
 {
     compat_config_t *iter;
     size_t len, iter_len;
-    BSTR host;
+    BSTR host = NULL;
     HRESULT hres;
 
     static INIT_ONCE init_once = INIT_ONCE_STATIC_INIT;
@@ -224,8 +224,10 @@ compat_mode_t get_max_compat_mode(IUri *uri)
     if(!uri)
         return global_max_compat_mode;
     hres = IUri_GetHost(uri, &host);
-    if(FAILED(hres))
+    if(hres != S_OK) {
+        SysFreeString(host);
         return global_max_compat_mode;
+    }
     len = SysStringLen(host);
 
     LIST_FOR_EACH_ENTRY(iter, &compat_config, compat_config_t, entry) {
@@ -254,6 +256,7 @@ static void thread_detach(void)
     if(thread_data->thread_hwnd)
         DestroyWindow(thread_data->thread_hwnd);
 
+    destroy_session_storage(thread_data);
     heap_free(thread_data);
 }
 
@@ -397,7 +400,7 @@ static ULONG WINAPI ClassFactory_AddRef(IClassFactory *iface)
 {
     ClassFactory *This = impl_from_IClassFactory(iface);
     ULONG ref = InterlockedIncrement(&This->ref);
-    TRACE("(%p) ref = %u\n", This, ref);
+    TRACE("(%p) ref = %lu\n", This, ref);
     return ref;
 }
 
@@ -406,7 +409,7 @@ static ULONG WINAPI ClassFactory_Release(IClassFactory *iface)
     ClassFactory *This = impl_from_IClassFactory(iface);
     ULONG ref = InterlockedDecrement(&This->ref);
 
-    TRACE("(%p) ref = %u\n", This, ref);
+    TRACE("(%p) ref = %lu\n", This, ref);
 
     if(!ref) {
         heap_free(This);
@@ -647,7 +650,7 @@ static HRESULT register_server(BOOL do_register)
         heap_free(pse[i].pszValue);
 
     if(FAILED(hres))
-        ERR("RegInstall failed: %08x\n", hres);
+        ERR("RegInstall failed: %08lx\n", hres);
 
     return hres;
 }

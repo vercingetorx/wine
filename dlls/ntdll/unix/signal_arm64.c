@@ -730,6 +730,7 @@ struct user_callback_frame
     ULONG               *ret_len;
     __wine_jmp_buf       jmpbuf;
     NTSTATUS             status;
+    void                *teb_frame;
 };
 
 /***********************************************************************
@@ -766,6 +767,7 @@ NTSTATUS WINAPI KeUserModeCallback( ULONG id, const void *args, ULONG len, void 
         callback_frame.frame.restore_flags = CONTEXT_INTEGER;
         callback_frame.frame.syscall_table = frame->syscall_table;
         callback_frame.frame.prev_frame    = frame;
+        callback_frame.teb_frame           = NtCurrentTeb()->Tib.ExceptionList;
         arm64_thread_data()->syscall_frame = &callback_frame.frame;
 
         __wine_syscall_dispatcher_return( &callback_frame.frame, 0 );
@@ -787,6 +789,7 @@ NTSTATUS WINAPI NtCallbackReturn( void *ret_ptr, ULONG ret_len, NTSTATUS status 
     *frame->ret_len = ret_len;
     frame->status = status;
     arm64_thread_data()->syscall_frame = frame->frame.prev_frame;
+    NtCurrentTeb()->Tib.ExceptionList = frame->teb_frame;
     __wine_longjmp( &frame->jmpbuf, 1 );
 }
 
@@ -908,6 +911,7 @@ static void bus_handler( int signal, siginfo_t *siginfo, void *sigcontext )
 static void trap_handler( int signal, siginfo_t *siginfo, void *sigcontext )
 {
     EXCEPTION_RECORD rec = { 0 };
+    ucontext_t *context = sigcontext;
 
     switch (siginfo->si_code)
     {
@@ -916,6 +920,21 @@ static void trap_handler( int signal, siginfo_t *siginfo, void *sigcontext )
         break;
     case TRAP_BRKPT:
     default:
+        /* debug exceptions do not update ESR on Linux, so we fetch the instruction directly. */
+        if (!(PSTATE_sig( context ) & 0x10) && /* AArch64 (not WoW) */
+            !(PC_sig( context ) & 3) &&
+            *(ULONG *)PC_sig( context ) == 0xd43e0060UL) /* brk #0xf003 -> __fastfail */
+        {
+            CONTEXT ctx;
+            save_context( &ctx, sigcontext );
+            rec.ExceptionCode = STATUS_STACK_BUFFER_OVERRUN;
+            rec.ExceptionAddress = (void *)ctx.Pc;
+            rec.ExceptionFlags = EH_NONCONTINUABLE;
+            rec.NumberParameters = 1;
+            rec.ExceptionInformation[0] = ctx.u.X[0];
+            NtRaiseException( &rec, &ctx, FALSE );
+            return;
+        }
         rec.ExceptionCode = EXCEPTION_BREAKPOINT;
         rec.NumberParameters = 1;
         break;
@@ -1202,6 +1221,7 @@ void DECLSPEC_HIDDEN call_init_thunk( LPTHREAD_START_ROUTINE entry, void *arg, B
     ctx = (CONTEXT *)((ULONG_PTR)context.Sp & ~15) - 1;
     *ctx = context;
     ctx->ContextFlags = CONTEXT_FULL;
+    memset( frame, 0, sizeof(*frame) );
     NtSetContextThread( GetCurrentThread(), ctx );
 
     frame->sp    = (ULONG64)ctx;
@@ -1365,7 +1385,8 @@ __ASM_GLOBAL_FUNC( __wine_syscall_dispatcher,
                    "ret x16\n"
                    "4:\tmov x0, #0xc0000000\n\t" /* STATUS_INVALID_PARAMETER */
                    "movk x0, #0x000d\n\t"
-                   "b 3b\n"
+                   "b 3b\n\t"
+                   ".globl " __ASM_NAME("__wine_syscall_dispatcher_return") "\n"
                    __ASM_NAME("__wine_syscall_dispatcher_return") ":\n\t"
                    "mov sp, x0\n\t"
                    "mov x0, x1\n\t"

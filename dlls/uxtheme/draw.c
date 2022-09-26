@@ -57,7 +57,7 @@ HRESULT WINAPI EnableThemeDialogTexture(HWND hwnd, DWORD new_flag)
     DWORD old_flag = 0;
     BOOL res;
 
-    TRACE("(%p,%#x\n", hwnd, new_flag);
+    TRACE("(%p,%#lx\n", hwnd, new_flag);
 
     new_flag &= ETDT_VALIDBITS;
 
@@ -267,7 +267,7 @@ static PTHEME_PROPERTY UXTHEME_SelectImage(HTHEME hTheme, int iPartId, int iStat
                 }
             }
             if(reqsize.x <= size.x && reqsize.y <= size.y) {
-                TRACE("Using image size %dx%d, image %d\n", reqsize.x, reqsize.y,
+                TRACE("Using image size %ldx%ld, image %d\n", reqsize.x, reqsize.y,
                       imagefile_index_to_property(i));
                 return fileProp;
             }
@@ -523,6 +523,39 @@ static inline void get_transparency (HTHEME hTheme, int iPartId, int iStateId,
     }
 }
 
+/* Reset alpha values in hdc to 0xFF if the background is opaque */
+static void reset_dc_alpha_values(HTHEME htheme, HDC hdc, int part_id, int state_id,
+                                  const RECT *rect)
+{
+    static const RGBQUAD bitmap_bits = {0x0, 0x0, 0x0, 0xFF};
+    BITMAPINFO bitmap_info = {{0}};
+    RECT image_rect;
+    BOOL has_alpha;
+    HBITMAP hbmp;
+    int bg_type;
+
+    if (GetDeviceCaps(hdc, BITSPIXEL) != 32)
+        return;
+
+    if (FAILED(GetThemeEnumValue(htheme, part_id, state_id, TMT_BGTYPE, &bg_type))
+        || bg_type != BT_IMAGEFILE)
+        return;
+
+    if (FAILED(UXTHEME_LoadImage(htheme, part_id, state_id, rect, FALSE, &hbmp, &image_rect,
+                                 &has_alpha, NULL)) || has_alpha)
+        return;
+
+    bitmap_info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    bitmap_info.bmiHeader.biWidth = 1;
+    bitmap_info.bmiHeader.biHeight = 1;
+    bitmap_info.bmiHeader.biPlanes = 1;
+    bitmap_info.bmiHeader.biBitCount = 32;
+    bitmap_info.bmiHeader.biCompression = BI_RGB;
+    StretchDIBits(hdc, rect->left, rect->top, abs(rect->right - rect->left),
+                  abs(rect->bottom - rect->top), 0, 0, 1, 1, &bitmap_bits, &bitmap_info,
+                  DIB_RGB_COLORS, SRCPAINT);
+}
+
 /***********************************************************************
  *      UXTHEME_DrawImageGlyph
  *
@@ -581,6 +614,11 @@ static HRESULT UXTHEME_DrawImageGlyph(HTHEME hTheme, HDC hdc, int iPartId,
 
     SelectObject(hdcSrc, oldSrc);
     DeleteDC(hdcSrc);
+
+    /* Don't transfer alpha values from the glyph when drawing opaque background */
+    if (SUCCEEDED(hr) && hasAlpha)
+        reset_dc_alpha_values(hTheme, hdc, iPartId, iStateId, pRect);
+
     return hr;
 }
 
@@ -710,6 +748,7 @@ static HRESULT UXTHEME_DrawImageBackground(HTHEME hTheme, HDC hdc, int iPartId,
                                     int iStateId, RECT *pRect,
                                     const DTBGOPTS *pOptions)
 {
+    int destCenterWidth, srcCenterWidth, destCenterHeight, srcCenterHeight;
     HRESULT hr = S_OK;
     HBITMAP bmpSrc;
     HGDIOBJ oldSrc;
@@ -825,66 +864,64 @@ static HRESULT UXTHEME_DrawImageBackground(HTHEME hTheme, HDC hdc, int iPartId,
             goto draw_error; 
         }
 
-        if ((sizingtype == ST_STRETCH) || (sizingtype == ST_TILE)) {
-            int destCenterWidth  = dstSize.x - (sm.cxLeftWidth + sm.cxRightWidth);
-            int srcCenterWidth   = srcSize.x - (sm.cxLeftWidth + sm.cxRightWidth);
-            int destCenterHeight = dstSize.y - (sm.cyTopHeight + sm.cyBottomHeight);
-            int srcCenterHeight  = srcSize.y - (sm.cyTopHeight + sm.cyBottomHeight);
+        destCenterWidth  = dstSize.x - (sm.cxLeftWidth + sm.cxRightWidth);
+        srcCenterWidth   = srcSize.x - (sm.cxLeftWidth + sm.cxRightWidth);
+        destCenterHeight = dstSize.y - (sm.cyTopHeight + sm.cyBottomHeight);
+        srcCenterHeight  = srcSize.y - (sm.cyTopHeight + sm.cyBottomHeight);
 
-            if(destCenterWidth > 0) {
-                /* Center top */
-                if(!UXTHEME_SizedBlt (hdcDst, sm.cxLeftWidth, 0, 
-                                      destCenterWidth, sm.cyTopHeight,
-                                      hdcSrc, rcSrc.left+sm.cxLeftWidth, rcSrc.top, 
-                                      srcCenterWidth, sm.cyTopHeight, 
-                                      sizingtype, transparent, transparentcolor)) {
-                    hr = HRESULT_FROM_WIN32(GetLastError());
-                    goto draw_error; 
-                }
-                /* Center bottom */
-                if(!UXTHEME_SizedBlt (hdcDst, sm.cxLeftWidth, dstSize.y-sm.cyBottomHeight, 
-                                      destCenterWidth, sm.cyBottomHeight,
-                                      hdcSrc, rcSrc.left+sm.cxLeftWidth, rcSrc.bottom-sm.cyBottomHeight, 
-                                      srcCenterWidth, sm.cyBottomHeight, 
-                                      sizingtype, transparent, transparentcolor)) {
-                    hr = HRESULT_FROM_WIN32(GetLastError());
-                    goto draw_error; 
-                }
+        if(destCenterWidth > 0) {
+            /* Center top */
+            if(!UXTHEME_SizedBlt (hdcDst, sm.cxLeftWidth, 0,
+                                  destCenterWidth, sm.cyTopHeight,
+                                  hdcSrc, rcSrc.left+sm.cxLeftWidth, rcSrc.top,
+                                  srcCenterWidth, sm.cyTopHeight,
+                                  sizingtype, transparent, transparentcolor)) {
+                hr = HRESULT_FROM_WIN32(GetLastError());
+                goto draw_error;
             }
-            if(destCenterHeight > 0) {
-                /* Left center */
-                if(!UXTHEME_SizedBlt (hdcDst, 0, sm.cyTopHeight, 
-                                      sm.cxLeftWidth, destCenterHeight,
-                                      hdcSrc, rcSrc.left, rcSrc.top+sm.cyTopHeight, 
-                                      sm.cxLeftWidth, srcCenterHeight, 
-                                      sizingtype, 
-                                      transparent, transparentcolor)) {
-                    hr = HRESULT_FROM_WIN32(GetLastError());
-                    goto draw_error; 
-                }
-                /* Right center */
-                if(!UXTHEME_SizedBlt (hdcDst, dstSize.x-sm.cxRightWidth, sm.cyTopHeight, 
-                                      sm.cxRightWidth, destCenterHeight,
-                                      hdcSrc, rcSrc.right-sm.cxRightWidth, rcSrc.top+sm.cyTopHeight, 
-                                      sm.cxRightWidth, srcCenterHeight, 
+            /* Center bottom */
+            if(!UXTHEME_SizedBlt (hdcDst, sm.cxLeftWidth, dstSize.y-sm.cyBottomHeight,
+                                  destCenterWidth, sm.cyBottomHeight,
+                                  hdcSrc, rcSrc.left+sm.cxLeftWidth, rcSrc.bottom-sm.cyBottomHeight,
+                                  srcCenterWidth, sm.cyBottomHeight,
+                                  sizingtype, transparent, transparentcolor)) {
+                hr = HRESULT_FROM_WIN32(GetLastError());
+                goto draw_error;
+            }
+        }
+        if(destCenterHeight > 0) {
+            /* Left center */
+            if(!UXTHEME_SizedBlt (hdcDst, 0, sm.cyTopHeight,
+                                  sm.cxLeftWidth, destCenterHeight,
+                                  hdcSrc, rcSrc.left, rcSrc.top+sm.cyTopHeight,
+                                  sm.cxLeftWidth, srcCenterHeight,
+                                  sizingtype,
+                                  transparent, transparentcolor)) {
+                hr = HRESULT_FROM_WIN32(GetLastError());
+                goto draw_error;
+            }
+            /* Right center */
+            if(!UXTHEME_SizedBlt (hdcDst, dstSize.x-sm.cxRightWidth, sm.cyTopHeight,
+                                  sm.cxRightWidth, destCenterHeight,
+                                  hdcSrc, rcSrc.right-sm.cxRightWidth, rcSrc.top+sm.cyTopHeight,
+                                  sm.cxRightWidth, srcCenterHeight,
+                                  sizingtype, transparent, transparentcolor)) {
+                hr = HRESULT_FROM_WIN32(GetLastError());
+                goto draw_error;
+            }
+        }
+        if(destCenterHeight > 0 && destCenterWidth > 0) {
+            BOOL borderonly = FALSE;
+            GetThemeBool(hTheme, iPartId, iStateId, TMT_BORDERONLY, &borderonly);
+            if(!borderonly) {
+                /* Center */
+                if(!UXTHEME_SizedBlt (hdcDst, sm.cxLeftWidth, sm.cyTopHeight,
+                                      destCenterWidth, destCenterHeight,
+                                      hdcSrc, rcSrc.left+sm.cxLeftWidth, rcSrc.top+sm.cyTopHeight,
+                                      srcCenterWidth, srcCenterHeight,
                                       sizingtype, transparent, transparentcolor)) {
                     hr = HRESULT_FROM_WIN32(GetLastError());
                     goto draw_error; 
-                }
-            }
-            if(destCenterHeight > 0 && destCenterWidth > 0) {
-                BOOL borderonly = FALSE;
-                GetThemeBool(hTheme, iPartId, iStateId, TMT_BORDERONLY, &borderonly);
-                if(!borderonly) {
-                    /* Center */
-                    if(!UXTHEME_SizedBlt (hdcDst, sm.cxLeftWidth, sm.cyTopHeight, 
-                                          destCenterWidth, destCenterHeight,
-                                          hdcSrc, rcSrc.left+sm.cxLeftWidth, rcSrc.top+sm.cyTopHeight, 
-                                          srcCenterWidth, srcCenterHeight, 
-                                          sizingtype, transparent, transparentcolor)) {
-                        hr = HRESULT_FROM_WIN32(GetLastError());
-                        goto draw_error; 
-                    }
                 }
             }
         }
@@ -957,7 +994,7 @@ static HRESULT UXTHEME_DrawBackgroundFill(HTHEME hTheme, HDC hdc, int iPartId,
     HRESULT hr = S_OK;
     int filltype = FT_SOLID;
 
-    TRACE("(%d,%d,%d)\n", iPartId, iStateId, pOptions->dwFlags);
+    TRACE("(%d,%d,%ld)\n", iPartId, iStateId, pOptions->dwFlags);
 
     if(pOptions->dwFlags & DTBG_OMITCONTENT)
         return S_OK;
@@ -1055,7 +1092,7 @@ HRESULT WINAPI DrawThemeBackgroundEx(HTHEME hTheme, HDC hdc, int iPartId,
     int bgtype = BT_BORDERFILL;
     RECT rt;
 
-    TRACE("(%p,%p,%d,%d,%d,%d)\n", hTheme, hdc, iPartId, iStateId,pRect->left,pRect->top);
+    TRACE("(%p,%p,%d,%d,%ld,%ld)\n", hTheme, hdc, iPartId, iStateId,pRect->left,pRect->top);
     if(!hTheme)
         return E_HANDLE;
 
@@ -1744,14 +1781,14 @@ HRESULT WINAPI DrawThemeTextEx(HTHEME hTheme, HDC hdc, int iPartId, int iStateId
     int oldBkMode;
     int fontProp;
 
-    TRACE("%p %p %d %d %s:%d 0x%08x %p %p\n", hTheme, hdc, iPartId, iStateId,
+    TRACE("%p %p %d %d %s:%d 0x%08lx %p %p\n", hTheme, hdc, iPartId, iStateId,
         debugstr_wn(pszText, iCharCount), iCharCount, flags, rect, options);
 
     if(!hTheme)
         return E_HANDLE;
 
     if (options->dwFlags & ~(DTT_TEXTCOLOR | DTT_FONTPROP))
-        FIXME("unsupported flags 0x%08x\n", options->dwFlags);
+        FIXME("unsupported flags 0x%08lx\n", options->dwFlags);
 
     if (options->dwFlags & DTT_FONTPROP)
         fontProp = options->iFontPropId;
@@ -2026,8 +2063,12 @@ HRESULT WINAPI GetThemeBackgroundRegion(HTHEME hTheme, HDC hdc, int iPartId,
         if(!*pRegion)
             hr = HRESULT_FROM_WIN32(GetLastError());
     }
+    else if (bgtype == BT_NONE)
+    {
+        hr = E_UNEXPECTED;
+    }
     else {
-        FIXME("Unknown background type\n");
+        FIXME("Unknown background type %d\n", bgtype);
         /* This should never happen, and hence I don't know what to return */
         hr = E_FAIL;
     }

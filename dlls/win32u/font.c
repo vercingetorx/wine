@@ -199,15 +199,9 @@ static struct font_gamma_ramp font_gamma_ramp;
 static void add_face_to_cache( struct gdi_font_face *face );
 static void remove_face_from_cache( struct gdi_font_face *face );
 
-UINT get_acp(void)
-{
-    return ((const WORD *)NtCurrentTeb()->Peb->AnsiCodePageData)[1];
-}
-
-static UINT get_oemcp(void)
-{
-    return ((const WORD *)NtCurrentTeb()->Peb->OemCodePageData)[1];
-}
+static CPTABLEINFO utf8_cp;
+static CPTABLEINFO oem_cp;
+CPTABLEINFO ansi_cp = { 0 };
 
 static inline WCHAR facename_tolower( WCHAR c )
 {
@@ -277,15 +271,6 @@ static inline INT INTERNAL_YWSTODS(DC *dc, INT height)
     return pt[1].y - pt[0].y;
 }
 
-static inline WCHAR *strdupW( const WCHAR *p )
-{
-    WCHAR *ret;
-    DWORD len = (lstrlenW(p) + 1) * sizeof(WCHAR);
-    ret = malloc( len );
-    memcpy(ret, p, len);
-    return ret;
-}
-
 static INT FONT_GetObjectW( HGDIOBJ handle, INT count, LPVOID buffer );
 static BOOL FONT_DeleteObject( HGDIOBJ handle );
 
@@ -303,44 +288,25 @@ typedef struct
 } FONTOBJ;
 
 /* for translate_charset_info */
-static const CHARSETINFO charset_info[] = {
-  /* ANSI */
-  { ANSI_CHARSET, 1252, {{0,0,0,0},{FS_LATIN1,0}} },
-  { EASTEUROPE_CHARSET, 1250, {{0,0,0,0},{FS_LATIN2,0}} },
-  { RUSSIAN_CHARSET, 1251, {{0,0,0,0},{FS_CYRILLIC,0}} },
-  { GREEK_CHARSET, 1253, {{0,0,0,0},{FS_GREEK,0}} },
-  { TURKISH_CHARSET, 1254, {{0,0,0,0},{FS_TURKISH,0}} },
-  { HEBREW_CHARSET, 1255, {{0,0,0,0},{FS_HEBREW,0}} },
-  { ARABIC_CHARSET, 1256, {{0,0,0,0},{FS_ARABIC,0}} },
-  { BALTIC_CHARSET, 1257, {{0,0,0,0},{FS_BALTIC,0}} },
-  { VIETNAMESE_CHARSET, 1258, {{0,0,0,0},{FS_VIETNAMESE,0}} },
-  /* reserved by ANSI */
-  { DEFAULT_CHARSET, 0, {{0,0,0,0},{FS_LATIN1,0}} },
-  { DEFAULT_CHARSET, 0, {{0,0,0,0},{FS_LATIN1,0}} },
-  { DEFAULT_CHARSET, 0, {{0,0,0,0},{FS_LATIN1,0}} },
-  { DEFAULT_CHARSET, 0, {{0,0,0,0},{FS_LATIN1,0}} },
-  { DEFAULT_CHARSET, 0, {{0,0,0,0},{FS_LATIN1,0}} },
-  { DEFAULT_CHARSET, 0, {{0,0,0,0},{FS_LATIN1,0}} },
-  { DEFAULT_CHARSET, 0, {{0,0,0,0},{FS_LATIN1,0}} },
-  /* ANSI and OEM */
-  { THAI_CHARSET, 874, {{0,0,0,0},{FS_THAI,0}} },
-  { SHIFTJIS_CHARSET, 932, {{0,0,0,0},{FS_JISJAPAN,0}} },
-  { GB2312_CHARSET, 936, {{0,0,0,0},{FS_CHINESESIMP,0}} },
-  { HANGEUL_CHARSET, 949, {{0,0,0,0},{FS_WANSUNG,0}} },
-  { CHINESEBIG5_CHARSET, 950, {{0,0,0,0},{FS_CHINESETRAD,0}} },
-  { JOHAB_CHARSET, 1361, {{0,0,0,0},{FS_JOHAB,0}} },
-  /* reserved for alternate ANSI and OEM */
-  { DEFAULT_CHARSET, 0, {{0,0,0,0},{FS_LATIN1,0}} },
-  { DEFAULT_CHARSET, 0, {{0,0,0,0},{FS_LATIN1,0}} },
-  { DEFAULT_CHARSET, 0, {{0,0,0,0},{FS_LATIN1,0}} },
-  { DEFAULT_CHARSET, 0, {{0,0,0,0},{FS_LATIN1,0}} },
-  { DEFAULT_CHARSET, 0, {{0,0,0,0},{FS_LATIN1,0}} },
-  { DEFAULT_CHARSET, 0, {{0,0,0,0},{FS_LATIN1,0}} },
-  { DEFAULT_CHARSET, 0, {{0,0,0,0},{FS_LATIN1,0}} },
-  { DEFAULT_CHARSET, 0, {{0,0,0,0},{FS_LATIN1,0}} },
-  /* reserved for system */
-  { DEFAULT_CHARSET, 0, {{0,0,0,0},{FS_LATIN1,0}} },
-  { SYMBOL_CHARSET, CP_SYMBOL, {{0,0,0,0},{FS_SYMBOL,0}} }
+static const CHARSETINFO charset_info[] =
+{
+    { ANSI_CHARSET,        1252,      { {0}, { FS_LATIN1 }}},
+    { EASTEUROPE_CHARSET,  1250,      { {0}, { FS_LATIN2 }}},
+    { RUSSIAN_CHARSET,     1251,      { {0}, { FS_CYRILLIC }}},
+    { GREEK_CHARSET,       1253,      { {0}, { FS_GREEK }}},
+    { TURKISH_CHARSET,     1254,      { {0}, { FS_TURKISH }}},
+    { HEBREW_CHARSET,      1255,      { {0}, { FS_HEBREW }}},
+    { ARABIC_CHARSET,      1256,      { {0}, { FS_ARABIC }}},
+    { BALTIC_CHARSET,      1257,      { {0}, { FS_BALTIC }}},
+    { VIETNAMESE_CHARSET,  1258,      { {0}, { FS_VIETNAMESE }}},
+    { THAI_CHARSET,        874,       { {0}, { FS_THAI }}},
+    { SHIFTJIS_CHARSET,    932,       { {0}, { FS_JISJAPAN }}},
+    { GB2312_CHARSET,      936,       { {0}, { FS_CHINESESIMP }}},
+    { HANGEUL_CHARSET,     949,       { {0}, { FS_WANSUNG }}},
+    { CHINESEBIG5_CHARSET, 950,       { {0}, { FS_CHINESETRAD }}},
+    { JOHAB_CHARSET,       1361,      { {0}, { FS_JOHAB }}},
+    { 254,                 CP_UTF8,   { {0}, { 0x04000000 }}},
+    { SYMBOL_CHARSET,      CP_SYMBOL, { {0}, { FS_SYMBOL }}}
 };
 
 static const char * const default_serif_list[3] =
@@ -385,6 +351,11 @@ static const struct nls_update_font_list
     { 1252, 850, "vga850.fon", "vgafix.fon", "vgasys.fon",
       "coure.fon", "serife.fon", "smalle.fon", "sserife.fon", "sseriff.fon",
       "Tahoma","Times New Roman"  /* FIXME unverified */
+    },
+    /* UTF-8 */
+    { CP_UTF8, CP_UTF8, "vga850.fon", "vgafix.fon", "vgasys.fon",
+      "coure.fon", "serife.fon", "smalle.fon", "sserife.fon", "sseriff.fon",
+      "Tahoma", "Times New Roman"  /* FIXME unverified */
     },
     /* Eastern Europe */
     { 1250, 852, "vga852.fon", "vgafixe.fon", "vgasyse.fon",
@@ -488,14 +459,6 @@ static const struct nls_update_font_list
       "PMingLiU",  "MingLiU"
     }
 };
-
-static inline BOOL is_dbcs_ansi_cp(UINT ansi_cp)
-{
-    return ( ansi_cp == 932       /* CP932 for Japanese */
-            || ansi_cp == 936     /* CP936 for Chinese Simplified */
-            || ansi_cp == 949     /* CP949 for Korean */
-            || ansi_cp == 950 );  /* CP950 for Chinese Traditional */
-}
 
 static pthread_mutex_t font_lock = PTHREAD_MUTEX_INITIALIZER;
 
@@ -940,6 +903,12 @@ static BOOL add_family_replacement( const WCHAR *new_name, const WCHAR *replace 
         return FALSE;
     }
 
+    if (family->replacement)
+    {
+        TRACE( "%s is replaced by another font, skipping.\n", debugstr_w(replace) );
+        return FALSE;
+    }
+
     if (!(new_family = create_family( new_name, NULL ))) return FALSE;
     new_family->replacement = family;
     family->refcount++;
@@ -1201,8 +1170,8 @@ static struct gdi_font_face *create_face( struct gdi_font_family *family, const 
     struct gdi_font_face *face = calloc( 1, sizeof(*face) );
 
     face->refcount   = 1;
-    face->style_name = strdupW( style );
-    face->full_name  = strdupW( fullname );
+    face->style_name = wcsdup( style );
+    face->full_name  = wcsdup( fullname );
     face->face_index = index;
     face->fs         = fs;
     face->ntmFlags   = ntmflags;
@@ -1210,7 +1179,7 @@ static struct gdi_font_face *create_face( struct gdi_font_family *family, const 
     face->flags      = flags;
     face->data_ptr   = data_ptr;
     face->data_size  = data_size;
-    if (file) face->file = strdupW( file );
+    if (file) face->file = wcsdup( file );
     if (size) face->size = *size;
     else face->scalable = TRUE;
     if (insert_face_in_family_list( face, family )) return face;
@@ -1713,28 +1682,27 @@ static void load_system_links(void)
 /* see TranslateCharsetInfo */
 BOOL translate_charset_info( DWORD *src, CHARSETINFO *cs, DWORD flags )
 {
-    int index = 0;
+    unsigned int i;
 
     switch (flags)
     {
     case TCI_SRCFONTSIG:
-        while (index < ARRAY_SIZE(charset_info) && !(*src>>index & 0x0001)) index++;
-        break;
+        for (i = 0; i < ARRAY_SIZE(charset_info); i++)
+            if (charset_info[i].fs.fsCsb[0] & src[0]) goto found;
+        return FALSE;
     case TCI_SRCCODEPAGE:
-        while (index < ARRAY_SIZE(charset_info) && PtrToUlong(src) != charset_info[index].ciACP)
-            index++;
-        break;
+        for (i = 0; i < ARRAY_SIZE(charset_info); i++)
+            if (PtrToUlong(src) == charset_info[i].ciACP) goto found;
+        return FALSE;
     case TCI_SRCCHARSET:
-        while (index < ARRAY_SIZE(charset_info) &&
-               PtrToUlong(src) != charset_info[index].ciCharset)
-            index++;
-        break;
+        for (i = 0; i < ARRAY_SIZE(charset_info); i++)
+            if (PtrToUlong(src) == charset_info[i].ciCharset) goto found;
+        return FALSE;
     default:
         return FALSE;
     }
-
-    if (index >= ARRAY_SIZE(charset_info) || charset_info[index].ciCharset == DEFAULT_CHARSET) return FALSE;
-    *cs = charset_info[index];
+found:
+    *cs = charset_info[i];
     return TRUE;
 }
 
@@ -1902,10 +1870,9 @@ static struct gdi_font_face *find_matching_face( const LOGFONTW *lf, CHARSETINFO
        corresponding to the current ansi codepage */
     if (!csi->fs.fsCsb[0])
     {
-        INT acp = get_acp();
-        if (!translate_charset_info( (DWORD *)(INT_PTR)acp, csi, TCI_SRCCODEPAGE ))
+        if (!translate_charset_info( (DWORD *)(INT_PTR)ansi_cp.CodePage, csi, TCI_SRCCODEPAGE ))
         {
-            FIXME( "TCI failed on codepage %d\n", acp );
+            FIXME( "TCI failed on codepage %d\n", ansi_cp.CodePage );
             csi->fs.fsCsb[0] = 0;
         }
     }
@@ -1953,7 +1920,7 @@ static struct gdi_font *get_font_from_handle( DWORD handle )
     struct font_handle_entry *entry = handle_entry( handle );
 
     if (entry) return entry->font;
-    SetLastError( ERROR_INVALID_PARAMETER );
+    RtlSetLastWin32Error( ERROR_INVALID_PARAMETER );
     return NULL;
 }
 
@@ -2075,9 +2042,9 @@ static struct gdi_font *create_gdi_font( const struct gdi_font_face *face, const
     font->ntmFlags = face->ntmFlags;
     font->aa_flags = HIWORD( face->flags );
     if (!family_name) family_name = face->family->family_name;
-    font->otm.otmpFamilyName = (char *)strdupW( family_name );
-    font->otm.otmpStyleName = (char *)strdupW( face->style_name );
-    font->otm.otmpFaceName = (char *)strdupW( face->full_name );
+    font->otm.otmpFamilyName = (char *)wcsdup( family_name );
+    font->otm.otmpStyleName = (char *)wcsdup( face->style_name );
+    font->otm.otmpFaceName = (char *)wcsdup( face->full_name );
     return font;
 }
 
@@ -2495,7 +2462,7 @@ static void create_child_font_list( struct gdi_font *font )
      * if not SYMBOL or OEM then we also get all the fonts for Microsoft
      * Sans Serif.  This is how asian windows get default fallbacks for fonts
      */
-    if (is_dbcs_ansi_cp(get_acp()) && font->charset != SYMBOL_CHARSET && font->charset != OEM_CHARSET &&
+    if (ansi_cp.MaximumCharacterSize == 2 && font->charset != SYMBOL_CHARSET && font->charset != OEM_CHARSET &&
         facename_compare( font_name, microsoft_sans_serifW, -1 ) != 0)
     {
         if ((font_link = find_gdi_font_link( microsoft_sans_serifW )))
@@ -2626,12 +2593,12 @@ static void set_value_key(HKEY hkey, const char *name, const char *value)
     }
 }
 
-static void update_font_association_info(UINT current_ansi_codepage)
+static void update_font_association_info(void)
 {
     static const WCHAR associated_charsetW[] =
         { 'A','s','s','o','c','i','a','t','e','d',' ','C','h','a','r','s','e','t' };
 
-    if (is_dbcs_ansi_cp(current_ansi_codepage))
+    if (ansi_cp.MaximumCharacterSize == 2)
     {
         HKEY hkey;
         if ((hkey = reg_create_key( NULL, font_assoc_keyW, sizeof(font_assoc_keyW), 0, NULL )))
@@ -2640,7 +2607,7 @@ static void update_font_association_info(UINT current_ansi_codepage)
             if ((hsubkey = reg_create_key( hkey, associated_charsetW, sizeof(associated_charsetW),
                                            0, NULL )))
             {
-                switch (current_ansi_codepage)
+                switch (ansi_cp.CodePage)
                 {
                 case 932:
                     set_value_key(hsubkey, "ANSI(00)", "NO");
@@ -2677,7 +2644,7 @@ static void set_multi_value_key( HKEY hkey, const WCHAR *name, const char *value
         reg_delete_value( hkey, name );
 }
 
-static void update_font_system_link_info(UINT current_ansi_codepage)
+static void update_font_system_link_info(void)
 {
     static const char system_link_simplified_chinese[] =
         "SIMSUN.TTC,SimSun\0"
@@ -2711,7 +2678,7 @@ static void update_font_system_link_info(UINT current_ansi_codepage)
         const char *link;
         DWORD len;
 
-        switch (current_ansi_codepage)
+        switch (ansi_cp.CodePage)
         {
         case 932:
             link = system_link_japanese;
@@ -2742,13 +2709,14 @@ static void update_font_system_link_info(UINT current_ansi_codepage)
 
 static void update_codepage( UINT screen_dpi )
 {
+    USHORT utf8_hdr[2] = { 0, CP_UTF8 };
     char value_buffer[FIELD_OFFSET(KEY_VALUE_PARTIAL_INFORMATION, Data[40 * sizeof(WCHAR)])];
     KEY_VALUE_PARTIAL_INFORMATION *info = (void *)value_buffer;
     char cpbuf[40];
     WCHAR cpbufW[40];
     HKEY hkey;
     DWORD size;
-    UINT i, ansi_cp, oem_cp;
+    UINT i;
     DWORD font_dpi = 0;
     BOOL done = FALSE, cp_match = FALSE;
 
@@ -2758,9 +2726,16 @@ static void update_codepage( UINT screen_dpi )
     if (size == sizeof(DWORD) && info->Type == REG_DWORD)
         font_dpi = *(DWORD *)info->Data;
 
-    ansi_cp = get_acp();
-    oem_cp = get_oemcp();
-    sprintf( cpbuf, "%u,%u", ansi_cp, oem_cp );
+    RtlInitCodePageTable( utf8_hdr, &utf8_cp );
+    if (NtCurrentTeb()->Peb->AnsiCodePageData)
+        RtlInitCodePageTable( NtCurrentTeb()->Peb->AnsiCodePageData, &ansi_cp );
+    else
+        ansi_cp = utf8_cp;
+    if (NtCurrentTeb()->Peb->OemCodePageData)
+        RtlInitCodePageTable( NtCurrentTeb()->Peb->OemCodePageData, &oem_cp );
+    else
+        oem_cp = utf8_cp;
+    sprintf( cpbuf, "%u,%u", ansi_cp.CodePage, oem_cp.CodePage );
     asciiz_to_unicode( cpbufW, cpbuf );
 
     if (query_reg_ascii_value( wine_fonts_key, "Codepages", info, sizeof(value_buffer) ))
@@ -2768,17 +2743,18 @@ static void update_codepage( UINT screen_dpi )
         cp_match = !wcscmp( (const WCHAR *)info->Data, cpbufW );
         if (cp_match && screen_dpi == font_dpi) return;  /* already set correctly */
         TRACE( "updating registry, codepages/logpixels changed %s/%u -> %u,%u/%u\n",
-               debugstr_w((const WCHAR *)info->Data), font_dpi, ansi_cp, oem_cp, screen_dpi );
+               debugstr_w((const WCHAR *)info->Data), font_dpi, ansi_cp.CodePage, oem_cp.CodePage, screen_dpi );
     }
     else TRACE("updating registry, codepages/logpixels changed none -> %u,%u/%u\n",
-               ansi_cp, oem_cp, screen_dpi);
+               ansi_cp.CodePage, oem_cp.CodePage, screen_dpi);
 
     set_reg_ascii_value( wine_fonts_key, "Codepages", cpbuf );
     set_reg_value( wine_fonts_key, log_pixelsW, REG_DWORD, &screen_dpi, sizeof(screen_dpi) );
 
     for (i = 0; i < ARRAY_SIZE(nls_update_font_list); i++)
     {
-        if (nls_update_font_list[i].ansi_cp == ansi_cp && nls_update_font_list[i].oem_cp == oem_cp)
+        if (nls_update_font_list[i].ansi_cp == ansi_cp.CodePage &&
+            nls_update_font_list[i].oem_cp == oem_cp.CodePage)
         {
             HKEY software_hkey;
             if ((software_hkey = reg_create_key( NULL, software_config_keyW,
@@ -2846,14 +2822,14 @@ static void update_codepage( UINT screen_dpi )
         }
     }
     if (!done)
-        FIXME("there is no font defaults for codepages %u,%u\n", ansi_cp, oem_cp);
+        FIXME("there is no font defaults for codepages %u,%u\n", ansi_cp.CodePage, oem_cp.CodePage);
 
     /* update locale dependent font association info and font system link info in registry.
        update only when codepages changed, not logpixels. */
     if (!cp_match)
     {
-        update_font_association_info(ansi_cp);
-        update_font_system_link_info(ansi_cp);
+        update_font_association_info();
+        update_font_system_link_info();
     }
 }
 
@@ -2899,11 +2875,11 @@ struct enum_charset
     DWORD script;
 };
 
-static BOOL is_complex_script_ansi_cp( UINT ansi_cp )
+static BOOL is_complex_script_ansi_cp(void)
 {
-    return (ansi_cp == 874 /* Thai */
-            || ansi_cp == 1255 /* Hebrew */
-            || ansi_cp == 1256 /* Arabic */
+    return (ansi_cp.CodePage == 874 /* Thai */
+            || ansi_cp.CodePage == 1255 /* Hebrew */
+            || ansi_cp.CodePage == 1256 /* Arabic */
         );
 }
 
@@ -2930,12 +2906,11 @@ static DWORD create_enum_charset_list(DWORD charset, struct enum_charset *list)
     }
     else /* charset is DEFAULT_CHARSET or invalid. */
     {
-        int acp = get_acp();
         DWORD mask = 0;
 
         /* Set the current codepage's charset as the first element. */
-        if (!is_complex_script_ansi_cp(acp) &&
-            translate_charset_info( (DWORD *)(INT_PTR)acp, &csi, TCI_SRCCODEPAGE ) &&
+        if (!is_complex_script_ansi_cp() &&
+            translate_charset_info( (DWORD *)(INT_PTR)ansi_cp.CodePage, &csi, TCI_SRCCODEPAGE ) &&
             csi.fs.fsCsb[0] != 0)
         {
             list->mask    = csi.fs.fsCsb[0];
@@ -3230,10 +3205,12 @@ static UINT get_glyph_index_symbol( struct gdi_font *font, UINT glyph )
 CPTABLEINFO *get_cptable( WORD cp )
 {
     static CPTABLEINFO tables[100];
-    CPTABLEINFO *info;
     unsigned int i;
     USHORT *ptr;
     SIZE_T size;
+
+    if (cp == CP_ACP) return &ansi_cp;
+    if (cp == CP_UTF8) return &utf8_cp;
 
     for (i = 0; i < ARRAY_SIZE(tables) && tables[i].CodePage; i++)
         if (tables[i].CodePage == cp) return &tables[i];
@@ -3243,96 +3220,54 @@ CPTABLEINFO *get_cptable( WORD cp )
         ERR( "too many code pages\n" );
         return NULL;
     }
-
-    info = &tables[i];
-    info->CodePage             = ptr[1];
-    info->MaximumCharacterSize = ptr[2];
-    info->DefaultChar          = ptr[3];
-    info->UniDefaultChar       = ptr[4];
-    info->TransDefaultChar     = ptr[5];
-    info->TransUniDefaultChar  = ptr[6];
-    memcpy( info->LeadByte, ptr + 7, sizeof(info->LeadByte) );
-    ptr += ptr[0];
-
-    info->WideCharTable = ptr + ptr[0] + 1;
-    info->MultiByteTable = ++ptr;
-    ptr += 256;
-    if (*ptr++) ptr += 256;  /* glyph table */
-    info->DBCSRanges = ptr;
-    if (*ptr)  /* dbcs ranges */
-    {
-        info->DBCSCodePage = 1;
-        info->DBCSOffsets  = ptr + 1;
-    }
-    else
-    {
-        info->DBCSCodePage = 0;
-        info->DBCSOffsets  = NULL;
-    }
-
-    return info;
+    RtlInitCodePageTable( ptr, &tables[i] );
+    return &tables[i];
 }
 
 DWORD win32u_wctomb( CPTABLEINFO *info, char *dst, DWORD dstlen, const WCHAR *src, DWORD srclen )
 {
-    DWORD i, ret;
+    DWORD ret;
 
-    if (!info && !(info = get_cptable( get_acp() ))) return 0;
+    if (info->CodePage == CP_UTF8)
+        RtlUnicodeToUTF8N( dst, dstlen, &ret, src, srclen * sizeof(WCHAR) );
+    else
+        RtlUnicodeToCustomCPN( info, dst, dstlen, &ret, src, srclen * sizeof(WCHAR) );
 
-    srclen /= sizeof(WCHAR);
-    if (info->DBCSCodePage)
+    return ret;
+}
+
+DWORD win32u_wctomb_size( CPTABLEINFO *info, const WCHAR *src, DWORD srclen )
+{
+    DWORD ret;
+
+    if (info->CodePage == CP_UTF8)
+    {
+        RtlUnicodeToUTF8N( NULL, 0, &ret, src, srclen * sizeof(WCHAR) );
+    }
+    else if(info->DBCSCodePage)
     {
         WCHAR *uni2cp = info->WideCharTable;
-
-        for (i = dstlen; srclen && i; i--, srclen--, src++)
-        {
-            if (uni2cp[*src] & 0xff00)
-            {
-                if (i == 1) break;  /* do not output a partial char */
-                i--;
-                *dst++ = uni2cp[*src] >> 8;
-            }
-            *dst++ = (char)uni2cp[*src];
-        }
-        ret = dstlen - i;
+        for (ret = srclen; srclen; srclen--, src++)
+            if (uni2cp[*src] & 0xff00) ret++;
     }
     else
     {
-        char *uni2cp = info->WideCharTable;
-        ret = min( srclen, dstlen );
-        for (i = 0; i < ret; i++) dst[i] = uni2cp[src[i]];
+        ret = srclen;
     }
+
     return ret;
 }
 
 DWORD win32u_mbtowc( CPTABLEINFO *info, WCHAR *dst, DWORD dstlen, const char *src, DWORD srclen )
 {
-    DWORD i, ret;
+    DWORD ret;
 
-    if (!info && !(info = get_cptable( get_acp() ))) return 0;
-
-    dstlen /= sizeof(WCHAR);
-    if (info->DBCSOffsets)
-    {
-        for (i = dstlen; srclen && i; i--, srclen--, src++, dst++)
-        {
-            USHORT off = info->DBCSOffsets[(unsigned char)*src];
-            if (off && srclen > 1)
-            {
-                src++;
-                srclen--;
-                *dst = info->DBCSOffsets[off + (unsigned char)*src];
-            }
-            else *dst = info->MultiByteTable[(unsigned char)*src];
-        }
-        ret = dstlen - i;
-    }
+    if (info->CodePage == CP_UTF8)
+        RtlUTF8ToUnicodeN( dst, dstlen * sizeof(WCHAR), &ret, src, srclen );
     else
-    {
-        ret = min( srclen, dstlen );
-        for (i = 0; i < ret; i++) dst[i] = info->MultiByteTable[(unsigned char)src[i]];
-    }
-    return ret * sizeof(WCHAR);
+        RtlCustomCPToUnicodeN( info, dst, dstlen * sizeof(WCHAR), &ret, src, srclen );
+
+    return ret / sizeof(WCHAR);
 }
 
 static BOOL wc_to_index( UINT cp, WCHAR wc, unsigned char *dst, BOOL allow_default )
@@ -3341,7 +3276,18 @@ static BOOL wc_to_index( UINT cp, WCHAR wc, unsigned char *dst, BOOL allow_defau
 
     if (!(info = get_cptable( cp ))) return FALSE;
 
-    if (info->DBCSCodePage)
+    if (info->CodePage == CP_UTF8)
+    {
+        if (wc < 0x80)
+        {
+            *dst = wc;
+            return TRUE;
+        }
+        if (!allow_default) return FALSE;
+        *dst = info->DefaultChar;
+        return TRUE;
+    }
+    else if (info->DBCSCodePage)
     {
         WCHAR *uni2cp = info->WideCharTable;
         if (uni2cp[wc] & 0xff00) return FALSE;
@@ -3447,7 +3393,7 @@ static DWORD get_glyph_outline( struct gdi_font *font, UINT glyph, UINT format,
     ret = font_funcs->get_glyph_outline( font, index, format, &gm, &abc, buflen, buf, mat, tategaki );
     if (ret == GDI_ERROR) return ret;
 
-    if ((format == GGO_METRICS || format == GGO_BITMAP || format ==  WINE_GGO_GRAY16_BITMAP) && !mat)
+    if (format == GGO_METRICS && !mat)
         set_gdi_font_glyph_metrics( font, index, &gm, &abc );
 
 done:
@@ -4052,7 +3998,7 @@ static void get_nearest_charset( const WCHAR *family_name, struct gdi_font_face 
 
     int i;
 
-    if (translate_charset_info( (DWORD*)(INT_PTR)get_acp(), csi, TCI_SRCCODEPAGE ))
+    if (translate_charset_info( (DWORD*)(INT_PTR)ansi_cp.CodePage, csi, TCI_SRCCODEPAGE ))
     {
         const struct gdi_font_link *font_link;
 
@@ -4072,7 +4018,7 @@ static void get_nearest_charset( const WCHAR *family_name, struct gdi_font_face 
 
     FIXME("returning DEFAULT_CHARSET face->fs.fsCsb[0] = %08x file = %s\n",
 	  face->fs.fsCsb[0], debugstr_w(face->file));
-    csi->ciACP = get_acp();
+    csi->ciACP = ansi_cp.CodePage;
     csi->ciCharset = DEFAULT_CHARSET;
 }
 
@@ -4350,8 +4296,10 @@ const struct gdi_dc_funcs font_driver =
     NULL,                           /* pStrokePath */
     NULL,                           /* pUnrealizePalette */
     NULL,                           /* pD3DKMTCheckVidPnExclusiveOwnership */
+    NULL,                           /* pD3DKMTCloseAdapter */
+    NULL,                           /* pD3DKMTOpenAdapterFromLuid */
+    NULL,                           /* pD3DKMTQueryVideoMemoryInfo */
     NULL,                           /* pD3DKMTSetVidPnSourceOwner */
-    NULL,                           /* wine_get_wgl_driver */
     GDI_PRIORITY_FONT_DRV           /* priority */
 };
 
@@ -4558,26 +4506,35 @@ UINT WINAPI NtGdiGetTextCharsetInfo( HDC hdc, FONTSIGNATURE *fs, DWORD flags )
 /***********************************************************************
  *           NtGdiHfontCreate   (win32u.@)
  */
-HFONT WINAPI NtGdiHfontCreate( const ENUMLOGFONTEXDVW *penumex, ULONG size, ULONG type,
+HFONT WINAPI NtGdiHfontCreate( const void *logfont, ULONG size, ULONG type,
                                ULONG flags, void *data )
 {
     HFONT hFont;
     FONTOBJ *fontPtr;
     const LOGFONTW *plf;
 
-    if (!penumex) return 0;
+    if (!logfont) return 0;
 
-    if (penumex->elfEnumLogfontEx.elfFullName[0] ||
-        penumex->elfEnumLogfontEx.elfStyle[0] ||
-        penumex->elfEnumLogfontEx.elfScript[0])
+    if (size == sizeof(ENUMLOGFONTEXDVW) || size == sizeof(ENUMLOGFONTEXW))
     {
-        FIXME("some fields ignored. fullname=%s, style=%s, script=%s\n",
-            debugstr_w(penumex->elfEnumLogfontEx.elfFullName),
-            debugstr_w(penumex->elfEnumLogfontEx.elfStyle),
-            debugstr_w(penumex->elfEnumLogfontEx.elfScript));
-    }
+        const ENUMLOGFONTEXW *lfex = logfont;
 
-    plf = &penumex->elfEnumLogfontEx.elfLogFont;
+        if (lfex->elfFullName[0] || lfex->elfStyle[0] || lfex->elfScript[0])
+        {
+            FIXME( "some fields ignored. fullname=%s, style=%s, script=%s\n",
+                   debugstr_w( lfex->elfFullName ), debugstr_w( lfex->elfStyle ),
+                   debugstr_w( lfex->elfScript ));
+        }
+
+        plf = &lfex->elfLogFont;
+    }
+    else if (size != sizeof(LOGFONTW))
+    {
+        RtlSetLastWin32Error( ERROR_INVALID_PARAMETER );
+        return 0;
+    }
+    else plf = logfont;
+
     if (!(fontPtr = malloc( sizeof(*fontPtr) ))) return 0;
 
     fontPtr->logfont = *plf;
@@ -4663,10 +4620,10 @@ static void update_font_code_page( DC *dc, HANDLE font )
     else {
         switch(charset) {
         case OEM_CHARSET:
-            dc->attr->font_code_page = get_oemcp();
+            dc->attr->font_code_page = oem_cp.CodePage;
             break;
         case DEFAULT_CHARSET:
-            dc->attr->font_code_page = get_acp();
+            dc->attr->font_code_page = ansi_cp.CodePage;
             break;
 
         case VISCII_CHARSET:
@@ -5698,7 +5655,7 @@ BOOL WINAPI NtGdiExtTextOutW( HDC hdc, INT x, INT y, UINT flags, const RECT *lpr
                 text_box.bottom = y + tm.tmDescent;
 
                 if (flags & ETO_CLIPPED) intersect_rect( &text_box, &text_box, &rc );
-                if (!is_rect_empty( &text_box ))
+                if (!IsRectEmpty( &text_box ))
                     physdev->funcs->pExtTextOut( physdev, 0, 0, ETO_OPAQUE, &text_box, NULL, 0, NULL );
             }
         }
@@ -5717,7 +5674,7 @@ done:
         UINT size = NtGdiGetOutlineTextMetricsInternalW( hdc, 0, NULL, 0 );
         OUTLINETEXTMETRICW* otm = NULL;
         POINT pts[5];
-        HPEN hpen = NtGdiSelectPen( hdc, get_stock_object(NULL_PEN) );
+        HPEN hpen = NtGdiSelectPen( hdc, GetStockObject(NULL_PEN) );
         HBRUSH hbrush = NtGdiCreateSolidBrush( dc->attr->text_color, NULL );
 
         hbrush = NtGdiSelectBrush(hdc, hbrush);
@@ -5919,7 +5876,7 @@ BOOL CDECL __wine_get_file_outline_text_metric( const WCHAR *path, OUTLINETEXTME
 
 done:
     if (font) free_gdi_font( font );
-    SetLastError( ERROR_INVALID_PARAMETER );
+    RtlSetLastWin32Error( ERROR_INVALID_PARAMETER );
     return FALSE;
 }
 
@@ -5936,7 +5893,7 @@ DWORD WINAPI NtGdiGetKerningPairs( HDC hdc, DWORD count, KERNINGPAIR *kern_pair 
 
     if (!count && kern_pair)
     {
-        SetLastError( ERROR_INVALID_PARAMETER );
+        RtlSetLastWin32Error( ERROR_INVALID_PARAMETER );
         return 0;
     }
 
@@ -5961,7 +5918,7 @@ DWORD WINAPI NtGdiGetKerningPairs( HDC hdc, DWORD count, KERNINGPAIR *kern_pair 
  *
  * NOTES
  *
- * Calls SetLastError()
+ * Calls RtlSetLastWin32Error()
  *
  */
 DWORD WINAPI NtGdiGetFontData( HDC hdc, DWORD table, DWORD offset, void *buffer, DWORD length )
@@ -6431,7 +6388,7 @@ HANDLE WINAPI NtGdiAddFontMemResourceEx( void *ptr, DWORD size, void *dv, ULONG 
 
     if (!ptr || !size || !count)
     {
-        SetLastError(ERROR_INVALID_PARAMETER);
+        RtlSetLastWin32Error(ERROR_INVALID_PARAMETER);
         return NULL;
     }
     if (!font_funcs) return NULL;
@@ -6586,7 +6543,7 @@ BOOL WINAPI NtGdiGetFontFileData( DWORD instance_id, DWORD file_index, UINT64 *o
         if (size != GDI_ERROR && size >= buff_size && *offset <= size - buff_size)
             ret = font_funcs->get_font_data( font, tag, *offset, buff, buff_size ) != GDI_ERROR;
         else
-            SetLastError( ERROR_INVALID_PARAMETER );
+            RtlSetLastWin32Error( ERROR_INVALID_PARAMETER );
     }
     pthread_mutex_unlock( &font_lock );
     return ret;
@@ -6614,7 +6571,7 @@ BOOL WINAPI NtGdiGetFontFileInfo( DWORD instance_id, DWORD file_index, struct fo
             lstrcpyW( info->path, font->file );
             ret = TRUE;
         }
-        else SetLastError( ERROR_INSUFFICIENT_BUFFER );
+        else RtlSetLastWin32Error( ERROR_INSUFFICIENT_BUFFER );
     }
 
     pthread_mutex_unlock( &font_lock );
@@ -6642,5 +6599,29 @@ BOOL WINAPI NtGdiGetCharWidthInfo( HDC hdc, struct char_width_info *info )
         info->rsb = width_to_LP( dc, info->rsb );
     }
     release_dc_ptr(dc);
+    return ret;
+}
+
+/***********************************************************************
+ *           DrawTextW    (win32u.so)
+ */
+INT WINAPI DrawTextW( HDC hdc, const WCHAR *str, INT count, RECT *rect, UINT flags )
+{
+    struct draw_text_params *params;
+    ULONG ret_len, size;
+    void *ret_ptr;
+    int ret;
+
+    if (count == -1) count = wcslen( str );
+    size = FIELD_OFFSET( struct draw_text_params, str[count] );
+    if (!(params = malloc( size ))) return 0;
+    params->hdc = hdc;
+    params->rect = *rect;
+    params->ret_rect = rect;
+    params->flags = flags;
+    if (count) memcpy( params->str, str, count * sizeof(WCHAR) );
+    ret = KeUserModeCallback( NtUserDrawText, params, size, &ret_ptr, &ret_len );
+    if (ret_len == sizeof(*rect)) *rect = *(const RECT *)ret_ptr;
+    free( params );
     return ret;
 }

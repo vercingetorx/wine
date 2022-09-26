@@ -193,7 +193,8 @@ static BOOL WCMD_ask_confirm (const WCHAR *message, BOOL showSureText,
       if (showSureText)
         WCMD_output_asis (confirm);
       WCMD_output_asis (options);
-      WCMD_ReadFile(GetStdHandle(STD_INPUT_HANDLE), answer, ARRAY_SIZE(answer), &count);
+      if (!WCMD_ReadFile(GetStdHandle(STD_INPUT_HANDLE), answer, ARRAY_SIZE(answer), &count))
+          return FALSE;
       answer[0] = towupper(answer[0]);
       if (answer[0] == Ybuffer[0])
         return TRUE;
@@ -344,7 +345,7 @@ void WCMD_choice (const WCHAR * args) {
     }
 
     if (opt_timeout)
-        WINE_FIXME("timeout not supported: %c,%d\n", opt_default, opt_timeout);
+        WINE_FIXME("timeout not supported: %c,%ld\n", opt_default, opt_timeout);
 
     if (have_console)
         SetConsoleMode(GetStdHandle(STD_INPUT_HANDLE), 0);
@@ -383,7 +384,12 @@ void WCMD_choice (const WCHAR * args) {
 
         /* FIXME: Add support for option /T */
         answer[1] = 0; /* terminate single character string */
-        WCMD_ReadFile(GetStdHandle(STD_INPUT_HANDLE), answer, 1, &count);
+        if (!WCMD_ReadFile(GetStdHandle(STD_INPUT_HANDLE), answer, 1, &count))
+        {
+            heap_free(my_command);
+            errorlevel = 0;
+            return;
+        }
 
         if (!opt_s)
             answer[0] = towupper(answer[0]);
@@ -396,7 +402,7 @@ void WCMD_choice (const WCHAR * args) {
                 SetConsoleMode(GetStdHandle(STD_INPUT_HANDLE), oldmode);
 
             errorlevel = (ptr - opt_c) + 1;
-            WINE_TRACE("answer: %d\n", errorlevel);
+            WINE_TRACE("answer: %ld\n", errorlevel);
             heap_free(my_command);
             return;
         }
@@ -427,12 +433,12 @@ static BOOL WCMD_AppendEOF(WCHAR *filename)
                     OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
 
     if (h == INVALID_HANDLE_VALUE) {
-      WINE_ERR("Failed to open %s (%d)\n", wine_dbgstr_w(filename), GetLastError());
+      WINE_ERR("Failed to open %s (%ld)\n", wine_dbgstr_w(filename), GetLastError());
       return FALSE;
     } else {
       SetFilePointer (h, 0, NULL, FILE_END);
       if (!WriteFile(h, &eof, 1, &bytes_written, NULL)) {
-        WINE_ERR("Failed to append EOF to %s (%d)\n", wine_dbgstr_w(filename), GetLastError());
+        WINE_ERR("Failed to append EOF to %s (%ld)\n", wine_dbgstr_w(filename), GetLastError());
         CloseHandle(h);
         return FALSE;
       }
@@ -491,7 +497,7 @@ static BOOL WCMD_ManualCopy(WCHAR *srcname, WCHAR *dstname, BOOL ascii, BOOL app
     in  = CreateFileW(srcname, GENERIC_READ, 0, NULL,
                       OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
     if (in == INVALID_HANDLE_VALUE) {
-      WINE_ERR("Failed to open %s (%d)\n", wine_dbgstr_w(srcname), GetLastError());
+      WINE_ERR("Failed to open %s (%ld)\n", wine_dbgstr_w(srcname), GetLastError());
       return FALSE;
     }
 
@@ -499,7 +505,7 @@ static BOOL WCMD_ManualCopy(WCHAR *srcname, WCHAR *dstname, BOOL ascii, BOOL app
     out = CreateFileW(dstname, GENERIC_WRITE, 0, NULL,
                       append?OPEN_EXISTING:CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
     if (out == INVALID_HANDLE_VALUE) {
-      WINE_ERR("Failed to open %s (%d)\n", wine_dbgstr_w(dstname), GetLastError());
+      WINE_ERR("Failed to open %s (%ld)\n", wine_dbgstr_w(dstname), GetLastError());
       CloseHandle(in);
       return FALSE;
     }
@@ -526,12 +532,12 @@ static BOOL WCMD_ManualCopy(WCHAR *srcname, WCHAR *dstname, BOOL ascii, BOOL app
         if (bytesread) {
           ok = WriteFile(out, buffer, bytesread, &byteswritten, NULL);
           if (!ok || byteswritten != bytesread) {
-            WINE_ERR("Unexpected failure writing to %s, rc=%d\n",
+            WINE_ERR("Unexpected failure writing to %s, rc=%ld\n",
                      wine_dbgstr_w(dstname), GetLastError());
           }
         }
       } else {
-        WINE_ERR("Unexpected failure reading from %s, rc=%d\n",
+        WINE_ERR("Unexpected failure reading from %s, rc=%ld\n",
                  wine_dbgstr_w(srcname), GetLastError());
       }
     } while (ok && bytesread > 0);
@@ -1349,6 +1355,13 @@ static BOOL WCMD_delete_one (const WCHAR *thisArg) {
             DIRECTORY_STACK *nextDir;
             WCHAR subParm[MAX_PATH];
 
+            if (wcslen(thisDir) + wcslen(fd.cFileName) + 1 + wcslen(fname) + wcslen(ext) >= MAX_PATH)
+            {
+                WINE_TRACE("Skipping path too long %s%s\\%s%s\n",
+                           debugstr_w(thisDir), debugstr_w(fd.cFileName),
+                           debugstr_w(fname), debugstr_w(ext));
+                continue;
+            }
             /* Work out search parameter in sub dir */
             lstrcpyW (subParm, thisDir);
             lstrcatW (subParm, fd.cFileName);
@@ -1755,7 +1768,14 @@ static void WCMD_add_dirstowalk(DIRECTORY_STACK *dirsToWalk) {
           (lstrcmpW(fd.cFileName, L"..") != 0) && (lstrcmpW(fd.cFileName, L".") != 0))
       {
         /* Allocate memory, add to list */
-        DIRECTORY_STACK *toWalk = heap_xalloc(sizeof(DIRECTORY_STACK));
+        DIRECTORY_STACK *toWalk;
+        if (wcslen(dirsToWalk->dirName) + 1 + wcslen(fd.cFileName) >= MAX_PATH)
+        {
+            WINE_TRACE("Skipping too long path %s\\%s\n",
+                       debugstr_w(dirsToWalk->dirName), debugstr_w(fd.cFileName));
+            continue;
+        }
+        toWalk = heap_xalloc(sizeof(DIRECTORY_STACK));
         WINE_TRACE("(%p->%p)\n", remainingDirs, remainingDirs->next);
         toWalk->next = remainingDirs->next;
         remainingDirs->next = toWalk;
@@ -2315,6 +2335,12 @@ void WCMD_for (WCHAR *p, CMD_LIST **cmdList) {
                       WINE_TRACE("Processing FOR filename %s\n", wine_dbgstr_w(fd.cFileName));
 
                       if (doRecurse) {
+                          if (wcslen(dirsToWalk->dirName) + 1 + wcslen(fd.cFileName) >= MAX_PATH)
+                          {
+                              WINE_TRACE("Skipping too long path %s\\%s\n",
+                                         debugstr_w(dirsToWalk->dirName), debugstr_w(fd.cFileName));
+                              continue;
+                          }
                           lstrcpyW(fullitem, dirsToWalk->dirName);
                           lstrcatW(fullitem, L"\\");
                           lstrcatW(fullitem, fd.cFileName);
@@ -2442,7 +2468,7 @@ void WCMD_for (WCHAR *p, CMD_LIST **cmdList) {
     if (useNumbers) {
         WCHAR thisNum[20];
 
-        WINE_TRACE("FOR /L provided range from %d to %d step %d\n",
+        WINE_TRACE("FOR /L provided range from %ld to %ld step %ld\n",
                    numbers[0], numbers[2], numbers[1]);
         for (i=numbers[0];
              (numbers[1]<0)? i>=numbers[2] : i<=numbers[2];
@@ -3506,8 +3532,8 @@ void WCMD_setshow_date (void) {
       WCMD_output (WCMD_LoadMessage(WCMD_CURRENTDATE), curdate);
       if (wcsstr(quals, L"/T") == NULL) {
         WCMD_output (WCMD_LoadMessage(WCMD_NEWDATE));
-        WCMD_ReadFile(GetStdHandle(STD_INPUT_HANDLE), buffer, ARRAY_SIZE(buffer), &count);
-        if (count > 2) {
+        if (WCMD_ReadFile(GetStdHandle(STD_INPUT_HANDLE), buffer, ARRAY_SIZE(buffer), &count) &&
+            count > 2) {
           WCMD_output_stderr (WCMD_LoadMessage(WCMD_NYI));
         }
       }
@@ -4142,8 +4168,7 @@ void WCMD_setshow_env (WCHAR *s) {
     if (*p) WCMD_output_asis(p);
 
     /* Read the reply */
-    WCMD_ReadFile(GetStdHandle(STD_INPUT_HANDLE), string, ARRAY_SIZE(string), &count);
-    if (count > 1) {
+    if (WCMD_ReadFile(GetStdHandle(STD_INPUT_HANDLE), string, ARRAY_SIZE(string), &count) && count > 1) {
       string[count-1] = '\0'; /* ReadFile output is not null-terminated! */
       if (string[count-2] == '\r') string[count-2] = '\0'; /* Under Windoze we get CRLF! */
       WINE_TRACE("set /p: Setting var '%s' to '%s'\n", wine_dbgstr_w(s),
@@ -4295,8 +4320,8 @@ void WCMD_setshow_time (void) {
       WCMD_output (WCMD_LoadMessage(WCMD_CURRENTTIME), curtime);
       if (wcsstr(quals, L"/T") == NULL) {
         WCMD_output (WCMD_LoadMessage(WCMD_NEWTIME));
-        WCMD_ReadFile(GetStdHandle(STD_INPUT_HANDLE), buffer, ARRAY_SIZE(buffer), &count);
-        if (count > 2) {
+        if (WCMD_ReadFile(GetStdHandle(STD_INPUT_HANDLE), buffer, ARRAY_SIZE(buffer), &count) &&
+            count > 2) {
           WCMD_output_stderr (WCMD_LoadMessage(WCMD_NYI));
         }
       }
@@ -4717,8 +4742,8 @@ int WCMD_volume(BOOL set_label, const WCHAR *path)
     	HIWORD(serial), LOWORD(serial));
   if (set_label) {
     WCMD_output (WCMD_LoadMessage(WCMD_VOLUMEPROMPT));
-    WCMD_ReadFile(GetStdHandle(STD_INPUT_HANDLE), string, ARRAY_SIZE(string), &count);
-    if (count > 1) {
+    if (WCMD_ReadFile(GetStdHandle(STD_INPUT_HANDLE), string, ARRAY_SIZE(string), &count) &&
+        count > 1) {
       string[count-1] = '\0';		/* ReadFile output is not null-terminated! */
       if (string[count-2] == '\r') string[count-2] = '\0'; /* Under Windoze we get CRLF! */
     }
@@ -4775,7 +4800,7 @@ void WCMD_assoc (const WCHAR *args, BOOL assoc) {
 
     /* Open a key to HKEY_CLASSES_ROOT for enumerating */
     if (RegOpenKeyExW(HKEY_CLASSES_ROOT, L"", 0, accessOptions, &key) != ERROR_SUCCESS) {
-      WINE_FIXME("Unexpected failure opening HKCR key: %d\n", GetLastError());
+      WINE_FIXME("Unexpected failure opening HKCR key: %ld\n", GetLastError());
       return;
     }
 

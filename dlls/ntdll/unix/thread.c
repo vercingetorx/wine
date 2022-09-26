@@ -70,10 +70,7 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(thread);
 WINE_DECLARE_DEBUG_CHANNEL(seh);
-
-#ifndef PTHREAD_STACK_MIN
-#define PTHREAD_STACK_MIN 16384
-#endif
+WINE_DECLARE_DEBUG_CHANNEL(threadname);
 
 static int nb_threads = 1;
 
@@ -1110,12 +1107,12 @@ void *get_cpu_area( USHORT machine )
     switch (cpu->Machine)
     {
     case IMAGE_FILE_MACHINE_I386: align = TYPE_ALIGNMENT(I386_CONTEXT); break;
-    case IMAGE_FILE_MACHINE_AMD64: align = TYPE_ALIGNMENT(ARM_CONTEXT); break;
-    case IMAGE_FILE_MACHINE_ARMNT: align = TYPE_ALIGNMENT(AMD64_CONTEXT); break;
+    case IMAGE_FILE_MACHINE_AMD64: align = TYPE_ALIGNMENT(AMD64_CONTEXT); break;
+    case IMAGE_FILE_MACHINE_ARMNT: align = TYPE_ALIGNMENT(ARM_CONTEXT); break;
     case IMAGE_FILE_MACHINE_ARM64: align = TYPE_ALIGNMENT(ARM64_NT_CONTEXT); break;
     default: return NULL;
     }
-    return (void *)(((ULONG_PTR)(cpu + 1) + align - 1) & ~(align - 1));
+    return (void *)(((ULONG_PTR)(cpu + 1) + align - 1) & ~((ULONG_PTR)align - 1));
 }
 
 
@@ -1156,7 +1153,8 @@ NTSTATUS init_thread_stack( TEB *teb, ULONG_PTR zero_bits, SIZE_T reserve_size, 
 
 #ifdef _WIN64
         /* 32-bit stack */
-        if ((status = virtual_alloc_thread_stack( &stack, zero_bits, reserve_size, commit_size, 0 )))
+        if ((status = virtual_alloc_thread_stack( &stack, zero_bits ? zero_bits : 0x7fffffff,
+                                                  reserve_size, commit_size, 0 )))
             return status;
         wow_teb->Tib.StackBase = PtrToUlong( stack.StackBase );
         wow_teb->Tib.StackLimit = PtrToUlong( stack.StackLimit );
@@ -1613,20 +1611,22 @@ NTSTATUS WINAPI NtAlertThread( HANDLE handle )
 NTSTATUS WINAPI NtTerminateThread( HANDLE handle, LONG exit_code )
 {
     NTSTATUS ret;
-    BOOL self = (handle == GetCurrentThread());
+    BOOL self;
 
-    if (!self || exit_code)
+    SERVER_START_REQ( terminate_thread )
     {
-        SERVER_START_REQ( terminate_thread )
-        {
-            req->handle    = wine_server_obj_handle( handle );
-            req->exit_code = exit_code;
-            ret = wine_server_call( req );
-            self = !ret && reply->self;
-        }
-        SERVER_END_REQ;
+        req->handle    = wine_server_obj_handle( handle );
+        req->exit_code = exit_code;
+        ret = wine_server_call( req );
+        self = !ret && reply->self;
     }
-    if (self) exit_thread( exit_code );
+    SERVER_END_REQ;
+
+    if (self)
+    {
+        server_select( NULL, 0, SELECT_INTERRUPTIBLE, 0, NULL, NULL );
+        exit_thread( exit_code );
+    }
     return ret;
 }
 
@@ -2233,11 +2233,18 @@ NTSTATUS WINAPI NtSetInformationThread( HANDLE handle, THREADINFOCLASS class,
     case ThreadNameInformation:
     {
         const THREAD_NAME_INFORMATION *info = data;
+        THREAD_BASIC_INFORMATION tbi;
 
         if (length != sizeof(*info)) return STATUS_INFO_LENGTH_MISMATCH;
         if (!info) return STATUS_ACCESS_VIOLATION;
-        if (info->ThreadName.Length != info->ThreadName.MaximumLength) return STATUS_INVALID_PARAMETER;
         if (info->ThreadName.Length && !info->ThreadName.Buffer) return STATUS_ACCESS_VIOLATION;
+
+        if (handle == GetCurrentThread())
+            WARN_(threadname)( "Thread renamed to %s\n", debugstr_us(&info->ThreadName) );
+        else if (!NtQueryInformationThread( handle, ThreadBasicInformation, &tbi, sizeof(tbi), NULL ))
+            WARN_(threadname)( "Thread ID %04x renamed to %s\n", HandleToULong( tbi.ClientId.UniqueThread ), debugstr_us(&info->ThreadName) );
+        else
+            WARN_(threadname)( "Thread handle %p renamed to %s\n", handle, debugstr_us(&info->ThreadName) );
 
         SERVER_START_REQ( set_thread_info )
         {
@@ -2257,6 +2264,12 @@ NTSTATUS WINAPI NtSetInformationThread( HANDLE handle, THREADINFOCLASS class,
         if (length != sizeof(BOOLEAN)) return STATUS_INFO_LENGTH_MISMATCH;
         if (!data) return STATUS_ACCESS_VIOLATION;
         FIXME( "ThreadEnableAlignmentFaultFixup stub!\n" );
+        return STATUS_SUCCESS;
+
+    case ThreadPowerThrottlingState:
+        if (length != sizeof(THREAD_POWER_THROTTLING_STATE)) return STATUS_INFO_LENGTH_MISMATCH;
+        if (!data) return STATUS_ACCESS_VIOLATION;
+        FIXME( "ThreadPowerThrottling stub!\n" );
         return STATUS_SUCCESS;
 
     case ThreadBasicInformation:

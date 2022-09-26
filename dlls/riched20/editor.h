@@ -187,7 +187,7 @@ int ME_GetSelection(ME_TextEditor *editor, ME_Cursor **from, ME_Cursor **to) DEC
 BOOL ME_IsSelection(ME_TextEditor *editor) DECLSPEC_HIDDEN;
 void ME_DeleteSelection(ME_TextEditor *editor) DECLSPEC_HIDDEN;
 void ME_SendSelChange(ME_TextEditor *editor) DECLSPEC_HIDDEN;
-void editor_insert_oleobj( ME_TextEditor *editor, const REOBJECT *reo ) DECLSPEC_HIDDEN;
+HRESULT editor_insert_oleobj( ME_TextEditor *editor, const REOBJECT *reo ) DECLSPEC_HIDDEN;
 BOOL ME_InternalDeleteText(ME_TextEditor *editor, ME_Cursor *start, int nChars, BOOL bForce) DECLSPEC_HIDDEN;
 int ME_GetTextLength(ME_TextEditor *editor) DECLSPEC_HIDDEN;
 int ME_GetTextLengthEx(ME_TextEditor *editor, const GETTEXTLENGTHEX *how) DECLSPEC_HIDDEN;
@@ -393,6 +393,13 @@ void ME_CommitCoalescingUndo(ME_TextEditor *editor) DECLSPEC_HIDDEN;
 BOOL ME_Undo(ME_TextEditor *editor) DECLSPEC_HIDDEN;
 BOOL ME_Redo(ME_TextEditor *editor) DECLSPEC_HIDDEN;
 void ME_EmptyUndoStack(ME_TextEditor *editor) DECLSPEC_HIDDEN;
+void editor_disable_undo(ME_TextEditor *editor);
+void editor_enable_undo(ME_TextEditor *editor);
+
+static inline BOOL editor_undo_ignored(ME_TextEditor *editor)
+{
+    return editor->undo_ctl_state != undoActive || editor->nUndoMode == umIgnore;
+}
 
 /* txtsrv.c */
 HRESULT create_text_services( IUnknown *outer, ITextHost *text_host, IUnknown **unk, BOOL emulate_10 ) DECLSPEC_HIDDEN;

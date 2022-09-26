@@ -1518,6 +1518,7 @@ size_t server_init_process(void)
         is_wow64 = TRUE;
         NtCurrentTeb()->GdiBatchCount = PtrToUlong( (char *)NtCurrentTeb() - teb_offset );
         NtCurrentTeb()->WowTebOffset  = -teb_offset;
+        wow_peb = (PEB64 *)((char *)peb - page_size);
 #endif
     }
     else
@@ -1702,6 +1703,9 @@ NTSTATUS WINAPI NtClose( HANDLE handle )
     HANDLE port;
     NTSTATUS ret;
     int fd;
+
+    if (HandleToLong( handle ) >= ~5 && HandleToLong( handle ) <= ~0)
+        return STATUS_SUCCESS;
 
     server_enter_uninterrupted_section( &fd_cache_mutex, &sigset );
 

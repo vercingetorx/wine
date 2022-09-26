@@ -67,24 +67,20 @@ static BOOL fill_sym_lvalue(const SYMBOL_INFO* sym, ULONG_PTR base,
     if (buffer) buffer[0] = '\0';
     if (sym->Flags & SYMFLAG_REGISTER)
     {
-        DWORD_PTR* pval;
-
-        if (!memory_get_register(sym->Register, &pval, buffer, sz))
+        if (!memory_get_register(sym->Register, lvalue, buffer, sz))
             return FALSE;
-        init_lvalue(lvalue, FALSE, pval);
     }
     else if (sym->Flags & SYMFLAG_REGREL)
     {
-        DWORD_PTR* pval;
         size_t  l;
 
         *buffer++ = '['; sz--;
-        if (!memory_get_register(sym->Register, &pval, buffer, sz))
+        if (!memory_get_register(sym->Register, lvalue, buffer, sz))
             return FALSE;
         l = strlen(buffer);
         sz -= l;
         buffer += l;
-        init_lvalue(lvalue, TRUE, (void*)(DWORD_PTR)(*pval + sym->Address));
+        init_lvalue(lvalue, TRUE, (void*)(DWORD_PTR)(types_extract_as_integer(lvalue) + sym->Address));
         if ((LONG64)sym->Address >= 0)
             snprintf(buffer, sz, "+%I64d]", sym->Address);
         else
@@ -597,7 +593,7 @@ enum dbg_line_status symbol_get_function_line_status(const ADDRESS64* addr)
     case SymTagFunction:
     case SymTagPublicSymbol: break;
     default:
-        WINE_FIXME("Unexpected sym-tag 0x%08x\n", sym->Tag);
+        WINE_FIXME("Unexpected sym-tag 0x%08lx\n", sym->Tag);
     case SymTagData:
         return dbg_no_line_info;
     }

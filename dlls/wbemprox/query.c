@@ -300,7 +300,7 @@ static const WCHAR *format_int( WCHAR *buf, UINT len, CIMTYPE type, LONGLONG val
         return buf;
 
     default:
-        ERR( "unhandled type %u\n", type );
+        ERR( "unhandled type %lu\n", type );
         return NULL;
     }
 }
@@ -1047,7 +1047,7 @@ VARTYPE to_vartype( CIMTYPE type )
     case CIM_REAL32:    return VT_R4;
 
     default:
-        ERR("unhandled type %u\n", type);
+        ERR( "unhandled type %lu\n", type );
         break;
     }
     return 0;
@@ -1298,7 +1298,7 @@ static struct array *to_array( VARIANT *var, CIMTYPE *type )
                 destroy_array( ret, basetype );
                 return NULL;
             }
-            *(WCHAR **)ptr = heap_strdupW( str );
+            *(WCHAR **)ptr = wcsdup( str );
             SysFreeString( str );
             if (!*(WCHAR **)ptr)
             {
@@ -1336,7 +1336,7 @@ HRESULT to_longlong( VARIANT *var, LONGLONG *val, CIMTYPE *type )
         *type = CIM_BOOLEAN;
         break;
     case VT_BSTR:
-        *val = (INT_PTR)heap_strdupW( V_BSTR( var ) );
+        *val = (INT_PTR)wcsdup( V_BSTR( var ) );
         if (!*val) return E_OUTOFMEMORY;
         *type = CIM_STRING;
         break;

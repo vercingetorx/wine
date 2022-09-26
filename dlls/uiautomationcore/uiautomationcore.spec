@@ -62,28 +62,28 @@
 @ stub UiaFind
 @ stub UiaGetErrorDescription
 @ stub UiaGetPatternProvider
-@ stub UiaGetPropertyValue
+@ stdcall UiaGetPropertyValue(ptr long ptr)
 @ stdcall UiaGetReservedMixedAttributeValue(ptr)
 @ stdcall UiaGetReservedNotSupportedValue(ptr)
 @ stub UiaGetRootNode
-@ stub UiaGetRuntimeId
+@ stdcall UiaGetRuntimeId(ptr ptr)
 @ stub UiaGetUpdatedCache
 @ stub UiaHPatternObjectFromVariant
 @ stub UiaHTextRangeFromVariant
-@ stub UiaHUiaNodeFromVariant
+@ stdcall UiaHUiaNodeFromVariant(ptr ptr)
 @ stub UiaHasServerSideProvider
 @ stdcall UiaHostProviderFromHwnd(long ptr)
 #@ stub UiaIAccessibleFromProvider
 @ stdcall UiaLookupId(long ptr)
 @ stub UiaNavigate
 @ stub UiaNodeFromFocus
-@ stub UiaNodeFromHandle
+@ stdcall UiaNodeFromHandle(long ptr)
 @ stub UiaNodeFromPoint
-@ stub UiaNodeFromProvider
-@ stub UiaNodeRelease
+@ stdcall UiaNodeFromProvider(ptr ptr)
+@ stdcall UiaNodeRelease(ptr)
 @ stub UiaPatternRelease
 #@ stub UiaProviderForNonClient
-#@ stub UiaProviderFromIAccessible
+@ stdcall UiaProviderFromIAccessible(ptr long long ptr)
 @ stub UiaRaiseAsyncContentLoadedEvent
 @ stdcall UiaRaiseAutomationEvent(ptr long)
 @ stdcall UiaRaiseAutomationPropertyChangedEvent(ptr long int128 int128)

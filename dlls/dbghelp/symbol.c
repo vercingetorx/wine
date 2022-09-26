@@ -66,10 +66,11 @@ int __cdecl symt_cmp_addr(const void* p1, const void* p2)
 
 /* dbghelp exposes the internal symbols/types with DWORD indexes.
  * - custom symbols are always stored with index starting at BASE_CUSTOM_SYMT
- * - for all the others (non custom) symbols:
- *   + on 32bit machine, index is set to the actual adress of symt
- *   + on 64bit machine, we have a dedicated array to store symt exposed to caller
- *     index is the index in this array of the symbol
+ * - for all the other (non custom) symbols:
+ *   + on 32-bit machines, index is set to the actual address of symt
+ *   + on 64-bit machines, the symt address is stored in a dedicated array
+ *     which is exposed to the caller and index is the index of the symbol in
+ *     this array
  */
 DWORD             symt_ptr2index(struct module* module, const struct symt* sym)
 {
@@ -258,7 +259,7 @@ struct symt_public* symt_new_public(struct module* module,
     struct symt_public* sym;
     struct symt**       p;
 
-    TRACE_(dbghelp_symt)("Adding public symbol %s:%s @%lx\n",
+    TRACE_(dbghelp_symt)("Adding public symbol %s:%s @%Ix\n",
                          debugstr_w(module->modulename), name, address);
     if ((dbghelp_options & SYMOPT_AUTO_PUBLICS) &&
         symt_find_nearest(module, address) != NULL)
@@ -291,29 +292,26 @@ struct symt_data* symt_new_global_variable(struct module* module,
     struct symt**       p;
     DWORD64             tsz;
 
-    TRACE_(dbghelp_symt)("Adding global symbol %s:%s %d@%lx %p\n",
+    TRACE_(dbghelp_symt)("Adding global symbol %s:%s %d@%Ix %p\n",
                          debugstr_w(module->modulename), name, loc.kind, loc.offset, type);
     if ((sym = pool_alloc(&module->pool, sizeof(*sym))))
     {
         sym->symt.tag      = SymTagData;
         sym->hash_elt.name = pool_strdup(&module->pool, name);
         sym->kind          = is_static ? DataIsFileStatic : DataIsGlobal;
-        sym->container     = compiland ? &compiland->symt : NULL;
+        sym->container     = compiland ? &compiland->symt : &module->top->symt;
         sym->type          = type;
         sym->u.var         = loc;
         if (type && size && symt_get_info(module, type, TI_GET_LENGTH, &tsz))
         {
             if (tsz != size)
-                FIXME("Size mismatch for %s.%s between type (%s) and src (%lu)\n",
+                FIXME("Size mismatch for %s.%s between type (%s) and src (%Iu)\n",
                       debugstr_w(module->modulename), name,
                       wine_dbgstr_longlong(tsz), size);
         }
         symt_add_module_ht(module, (struct symt_ht*)sym);
-        if (compiland)
-        {
-            p = vector_add(&compiland->vchildren, &module->pool);
-            *p = &sym->symt;
-        }
+        p = vector_add(compiland ? &compiland->vchildren : &module->top->vchildren, &module->pool);
+        *p = &sym->symt;
     }
     return sym;
 }
@@ -345,7 +343,7 @@ struct symt_function* symt_new_function(struct module* module,
 {
     struct symt_function* sym;
 
-    TRACE_(dbghelp_symt)("Adding global function %s:%s @%lx-%lx\n",
+    TRACE_(dbghelp_symt)("Adding global function %s:%s @%Ix-%Ix\n",
                          debugstr_w(module->modulename), name, addr, addr + size - 1);
     if ((sym = pool_alloc(&module->pool, sizeof(*sym))))
     {
@@ -371,7 +369,7 @@ struct symt_inlinesite* symt_new_inlinesite(struct module* module,
 {
     struct symt_inlinesite* sym;
 
-    TRACE_(dbghelp_symt)("Adding inline site %s @%lx\n", name, addr);
+    TRACE_(dbghelp_symt)("Adding inline site %s @%Ix\n", name, addr);
     if ((sym = pool_alloc(&module->pool, sizeof(*sym))))
     {
         struct symt** p;
@@ -627,7 +625,7 @@ struct symt_thunk* symt_new_thunk(struct module* module,
 {
     struct symt_thunk*  sym;
 
-    TRACE_(dbghelp_symt)("Adding global thunk %s:%s @%lx-%lx\n",
+    TRACE_(dbghelp_symt)("Adding global thunk %s:%s @%Ix-%Ix\n",
                          debugstr_w(module->modulename), name, addr, addr + size - 1);
 
     if ((sym = pool_alloc(&module->pool, sizeof(*sym))))
@@ -664,7 +662,7 @@ struct symt_data* symt_new_constant(struct module* module,
         sym->symt.tag      = SymTagData;
         sym->hash_elt.name = pool_strdup(&module->pool, name);
         sym->kind          = DataIsConstant;
-        sym->container     = compiland ? &compiland->symt : NULL;
+        sym->container     = compiland ? &compiland->symt : &module->top->symt;
         sym->type          = type;
         sym->u.value       = *v;
         symt_add_module_ht(module, (struct symt_ht*)sym);
@@ -889,7 +887,7 @@ static void symt_fill_sym_info(struct module_pair* pair,
     else
         symbol_setname(sym_info, name);
 
-    TRACE_(dbghelp_symt)("%p => %s %u %s\n",
+    TRACE_(dbghelp_symt)("%p => %s %lu %s\n",
                          sym, sym_info->Name, sym_info->Size,
                          wine_dbgstr_longlong(sym_info->Address));
 }
@@ -1026,7 +1024,7 @@ static void symt_get_length(struct module* module, const struct symt* symt, ULON
 
     if (symt_get_info(module, symt, TI_GET_TYPE, &type_index) &&
         symt_get_info(module, symt_index2ptr(module, type_index), TI_GET_LENGTH, size)) return;
-    *size = 0x1000; /* arbitrary value */
+    *size = 1; /* no size info */
 }
 
 /* needed by symt_find_nearest */
@@ -1101,6 +1099,20 @@ struct symt_ht* symt_find_nearest(struct module* module, DWORD_PTR addr)
     low = symt_get_best_at(module, low);
 
     return module->addr_sorttab[low];
+}
+
+struct symt_ht* symt_find_symbol_at(struct module* module, DWORD_PTR addr)
+{
+    struct symt_ht* nearest = symt_find_nearest(module, addr);
+    if (nearest)
+    {
+        ULONG64     symaddr, symsize;
+        symt_get_address(&nearest->symt, &symaddr);
+        symt_get_length(module, &nearest->symt, &symsize);
+        if (addr < symaddr || addr >= symaddr + symsize)
+            nearest = NULL;
+    }
+    return nearest;
 }
 
 static BOOL symt_enum_locals_helper(struct module_pair* pair,
@@ -1261,7 +1273,7 @@ struct symt* symt_get_upper_inlined(struct symt_inlinesite* inlined)
 /* lookup in module for an inline site (from addr and inline_ctx) */
 struct symt_inlinesite* symt_find_inlined_site(struct module* module, DWORD64 addr, DWORD inline_ctx)
 {
-    struct symt_ht* symt = symt_find_nearest(module, addr);
+    struct symt_ht* symt = symt_find_symbol_at(module, addr);
 
     if (symt_check_tag(&symt->symt, SymTagFunction))
     {
@@ -1283,7 +1295,7 @@ DWORD symt_get_inlinesite_depth(HANDLE hProcess, DWORD64 addr)
 
     if (module_init_pair(&pair, hProcess, addr))
     {
-        struct symt_ht* symt = symt_find_nearest(pair.effective, addr);
+        struct symt_ht* symt = symt_find_symbol_at(pair.effective, addr);
         if (symt_check_tag(&symt->symt, SymTagFunction))
         {
             struct symt_inlinesite* inlined = symt_find_lowest_inlined((struct symt_function*)symt, addr);
@@ -1517,7 +1529,7 @@ BOOL WINAPI SymFromAddr(HANDLE hProcess, DWORD64 Address,
     struct symt_ht*     sym;
 
     if (!module_init_pair(&pair, hProcess, Address)) return FALSE;
-    if ((sym = symt_find_nearest(pair.effective, Address)) == NULL) return FALSE;
+    if ((sym = symt_find_symbol_at(pair.effective, Address)) == NULL) return FALSE;
 
     symt_fill_sym_info(&pair, NULL, &sym->symt, Symbol);
     if (Displacement)
@@ -1885,7 +1897,7 @@ static BOOL get_line_from_function(struct module_pair* pair, struct symt_functio
                 ret = internal_line_set_nameW(pair->pcs, intl, dospath, TRUE);
                 HeapFree( GetProcessHeap(), 0, dospath );
             }
-            if (ret) *pdwDisplacement = addr - found_dli->u.address;
+            if (ret && pdwDisplacement) *pdwDisplacement = addr - found_dli->u.address;
             return ret;
         }
     }
@@ -1904,7 +1916,7 @@ static BOOL get_line_from_addr(HANDLE hProcess, DWORD64 addr,
     struct symt_ht*             symt;
 
     if (!module_init_pair(&pair, hProcess, addr)) return FALSE;
-    if ((symt = symt_find_nearest(pair.effective, addr)) == NULL) return FALSE;
+    if ((symt = symt_find_symbol_at(pair.effective, addr)) == NULL) return FALSE;
 
     if (symt->symt.tag != SymTagFunction && symt->symt.tag != SymTagInlineSite) return FALSE;
     return get_line_from_function(&pair, (struct symt_function*)symt, addr, pdwDisplacement, intl);
@@ -2186,7 +2198,7 @@ BOOL WINAPI SymUnDName64(PIMAGEHLP_SYMBOL64 sym, PSTR UnDecName, DWORD UnDecName
 DWORD WINAPI UnDecorateSymbolName(const char *decorated_name, char *undecorated_name,
                                   DWORD undecorated_length, DWORD flags)
 {
-    TRACE("(%s, %p, %d, 0x%08x)\n",
+    TRACE("(%s, %p, %ld, 0x%08lx)\n",
           debugstr_a(decorated_name), undecorated_name, undecorated_length, flags);
 
     if (!undecorated_name || !undecorated_length)
@@ -2205,7 +2217,7 @@ DWORD WINAPI UnDecorateSymbolNameW(const WCHAR *decorated_name, WCHAR *undecorat
     char *buf, *ptr;
     int len, ret = 0;
 
-    TRACE("(%s, %p, %d, 0x%08x)\n",
+    TRACE("(%s, %p, %ld, 0x%08lx)\n",
           debugstr_w(decorated_name), undecorated_name, undecorated_length, flags);
 
     if (!undecorated_name || !undecorated_length)
@@ -2410,7 +2422,7 @@ static inline BOOL doSymSearch(HANDLE hProcess, ULONG64 BaseOfDll, DWORD Index,
 
     if (Options != SYMSEARCH_GLOBALSONLY)
     {
-        FIXME("Unsupported searching with options (%x)\n", Options);
+        FIXME("Unsupported searching with options (%lx)\n", Options);
         SetLastError(ERROR_INVALID_PARAMETER);
         return FALSE;
     }
@@ -2436,7 +2448,7 @@ BOOL WINAPI SymSearch(HANDLE hProcess, ULONG64 BaseOfDll, DWORD Index,
     LPWSTR      maskW = NULL;
     BOOLEAN     ret;
 
-    TRACE("(%p %s %u %u %s %s %p %p %x)\n",
+    TRACE("(%p %s %lu %lu %s %s %p %p %lx)\n",
           hProcess, wine_dbgstr_longlong(BaseOfDll), Index, SymTag, Mask,
           wine_dbgstr_longlong(Address), EnumSymbolsCallback,
           UserContext, Options);
@@ -2465,7 +2477,7 @@ BOOL WINAPI SymSearchW(HANDLE hProcess, ULONG64 BaseOfDll, DWORD Index,
 {
     struct sym_enumW    sew;
 
-    TRACE("(%p %s %u %u %s %s %p %p %x)\n",
+    TRACE("(%p %s %lu %lu %s %s %p %p %lx)\n",
           hProcess, wine_dbgstr_longlong(BaseOfDll), Index, SymTag, debugstr_w(Mask),
           wine_dbgstr_longlong(Address), EnumSymbolsCallback,
           UserContext, Options);
@@ -2487,7 +2499,7 @@ BOOL WINAPI SymAddSymbol(HANDLE hProcess, ULONG64 BaseOfDll, PCSTR name,
 {
     struct module_pair  pair;
 
-    TRACE("(%p %s %s %u)\n", hProcess, wine_dbgstr_a(name), wine_dbgstr_longlong(addr), size);
+    TRACE("(%p %s %s %lu)\n", hProcess, wine_dbgstr_a(name), wine_dbgstr_longlong(addr), size);
 
     if (!module_init_pair(&pair, hProcess, BaseOfDll)) return FALSE;
 
@@ -2503,7 +2515,7 @@ BOOL WINAPI SymAddSymbolW(HANDLE hProcess, ULONG64 BaseOfDll, PCWSTR nameW,
 {
     char       name[MAX_SYM_NAME];
 
-    TRACE("(%p %s %s %u)\n", hProcess, wine_dbgstr_w(nameW), wine_dbgstr_longlong(addr), size);
+    TRACE("(%p %s %s %lu)\n", hProcess, wine_dbgstr_w(nameW), wine_dbgstr_longlong(addr), size);
 
     WideCharToMultiByte(CP_ACP, 0, nameW, -1, name, ARRAY_SIZE(name), NULL, NULL);
 
@@ -2583,7 +2595,7 @@ BOOL WINAPI SymEnumLines(HANDLE hProcess, ULONG64 base, PCSTR compiland,
 BOOL WINAPI SymGetLineFromName(HANDLE hProcess, PCSTR ModuleName, PCSTR FileName,
                 DWORD dwLineNumber, PLONG plDisplacement, PIMAGEHLP_LINE Line)
 {
-    FIXME("(%p) (%s, %s, %d %p %p): stub\n", hProcess, ModuleName, FileName,
+    FIXME("(%p) (%s, %s, %ld %p %p): stub\n", hProcess, ModuleName, FileName,
                 dwLineNumber, plDisplacement, Line);
     return FALSE;
 }
@@ -2591,7 +2603,7 @@ BOOL WINAPI SymGetLineFromName(HANDLE hProcess, PCSTR ModuleName, PCSTR FileName
 BOOL WINAPI SymGetLineFromName64(HANDLE hProcess, PCSTR ModuleName, PCSTR FileName,
                 DWORD dwLineNumber, PLONG lpDisplacement, PIMAGEHLP_LINE64 Line)
 {
-    FIXME("(%p) (%s, %s, %d %p %p): stub\n", hProcess, ModuleName, FileName,
+    FIXME("(%p) (%s, %s, %ld %p %p): stub\n", hProcess, ModuleName, FileName,
                 dwLineNumber, lpDisplacement, Line);
     return FALSE;
 }
@@ -2599,7 +2611,7 @@ BOOL WINAPI SymGetLineFromName64(HANDLE hProcess, PCSTR ModuleName, PCSTR FileNa
 BOOL WINAPI SymGetLineFromNameW64(HANDLE hProcess, PCWSTR ModuleName, PCWSTR FileName,
                 DWORD dwLineNumber, PLONG plDisplacement, PIMAGEHLP_LINEW64 Line)
 {
-    FIXME("(%p) (%s, %s, %d %p %p): stub\n", hProcess, debugstr_w(ModuleName), debugstr_w(FileName),
+    FIXME("(%p) (%s, %s, %ld %p %p): stub\n", hProcess, debugstr_w(ModuleName), debugstr_w(FileName),
                 dwLineNumber, plDisplacement, Line);
     return FALSE;
 }
@@ -2610,7 +2622,7 @@ BOOL WINAPI SymGetLineFromNameW64(HANDLE hProcess, PCWSTR ModuleName, PCWSTR Fil
  */
 BOOL WINAPI SymFromIndex(HANDLE hProcess, ULONG64 BaseOfDll, DWORD index, PSYMBOL_INFO symbol)
 {
-    FIXME("hProcess = %p, BaseOfDll = %s, index = %d, symbol = %p\n",
+    FIXME("hProcess = %p, BaseOfDll = %s, index = %ld, symbol = %p\n",
           hProcess, wine_dbgstr_longlong(BaseOfDll), index, symbol);
 
     return FALSE;
@@ -2622,7 +2634,7 @@ BOOL WINAPI SymFromIndex(HANDLE hProcess, ULONG64 BaseOfDll, DWORD index, PSYMBO
  */
 BOOL WINAPI SymFromIndexW(HANDLE hProcess, ULONG64 BaseOfDll, DWORD index, PSYMBOL_INFOW symbol)
 {
-    FIXME("hProcess = %p, BaseOfDll = %s, index = %d, symbol = %p\n",
+    FIXME("hProcess = %p, BaseOfDll = %s, index = %ld, symbol = %p\n",
           hProcess, wine_dbgstr_longlong(BaseOfDll), index, symbol);
 
     return FALSE;
@@ -2659,23 +2671,23 @@ BOOL WINAPI SymFromInlineContext(HANDLE hProcess, DWORD64 addr, ULONG inline_ctx
     struct module_pair pair;
     struct symt_inlinesite* inlined;
 
-    TRACE("(%p, %#I64x, 0x%x, %p, %p)\n", hProcess, addr, inline_ctx, disp, si);
+    TRACE("(%p, %#I64x, 0x%lx, %p, %p)\n", hProcess, addr, inline_ctx, disp, si);
 
     switch (IFC_MODE(inline_ctx))
     {
-    case IFC_MODE_IGNORE:
-    case IFC_MODE_REGULAR:
-        return SymFromAddr(hProcess, addr, disp, si);
     case IFC_MODE_INLINE:
         if (!module_init_pair(&pair, hProcess, addr)) return FALSE;
         inlined = symt_find_inlined_site(pair.effective, addr, inline_ctx);
         if (inlined)
         {
             symt_fill_sym_info(&pair, NULL, &inlined->func.symt, si);
-            *disp = addr - inlined->func.address;
+            if (disp) *disp = addr - inlined->func.address;
             return TRUE;
         }
         /* fall through */
+    case IFC_MODE_IGNORE:
+    case IFC_MODE_REGULAR:
+        return SymFromAddr(hProcess, addr, disp, si);
     default:
         SetLastError(ERROR_INVALID_PARAMETER);
         return FALSE;
@@ -2692,7 +2704,7 @@ BOOL WINAPI SymFromInlineContextW(HANDLE hProcess, DWORD64 addr, ULONG inline_ct
     unsigned            len;
     BOOL                ret;
 
-    TRACE("(%p, %#I64x, 0x%x, %p, %p)\n", hProcess, addr, inline_ctx, disp, siW);
+    TRACE("(%p, %#I64x, 0x%lx, %p, %p)\n", hProcess, addr, inline_ctx, disp, siW);
 
     len = sizeof(*si) + siW->MaxNameLen * sizeof(WCHAR);
     si = HeapAlloc(GetProcessHeap(), 0, len);
@@ -2739,7 +2751,7 @@ BOOL WINAPI SymGetLineFromInlineContext(HANDLE hProcess, DWORD64 addr, ULONG inl
 {
     struct internal_line_t intl;
 
-    TRACE("(%p, %#I64x, 0x%x, %#I64x, %p, %p)\n",
+    TRACE("(%p, %#I64x, 0x%lx, %#I64x, %p, %p)\n",
           hProcess, addr, inline_ctx, mod_addr, disp, line);
 
     if (line->SizeOfStruct < sizeof(*line)) return FALSE;
@@ -2757,7 +2769,7 @@ BOOL WINAPI SymGetLineFromInlineContextW(HANDLE hProcess, DWORD64 addr, ULONG in
 {
     struct internal_line_t intl;
 
-    TRACE("(%p, %#I64x, 0x%x, %#I64x, %p, %p)\n",
+    TRACE("(%p, %#I64x, 0x%lx, %#I64x, %p, %p)\n",
           hProcess, addr, inline_ctx, mod_addr, disp, line);
 
     if (line->SizeOfStruct < sizeof(*line)) return FALSE;
@@ -2765,4 +2777,15 @@ BOOL WINAPI SymGetLineFromInlineContextW(HANDLE hProcess, DWORD64 addr, ULONG in
 
     if (!get_line_from_inline_context(hProcess, addr, inline_ctx, mod_addr, disp, &intl)) return FALSE;
     return internal_line_copy_toW64(&intl, line);
+}
+
+/******************************************************************
+ *      SymSrvGetFileIndexInfo (DBGHELP.@)
+ *
+ */
+BOOL WINAPI SymSrvGetFileIndexInfo(const char *file, SYMSRV_INDEX_INFO* info, DWORD flags)
+{
+    FIXME("(%s, %p, 0x%08lx): stub!\n", debugstr_a(file), info, flags);
+    SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
+    return FALSE;
 }

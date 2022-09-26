@@ -84,7 +84,7 @@ static const SIZE_T page_size = 0x1000;
 static const SIZE_T teb_size = 0x3800;  /* TEB64 + TEB32 + debug info */
 static const SIZE_T signal_stack_mask = 0xffff;
 static const SIZE_T signal_stack_size = 0x10000 - 0x3800;
-static const SIZE_T kernel_stack_size = 0x20000;
+static const SIZE_T kernel_stack_size = 0x100000;
 static const SIZE_T min_kernel_stack  = 0x2000;
 static const LONG teb_offset = 0x2000;
 
@@ -150,7 +150,7 @@ extern void *create_startup_info( const UNICODE_STRING *nt_image, const RTL_USER
 extern char **build_envp( const WCHAR *envW ) DECLSPEC_HIDDEN;
 extern NTSTATUS exec_wineloader( char **argv, int socketfd, const pe_image_info_t *pe_info ) DECLSPEC_HIDDEN;
 extern NTSTATUS load_builtin( const pe_image_info_t *image_info, WCHAR *filename,
-                              void **addr_ptr, SIZE_T *size_ptr ) DECLSPEC_HIDDEN;
+                              void **addr_ptr, SIZE_T *size_ptr, ULONG_PTR zero_bits ) DECLSPEC_HIDDEN;
 extern BOOL is_builtin_path( const UNICODE_STRING *path, WORD *machine ) DECLSPEC_HIDDEN;
 extern NTSTATUS load_main_exe( const WCHAR *name, const char *unix_name, const WCHAR *curdir, WCHAR **image,
                                void **module ) DECLSPEC_HIDDEN;
@@ -195,8 +195,8 @@ extern void *anon_mmap_alloc( size_t size, int prot ) DECLSPEC_HIDDEN;
 extern void virtual_init(void) DECLSPEC_HIDDEN;
 extern ULONG_PTR get_system_affinity_mask(void) DECLSPEC_HIDDEN;
 extern void virtual_get_system_info( SYSTEM_BASIC_INFORMATION *info, BOOL wow64 ) DECLSPEC_HIDDEN;
-extern NTSTATUS virtual_map_builtin_module( HANDLE mapping, void **module, SIZE_T *size,
-                                            SECTION_IMAGE_INFORMATION *info, WORD machine, BOOL prefer_native ) DECLSPEC_HIDDEN;
+extern NTSTATUS virtual_map_builtin_module( HANDLE mapping, void **module, SIZE_T *size, SECTION_IMAGE_INFORMATION *info,
+                                            ULONG_PTR zero_bits, WORD machine, BOOL prefer_native ) DECLSPEC_HIDDEN;
 extern NTSTATUS virtual_create_builtin_view( void *module, const UNICODE_STRING *nt_name,
                                              pe_image_info_t *info, void *so_handle ) DECLSPEC_HIDDEN;
 extern TEB *virtual_alloc_first_teb(void) DECLSPEC_HIDDEN;
@@ -256,6 +256,10 @@ extern NTSTATUS serial_DeviceIoControl( HANDLE device, HANDLE event, PIO_APC_ROU
 extern NTSTATUS serial_FlushBuffersFile( int fd ) DECLSPEC_HIDDEN;
 extern NTSTATUS sock_ioctl( HANDLE handle, HANDLE event, PIO_APC_ROUTINE apc, void *apc_user, IO_STATUS_BLOCK *io,
                             ULONG code, void *in_buffer, ULONG in_size, void *out_buffer, ULONG out_size ) DECLSPEC_HIDDEN;
+extern NTSTATUS sock_read( HANDLE handle, int fd, HANDLE event, PIO_APC_ROUTINE apc, void *apc_user,
+                           IO_STATUS_BLOCK *io, void *buffer, ULONG length ) DECLSPEC_HIDDEN;
+extern NTSTATUS sock_write( HANDLE handle, int fd, HANDLE event, PIO_APC_ROUTINE apc, void *apc_user,
+                            IO_STATUS_BLOCK *io, const void *buffer, ULONG length ) DECLSPEC_HIDDEN;
 extern NTSTATUS tape_DeviceIoControl( HANDLE device, HANDLE event, PIO_APC_ROUTINE apc, void *apc_user,
                                       IO_STATUS_BLOCK *io, ULONG code, void *in_buffer,
                                       ULONG in_size, void *out_buffer, ULONG out_size ) DECLSPEC_HIDDEN;
@@ -274,6 +278,7 @@ extern NTSTATUS get_device_info( int fd, struct _FILE_FS_DEVICE_INFORMATION *inf
 extern void init_files(void) DECLSPEC_HIDDEN;
 extern void init_cpu_info(void) DECLSPEC_HIDDEN;
 extern void add_completion( HANDLE handle, ULONG_PTR value, NTSTATUS status, ULONG info, BOOL async ) DECLSPEC_HIDDEN;
+extern void set_async_direct_result( HANDLE *optional_handle, NTSTATUS status, ULONG_PTR information, BOOL mark_pending );
 
 extern void dbg_init(void) DECLSPEC_HIDDEN;
 
@@ -392,11 +397,15 @@ static inline client_ptr_t iosb_client_ptr( IO_STATUS_BLOCK *io )
 
 #ifdef _WIN64
 typedef TEB32 WOW_TEB;
+typedef PEB32 WOW_PEB;
 static inline TEB64 *NtCurrentTeb64(void) { return NULL; }
 #else
 typedef TEB64 WOW_TEB;
+typedef PEB64 WOW_PEB;
 static inline TEB64 *NtCurrentTeb64(void) { return (TEB64 *)NtCurrentTeb()->GdiBatchCount; }
 #endif
+
+extern WOW_PEB *wow_peb DECLSPEC_HIDDEN;
 
 static inline WOW_TEB *get_wow_teb( TEB *teb )
 {
@@ -443,6 +452,14 @@ static inline void init_unicode_string( UNICODE_STRING *str, const WCHAR *data )
     str->Length = wcslen(data) * sizeof(WCHAR);
     str->MaximumLength = str->Length + sizeof(WCHAR);
     str->Buffer = (WCHAR *)data;
+}
+
+static inline NTSTATUS map_section( HANDLE mapping, void **ptr, SIZE_T *size, ULONG protect )
+{
+    *ptr = NULL;
+    *size = 0;
+    return NtMapViewOfSection( mapping, NtCurrentProcess(), ptr, is_win64 && wow_peb ? 0x7fffffff : 0,
+                               0, NULL, size, ViewShare, 0, protect );
 }
 
 #endif /* __NTDLL_UNIX_PRIVATE_H */

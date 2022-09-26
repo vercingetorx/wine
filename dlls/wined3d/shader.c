@@ -22,8 +22,6 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#include "config.h"
-
 #include <stdio.h>
 #include <string.h>
 
@@ -135,6 +133,7 @@ static const char * const shader_opcode_names[] =
     /* WINED3DSIH_ENDREP                           */ "endrep",
     /* WINED3DSIH_ENDSWITCH                        */ "endswitch",
     /* WINED3DSIH_EQ                               */ "eq",
+    /* WINED3DSIH_EVAL_CENTROID                    */ "eval_centroid",
     /* WINED3DSIH_EVAL_SAMPLE_INDEX                */ "eval_sample_index",
     /* WINED3DSIH_EXP                              */ "exp",
     /* WINED3DSIH_EXPP                             */ "expp",
@@ -3738,7 +3737,7 @@ static struct wined3d_shader_signature_element *shader_find_signature_element(co
     for (i = 0; i < s->element_count; ++i)
     {
         if (e[i].stream_idx == stream_idx
-                && !_strnicmp(e[i].semantic_name, semantic_name, -1)
+                && !stricmp(e[i].semantic_name, semantic_name)
                 && e[i].semantic_idx == semantic_idx)
             return &e[i];
     }
@@ -4125,7 +4124,7 @@ void find_ps_compile_args(const struct wined3d_state *state, const struct wined3
             else
                 args->color_fixup[i] = texture->resource.format->color_fixup;
 
-            if (texture->resource.format_flags & WINED3DFMT_FLAG_SHADOW)
+            if (texture->resource.format_caps & WINED3D_FORMAT_CAP_SHADOW)
                 args->shadow |= 1u << i;
 
             /* Flag samplers that need NP2 texcoord fixup. */

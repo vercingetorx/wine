@@ -40,6 +40,7 @@ WINE_DEFAULT_DEBUG_CHANNEL(msdasql);
 
 DEFINE_GUID(DBPROPSET_DATASOURCEINFO, 0xc8b522bb, 0x5cf3, 0x11ce, 0xad, 0xe5, 0x00, 0xaa, 0x00, 0x44, 0x77, 0x3d);
 DEFINE_GUID(DBPROPSET_DBINIT,    0xc8b522bc, 0x5cf3, 0x11ce, 0xad, 0xe5, 0x00, 0xaa, 0x00, 0x44, 0x77, 0x3d);
+DEFINE_GUID(DBPROPSET_ROWSET,    0xc8b522be, 0x5cf3, 0x11ce, 0xad, 0xe5, 0x00, 0xaa, 0x00, 0x44, 0x77, 0x3d);
 
 DEFINE_GUID(DBGUID_DEFAULT,      0xc8b521fb, 0x5cf3, 0x11ce, 0xad, 0xe5, 0x00, 0xaa, 0x00, 0x44, 0x77, 0x3d);
 
@@ -547,7 +548,7 @@ static HRESULT WINAPI dbinit_Initialize(IDBInitialize *iface)
     }
 
     ret = SQLConnectW( provider->hdbc, (SQLWCHAR *)V_BSTR(&provider->properties[i].value),
-        SQL_NTS, (SQLWCHAR *)NULL, SQL_NTS, (SQLWCHAR *)NULL, SQL_NTS );
+        SQL_NTS, NULL, SQL_NTS, NULL, SQL_NTS );
     TRACE("SQLConnectW ret %d\n", ret);
     if (ret != SQL_SUCCESS)
     {

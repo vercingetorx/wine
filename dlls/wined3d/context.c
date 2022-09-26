@@ -24,8 +24,6 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#include "config.h"
-
 #include "wined3d_private.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(d3d);
@@ -79,6 +77,9 @@ void context_invalidate_state(struct wined3d_context *context, unsigned int stat
 {
     unsigned int representative = context->state_table[state_id].representative;
     unsigned int index, shift;
+
+    if (!representative)
+        ERR("Invalidating representative 0, state_id %u.\n", state_id);
 
     index = representative / (sizeof(*context->dirty_graphics_states) * CHAR_BIT);
     shift = representative & ((sizeof(*context->dirty_graphics_states) * CHAR_BIT) - 1);

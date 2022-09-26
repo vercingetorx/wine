@@ -132,6 +132,7 @@ enum alg_id
 
     /* secret agreement */
     ALG_ID_ECDH_P256,
+    ALG_ID_ECDH_P384,
 
     /* signature */
     ALG_ID_RSA_SIGN,
@@ -143,29 +144,31 @@ enum alg_id
     ALG_ID_RNG,
 };
 
-enum mode_id
+enum chain_mode
 {
-    MODE_ID_ECB,
-    MODE_ID_CBC,
-    MODE_ID_GCM
+    CHAIN_MODE_CBC,
+    CHAIN_MODE_ECB,
+    CHAIN_MODE_CFB,
+    CHAIN_MODE_CCM,
+    CHAIN_MODE_GCM,
 };
 
 struct algorithm
 {
-    struct object hdr;
-    enum alg_id   id;
-    enum mode_id  mode;
-    unsigned      flags;
+    struct object   hdr;
+    enum alg_id     id;
+    enum chain_mode mode;
+    unsigned        flags;
 };
 
 struct key_symmetric
 {
-    enum mode_id mode;
-    ULONG        block_size;
-    UCHAR       *vector;
-    ULONG        vector_len;
-    UCHAR       *secret;
-    unsigned     secret_len;
+    enum chain_mode  mode;
+    ULONG            block_size;
+    UCHAR           *vector;
+    ULONG            vector_len;
+    UCHAR           *secret;
+    unsigned         secret_len;
     CRITICAL_SECTION cs;
 };
 
@@ -175,8 +178,6 @@ struct key_asymmetric
 {
     ULONG             bitlen;     /* ignored for ECC keys */
     unsigned          flags;
-    UCHAR            *pubkey;
-    unsigned          pubkey_len;
     DSSSEED           dss_seed;
 };
 
@@ -239,6 +240,16 @@ struct key_asymmetric_decrypt_params
     ULONG       *ret_len;
 };
 
+struct key_asymmetric_encrypt_params
+{
+    struct key  *key;
+    UCHAR       *input;
+    unsigned    input_len;
+    UCHAR       *output;
+    ULONG       output_len;
+    ULONG       *ret_len;
+};
+
 struct key_asymmetric_duplicate_params
 {
     struct key  *key_orig;
@@ -268,18 +279,22 @@ struct key_asymmetric_verify_params
     unsigned    flags;
 };
 
-struct key_export_params
+#define KEY_EXPORT_FLAG_PUBLIC   0x00000001
+#define KEY_EXPORT_FLAG_RSA_FULL 0x00000002
+struct key_asymmetric_export_params
 {
     struct key  *key;
+    ULONG        flags;
     UCHAR       *buf;
     ULONG        len;
     ULONG       *ret_len;
-    BOOL         full;
 };
 
-struct key_import_params
+#define KEY_IMPORT_FLAG_PUBLIC   0x00000001
+struct key_asymmetric_import_params
 {
     struct key  *key;
+    ULONG        flags;
     UCHAR       *buf;
     ULONG        len;
 };
@@ -296,16 +311,13 @@ enum key_funcs
     unix_key_symmetric_destroy,
     unix_key_asymmetric_generate,
     unix_key_asymmetric_decrypt,
+    unix_key_asymmetric_encrypt,
     unix_key_asymmetric_duplicate,
     unix_key_asymmetric_sign,
     unix_key_asymmetric_verify,
     unix_key_asymmetric_destroy,
-    unix_key_export_dsa_capi,
-    unix_key_export_ecc,
-    unix_key_export_rsa,
-    unix_key_import_dsa_capi,
-    unix_key_import_ecc,
-    unix_key_import_rsa,
+    unix_key_asymmetric_export,
+    unix_key_asymmetric_import,
 };
 
 #endif /* __BCRYPT_INTERNAL_H */

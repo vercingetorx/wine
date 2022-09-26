@@ -1366,7 +1366,7 @@ BOOL WINAPI AngleArc( HDC hdc, INT x, INT y, DWORD radius, FLOAT start_angle, FL
 {
     DC_ATTR *dc_attr;
 
-    TRACE( "%p, (%d, %d), %u, %f, %f\n", hdc, x, y, radius, start_angle, sweep_angle );
+    TRACE( "%p, (%d, %d), %lu, %f, %f\n", hdc, x, y, radius, start_angle, sweep_angle );
 
     if (!(dc_attr = get_dc_attr( hdc ))) return FALSE;
     if (dc_attr->emf && !EMFDC_AngleArc( dc_attr, x, y, radius, start_angle, sweep_angle ))
@@ -1478,7 +1478,7 @@ BOOL WINAPI PolyPolyline( HDC hdc, const POINT *points, const DWORD *counts, DWO
 {
     DC_ATTR *dc_attr;
 
-    TRACE( "%p, %p, %p, %u\n", hdc, points, counts, polylines );
+    TRACE( "%p, %p, %p, %lu\n", hdc, points, counts, polylines );
 
     if (!(dc_attr = get_dc_attr( hdc ))) return FALSE;
     if (dc_attr->emf && !EMFDC_PolyPolyline( dc_attr, points, counts, polylines )) return FALSE;
@@ -1492,7 +1492,7 @@ BOOL WINAPI PolyBezier( HDC hdc, const POINT *points, DWORD count )
 {
     DC_ATTR *dc_attr;
 
-    TRACE( "%p, %p, %u\n", hdc, points, count );
+    TRACE( "%p, %p, %lu\n", hdc, points, count );
 
     if (!(dc_attr = get_dc_attr( hdc ))) return FALSE;
     if (dc_attr->emf && !EMFDC_PolyBezier( dc_attr, points, count )) return FALSE;
@@ -1506,7 +1506,7 @@ BOOL WINAPI PolyBezierTo( HDC hdc, const POINT *points, DWORD count )
 {
     DC_ATTR *dc_attr;
 
-    TRACE( "%p, %p, %u\n", hdc, points, count );
+    TRACE( "%p, %p, %lu\n", hdc, points, count );
 
     if (!(dc_attr = get_dc_attr( hdc ))) return FALSE;
     if (dc_attr->emf && !EMFDC_PolyBezierTo( dc_attr, points, count )) return FALSE;
@@ -1520,7 +1520,7 @@ BOOL WINAPI PolylineTo( HDC hdc, const POINT *points, DWORD count )
 {
     DC_ATTR *dc_attr;
 
-    TRACE( "%p, %p, %u\n", hdc, points, count );
+    TRACE( "%p, %p, %lu\n", hdc, points, count );
 
     if (!(dc_attr = get_dc_attr( hdc ))) return FALSE;
     if (dc_attr->emf && !EMFDC_PolylineTo( dc_attr, points, count )) return FALSE;
@@ -1534,7 +1534,7 @@ BOOL WINAPI PolyDraw( HDC hdc, const POINT *points, const BYTE *types, DWORD cou
 {
     DC_ATTR *dc_attr;
 
-    TRACE( "%p, %p, %p, %u\n", hdc, points, types, count );
+    TRACE( "%p, %p, %p, %lu\n", hdc, points, types, count );
 
     if (!(dc_attr = get_dc_attr( hdc ))) return FALSE;
     if (dc_attr->emf && !EMFDC_PolyDraw( dc_attr, points, types, count )) return FALSE;
@@ -1609,7 +1609,7 @@ BOOL WINAPI ExtFloodFill( HDC hdc, INT x, INT y, COLORREF color, UINT fill_type 
 {
     DC_ATTR *dc_attr;
 
-    TRACE( "%p, (%d, %d), %08x, %x\n", hdc, x, y, color, fill_type );
+    TRACE( "%p, (%d, %d), %08lx, %x\n", hdc, x, y, color, fill_type );
 
     if (is_meta_dc( hdc )) return METADC_ExtFloodFill( hdc, x, y, color, fill_type );
     if (!(dc_attr = get_dc_attr( hdc ))) return FALSE;
@@ -1633,7 +1633,7 @@ BOOL WINAPI GdiGradientFill( HDC hdc, TRIVERTEX *vert_array, ULONG nvert,
 {
     DC_ATTR *dc_attr;
 
-    TRACE( "%p vert_array:%p nvert:%d grad_array:%p ngrad:%d\n", hdc, vert_array,
+    TRACE( "%p vert_array:%p nvert:%ld grad_array:%p ngrad:%ld\n", hdc, vert_array,
            nvert, grad_array, ngrad );
 
     if (!(dc_attr = get_dc_attr( hdc )))
@@ -2092,7 +2092,7 @@ BOOL WINAPI ScaleWindowExtEx( HDC hdc, INT x_num, INT x_denom,
 
 static UINT WINAPI realize_palette( HDC hdc )
 {
-    return NtUserCallOneParam( HandleToUlong(hdc), NtUserRealizePalette );
+    return NtUserRealizePalette( hdc );
 }
 
 /* Pointers to USER implementation of SelectPalette/RealizePalette */
@@ -2154,14 +2154,16 @@ BOOL WINAPI CancelDC(HDC hdc)
 INT WINAPI StartDocW( HDC hdc, const DOCINFOW *doc )
 {
     DC_ATTR *dc_attr;
+    ABORTPROC proc;
 
-    TRACE("DocName %s, Output %s, Datatype %s, fwType %#x\n",
+    TRACE("DocName %s, Output %s, Datatype %s, fwType %#lx\n",
           debugstr_w(doc->lpszDocName), debugstr_w(doc->lpszOutput),
           debugstr_w(doc->lpszDatatype), doc->fwType);
 
     if (!(dc_attr = get_dc_attr( hdc ))) return SP_ERROR;
 
-    if (dc_attr->abort_proc && !dc_attr->abort_proc( hdc, 0 )) return 0;
+    proc = (ABORTPROC)(UINT_PTR)dc_attr->abort_proc;
+    if (proc && !proc( hdc, 0 )) return 0;
     return NtGdiStartDoc( hdc, doc, NULL, 0 );
 }
 
@@ -2247,7 +2249,7 @@ INT WINAPI SetAbortProc( HDC hdc, ABORTPROC abrtprc )
     DC_ATTR *dc_attr;
 
     if (!(dc_attr = get_dc_attr( hdc ))) return FALSE;
-    dc_attr->abort_proc = abrtprc;
+    dc_attr->abort_proc = (UINT_PTR)abrtprc;
     return TRUE;
 }
 

@@ -98,7 +98,7 @@ HRESULT MSSTYLES_OpenThemeFile(LPCWSTR lpThemeFile, LPCWSTR pszColorName, LPCWST
     }
     if((versize = SizeofResource(hTheme, hrsc)) != 2)
     {
-        TRACE("Version resource found, but wrong size: %d\n", versize);
+        TRACE("Version resource found, but wrong size: %ld\n", versize);
         hr = HRESULT_FROM_WIN32(ERROR_BAD_FORMAT);
         goto invalid_theme;
     }
@@ -450,6 +450,36 @@ static PTHEME_CLASS MSSTYLES_AddClass(PTHEME_FILE tf, LPCWSTR pszAppName, LPCWST
     cur->overrides = NULL;
     tf->classes = cur;
     return cur;
+}
+
+/***********************************************************************
+ *      MSSTYLES_FindPart
+ *
+ * Find a part
+ *
+ * PARAMS
+ *     tc                  Class to search
+ *     iPartId             Part ID to find
+ *
+ * RETURNS
+ *  The part found, or NULL
+ */
+PTHEME_PARTSTATE MSSTYLES_FindPart(PTHEME_CLASS tc, int iPartId)
+{
+    PTHEME_PARTSTATE cur = tc->partstate;
+
+    while (cur)
+    {
+        if (cur->iPartId == iPartId)
+            return cur;
+
+        cur = cur->next;
+    }
+
+    if (tc->overrides)
+        return MSSTYLES_FindPart(tc->overrides, iPartId);
+
+    return NULL;
 }
 
 /***********************************************************************

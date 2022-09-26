@@ -57,9 +57,9 @@
 @ stub -arch=arm ??0_SpinLock@details@Concurrency@@QAA@ACJ@Z
 @ stub -arch=i386 ??0_SpinLock@details@Concurrency@@QAE@ACJ@Z
 @ stub -arch=win64 ??0_SpinLock@details@Concurrency@@QEAA@AECJ@Z
-@ stub -arch=arm ??0_StructuredTaskCollection@details@Concurrency@@QAA@PAV_CancellationTokenState@12@@Z
-@ stub -arch=i386 ??0_StructuredTaskCollection@details@Concurrency@@QAE@PAV_CancellationTokenState@12@@Z
-@ stub -arch=win64 ??0_StructuredTaskCollection@details@Concurrency@@QEAA@PEAV_CancellationTokenState@12@@Z
+@ cdecl -arch=arm ??0_StructuredTaskCollection@details@Concurrency@@QAA@PAV_CancellationTokenState@12@@Z(ptr ptr) msvcr120.??0_StructuredTaskCollection@details@Concurrency@@QAA@PAV_CancellationTokenState@12@@Z
+@ thiscall -arch=i386 ??0_StructuredTaskCollection@details@Concurrency@@QAE@PAV_CancellationTokenState@12@@Z(ptr ptr) msvcr120.??0_StructuredTaskCollection@details@Concurrency@@QAE@PAV_CancellationTokenState@12@@Z
+@ cdecl -arch=win64 ??0_StructuredTaskCollection@details@Concurrency@@QEAA@PEAV_CancellationTokenState@12@@Z(ptr ptr) msvcr120.??0_StructuredTaskCollection@details@Concurrency@@QEAA@PEAV_CancellationTokenState@12@@Z
 @ stub -arch=arm ??0_TaskCollection@details@Concurrency@@QAA@PAV_CancellationTokenState@12@@Z
 @ stub -arch=i386 ??0_TaskCollection@details@Concurrency@@QAE@PAV_CancellationTokenState@12@@Z
 @ stub -arch=win64 ??0_TaskCollection@details@Concurrency@@QEAA@PEAV_CancellationTokenState@12@@Z
@@ -162,12 +162,12 @@
 @ stub -arch=arm ??0invalid_link_target@Concurrency@@QAA@XZ
 @ stub -arch=i386 ??0invalid_link_target@Concurrency@@QAE@XZ
 @ stub -arch=win64 ??0invalid_link_target@Concurrency@@QEAA@XZ
-@ stub -arch=arm ??0invalid_multiple_scheduling@Concurrency@@QAA@PBD@Z
-@ stub -arch=i386 ??0invalid_multiple_scheduling@Concurrency@@QAE@PBD@Z
-@ stub -arch=win64 ??0invalid_multiple_scheduling@Concurrency@@QEAA@PEBD@Z
-@ stub -arch=arm ??0invalid_multiple_scheduling@Concurrency@@QAA@XZ
-@ stub -arch=i386 ??0invalid_multiple_scheduling@Concurrency@@QAE@XZ
-@ stub -arch=win64 ??0invalid_multiple_scheduling@Concurrency@@QEAA@XZ
+@ cdecl -arch=arm ??0invalid_multiple_scheduling@Concurrency@@QAA@PBD@Z(ptr ptr) msvcr120.??0invalid_multiple_scheduling@Concurrency@@QAA@PBD@Z
+@ thiscall -arch=i386 ??0invalid_multiple_scheduling@Concurrency@@QAE@PBD@Z(ptr ptr) msvcr120.??0invalid_multiple_scheduling@Concurrency@@QAE@PBD@Z
+@ cdecl -arch=win64 ??0invalid_multiple_scheduling@Concurrency@@QEAA@PEBD@Z(ptr ptr) msvcr120.??0invalid_multiple_scheduling@Concurrency@@QEAA@PEBD@Z
+@ cdecl -arch=arm ??0invalid_multiple_scheduling@Concurrency@@QAA@XZ(ptr) msvcr120.??0invalid_multiple_scheduling@Concurrency@@QAA@XZ
+@ thiscall -arch=i386 ??0invalid_multiple_scheduling@Concurrency@@QAE@XZ(ptr) msvcr120.??0invalid_multiple_scheduling@Concurrency@@QAE@XZ
+@ cdecl -arch=win64 ??0invalid_multiple_scheduling@Concurrency@@QEAA@XZ(ptr) msvcr120.??0invalid_multiple_scheduling@Concurrency@@QEAA@XZ
 @ stub -arch=arm ??0invalid_operation@Concurrency@@QAA@PBD@Z
 @ stub -arch=i386 ??0invalid_operation@Concurrency@@QAE@PBD@Z
 @ stub -arch=win64 ??0invalid_operation@Concurrency@@QEAA@PEBD@Z
@@ -288,7 +288,9 @@
 @ stub -arch=arm ??1_SpinLock@details@Concurrency@@QAA@XZ
 @ stub -arch=i386 ??1_SpinLock@details@Concurrency@@QAE@XZ
 @ stub -arch=win64 ??1_SpinLock@details@Concurrency@@QEAA@XZ
-@ stub -arch=i386 ??1_StructuredTaskCollection@details@Concurrency@@QAE@XZ
+@ cdecl -arch=arm ??1_StructuredTaskCollection@details@Concurrency@@QAA@XZ(ptr) msvcr120.??1_StructuredTaskCollection@details@Concurrency@@QAA@XZ
+@ thiscall -arch=i386 ??1_StructuredTaskCollection@details@Concurrency@@QAE@XZ(ptr) msvcr120.??1_StructuredTaskCollection@details@Concurrency@@QAE@XZ
+@ cdecl -arch=win64 ??1_StructuredTaskCollection@details@Concurrency@@QEAA@XZ(ptr) msvcr120.??1_StructuredTaskCollection@details@Concurrency@@QEAA@XZ
 @ stub -arch=arm ??1_TaskCollection@details@Concurrency@@QAA@XZ
 @ stub -arch=i386 ??1_TaskCollection@details@Concurrency@@QAE@XZ
 @ stub -arch=win64 ??1_TaskCollection@details@Concurrency@@QEAA@XZ
@@ -479,9 +481,9 @@
 @ stub -arch=arm ?_AcquireWrite@_ReaderWriterLock@details@Concurrency@@QAAXXZ
 @ stub -arch=i386 ?_AcquireWrite@_ReaderWriterLock@details@Concurrency@@QAEXXZ
 @ stub -arch=win64 ?_AcquireWrite@_ReaderWriterLock@details@Concurrency@@QEAAXXZ
-@ stub -arch=arm ?_Cancel@_StructuredTaskCollection@details@Concurrency@@QAAXXZ
-@ stub -arch=i386 ?_Cancel@_StructuredTaskCollection@details@Concurrency@@QAEXXZ
-@ stub -arch=win64 ?_Cancel@_StructuredTaskCollection@details@Concurrency@@QEAAXXZ
+@ cdecl -arch=arm ?_Cancel@_StructuredTaskCollection@details@Concurrency@@QAAXXZ(ptr) msvcr120.?_Cancel@_StructuredTaskCollection@details@Concurrency@@QAAXXZ
+@ thiscall -arch=i386 ?_Cancel@_StructuredTaskCollection@details@Concurrency@@QAEXXZ(ptr) msvcr120.?_Cancel@_StructuredTaskCollection@details@Concurrency@@QAEXXZ
+@ cdecl -arch=win64 ?_Cancel@_StructuredTaskCollection@details@Concurrency@@QEAAXXZ(ptr) msvcr120.?_Cancel@_StructuredTaskCollection@details@Concurrency@@QEAAXXZ
 @ stub -arch=arm ?_Cancel@_TaskCollection@details@Concurrency@@QAAXXZ
 @ stub -arch=i386 ?_Cancel@_TaskCollection@details@Concurrency@@QAEXXZ
 @ stub -arch=win64 ?_Cancel@_TaskCollection@details@Concurrency@@QEAAXXZ
@@ -530,9 +532,9 @@
 @ thiscall -arch=i386 ?_GetScheduler@_Scheduler@details@Concurrency@@QAEPAVScheduler@3@XZ(ptr) msvcr120.?_GetScheduler@_Scheduler@details@Concurrency@@QAEPAVScheduler@3@XZ
 @ cdecl -arch=win64 ?_GetScheduler@_Scheduler@details@Concurrency@@QEAAPEAVScheduler@3@XZ(ptr) msvcr120.?_GetScheduler@_Scheduler@details@Concurrency@@QEAAPEAVScheduler@3@XZ
 @ cdecl ?_Id@_CurrentScheduler@details@Concurrency@@SAIXZ() msvcr120.?_Id@_CurrentScheduler@details@Concurrency@@SAIXZ
-@ stub -arch=arm ?_IsCanceling@_StructuredTaskCollection@details@Concurrency@@QAA_NXZ
-@ stub -arch=i386 ?_IsCanceling@_StructuredTaskCollection@details@Concurrency@@QAE_NXZ
-@ stub -arch=win64 ?_IsCanceling@_StructuredTaskCollection@details@Concurrency@@QEAA_NXZ
+@ cdecl -arch=arm ?_IsCanceling@_StructuredTaskCollection@details@Concurrency@@QAA_NXZ(ptr) msvcr120.?_IsCanceling@_StructuredTaskCollection@details@Concurrency@@QAA_NXZ
+@ thiscall -arch=i386 ?_IsCanceling@_StructuredTaskCollection@details@Concurrency@@QAE_NXZ(ptr) msvcr120.?_IsCanceling@_StructuredTaskCollection@details@Concurrency@@QAE_NXZ
+@ cdecl -arch=win64 ?_IsCanceling@_StructuredTaskCollection@details@Concurrency@@QEAA_NXZ(ptr) msvcr120.?_IsCanceling@_StructuredTaskCollection@details@Concurrency@@QEAA_NXZ
 @ stub -arch=arm ?_IsCanceling@_TaskCollection@details@Concurrency@@QAA_NXZ
 @ stub -arch=i386 ?_IsCanceling@_TaskCollection@details@Concurrency@@QAE_NXZ
 @ stub -arch=win64 ?_IsCanceling@_TaskCollection@details@Concurrency@@QEAA_NXZ
@@ -586,18 +588,18 @@
 @ cdecl -arch=arm ?_Reset@?$_SpinWait@$0A@@details@Concurrency@@IAAXXZ(ptr) msvcr120.?_Reset@?$_SpinWait@$0A@@details@Concurrency@@IAAXXZ
 @ thiscall -arch=i386 ?_Reset@?$_SpinWait@$0A@@details@Concurrency@@IAEXXZ(ptr) msvcr120.?_Reset@?$_SpinWait@$0A@@details@Concurrency@@IAEXXZ
 @ cdecl -arch=win64 ?_Reset@?$_SpinWait@$0A@@details@Concurrency@@IEAAXXZ(ptr) msvcr120.?_Reset@?$_SpinWait@$0A@@details@Concurrency@@IEAAXXZ
-@ stub -arch=arm ?_RunAndWait@_StructuredTaskCollection@details@Concurrency@@QAA?AW4_TaskCollectionStatus@23@PAV_UnrealizedChore@23@@Z
-@ stub -arch=i386 ?_RunAndWait@_StructuredTaskCollection@details@Concurrency@@QAG?AW4_TaskCollectionStatus@23@PAV_UnrealizedChore@23@@Z
-@ stub -arch=win64 ?_RunAndWait@_StructuredTaskCollection@details@Concurrency@@QEAA?AW4_TaskCollectionStatus@23@PEAV_UnrealizedChore@23@@Z
+@ stdcall -arch=arm ?_RunAndWait@_StructuredTaskCollection@details@Concurrency@@QAA?AW4_TaskCollectionStatus@23@PAV_UnrealizedChore@23@@Z(ptr ptr) msvcr120.?_RunAndWait@_StructuredTaskCollection@details@Concurrency@@QAA?AW4_TaskCollectionStatus@23@PAV_UnrealizedChore@23@@Z
+@ stdcall -arch=i386 ?_RunAndWait@_StructuredTaskCollection@details@Concurrency@@QAG?AW4_TaskCollectionStatus@23@PAV_UnrealizedChore@23@@Z(ptr ptr) msvcr120.?_RunAndWait@_StructuredTaskCollection@details@Concurrency@@QAG?AW4_TaskCollectionStatus@23@PAV_UnrealizedChore@23@@Z
+@ stdcall -arch=win64 ?_RunAndWait@_StructuredTaskCollection@details@Concurrency@@QEAA?AW4_TaskCollectionStatus@23@PEAV_UnrealizedChore@23@@Z(ptr ptr) msvcr120.?_RunAndWait@_StructuredTaskCollection@details@Concurrency@@QEAA?AW4_TaskCollectionStatus@23@PEAV_UnrealizedChore@23@@Z
 @ stub -arch=arm ?_RunAndWait@_TaskCollection@details@Concurrency@@QAA?AW4_TaskCollectionStatus@23@PAV_UnrealizedChore@23@@Z
 @ stub -arch=i386 ?_RunAndWait@_TaskCollection@details@Concurrency@@QAG?AW4_TaskCollectionStatus@23@PAV_UnrealizedChore@23@@Z
 @ stub -arch=win64 ?_RunAndWait@_TaskCollection@details@Concurrency@@QEAA?AW4_TaskCollectionStatus@23@PEAV_UnrealizedChore@23@@Z
-@ stub -arch=arm ?_Schedule@_StructuredTaskCollection@details@Concurrency@@QAAXPAV_UnrealizedChore@23@@Z
-@ stub -arch=i386 ?_Schedule@_StructuredTaskCollection@details@Concurrency@@QAEXPAV_UnrealizedChore@23@@Z
-@ stub -arch=win64 ?_Schedule@_StructuredTaskCollection@details@Concurrency@@QEAAXPEAV_UnrealizedChore@23@@Z
-@ stub -arch=arm ?_Schedule@_StructuredTaskCollection@details@Concurrency@@QAAXPAV_UnrealizedChore@23@PAVlocation@3@@Z
-@ stub -arch=i386 ?_Schedule@_StructuredTaskCollection@details@Concurrency@@QAEXPAV_UnrealizedChore@23@PAVlocation@3@@Z
-@ stub -arch=win64 ?_Schedule@_StructuredTaskCollection@details@Concurrency@@QEAAXPEAV_UnrealizedChore@23@PEAVlocation@3@@Z
+@ cdecl -arch=arm ?_Schedule@_StructuredTaskCollection@details@Concurrency@@QAAXPAV_UnrealizedChore@23@@Z(ptr ptr) msvcr120.?_Schedule@_StructuredTaskCollection@details@Concurrency@@QAAXPAV_UnrealizedChore@23@@Z
+@ thiscall -arch=i386 ?_Schedule@_StructuredTaskCollection@details@Concurrency@@QAEXPAV_UnrealizedChore@23@@Z(ptr ptr) msvcr120.?_Schedule@_StructuredTaskCollection@details@Concurrency@@QAEXPAV_UnrealizedChore@23@@Z
+@ cdecl -arch=win64 ?_Schedule@_StructuredTaskCollection@details@Concurrency@@QEAAXPEAV_UnrealizedChore@23@@Z(ptr ptr) msvcr120.?_Schedule@_StructuredTaskCollection@details@Concurrency@@QEAAXPEAV_UnrealizedChore@23@@Z
+@ cdecl -arch=arm ?_Schedule@_StructuredTaskCollection@details@Concurrency@@QAAXPAV_UnrealizedChore@23@PAVlocation@3@@Z(ptr ptr ptr) msvcr120.?_Schedule@_StructuredTaskCollection@details@Concurrency@@QAAXPAV_UnrealizedChore@23@PAVlocation@3@@Z
+@ thiscall -arch=i386 ?_Schedule@_StructuredTaskCollection@details@Concurrency@@QAEXPAV_UnrealizedChore@23@PAVlocation@3@@Z(ptr ptr ptr) msvcr120.?_Schedule@_StructuredTaskCollection@details@Concurrency@@QAEXPAV_UnrealizedChore@23@PAVlocation@3@@Z
+@ cdecl -arch=win64 ?_Schedule@_StructuredTaskCollection@details@Concurrency@@QEAAXPEAV_UnrealizedChore@23@PEAVlocation@3@@Z(ptr ptr ptr) msvcr120.?_Schedule@_StructuredTaskCollection@details@Concurrency@@QEAAXPEAV_UnrealizedChore@23@PEAVlocation@3@@Z
 @ stub -arch=arm ?_Schedule@_TaskCollection@details@Concurrency@@QAAXPAV_UnrealizedChore@23@@Z
 @ stub -arch=i386 ?_Schedule@_TaskCollection@details@Concurrency@@QAEXPAV_UnrealizedChore@23@@Z
 @ stub -arch=win64 ?_Schedule@_TaskCollection@details@Concurrency@@QEAAXPEAV_UnrealizedChore@23@@Z
@@ -850,7 +852,7 @@
 @ cdecl __AdjustPointer(ptr ptr) msvcr120.__AdjustPointer
 @ stub __BuildCatchObject
 @ stub __BuildCatchObjectHelper
-@ stdcall -arch=x86_64 __C_specific_handler(ptr long ptr ptr) msvcr120.__C_specific_handler
+@ stdcall -arch=x86_64,arm __C_specific_handler(ptr long ptr ptr) msvcr120.__C_specific_handler
 @ cdecl -arch=i386,x86_64,arm,arm64 __CppXcptFilter(long ptr) msvcr120.__CppXcptFilter
 @ cdecl -arch=i386,x86_64,arm,arm64 __CxxDetectRethrow(ptr) msvcr120.__CxxDetectRethrow
 @ cdecl -arch=i386,x86_64,arm,arm64 __CxxExceptionFilter(ptr ptr long ptr) msvcr120.__CxxExceptionFilter
@@ -914,7 +916,7 @@
 @ cdecl __iscsymf(long) msvcr120.__iscsymf
 @ stub __iswcsym
 @ stub __iswcsymf
-@ stub -arch=arm __jump_unwind
+@ stdcall -arch=arm __jump_unwind(ptr ptr) msvcr120.__jump_unwind
 # extern __lconv
 @ cdecl __lconv_init() msvcr120.__lconv_init
 @ cdecl -arch=i386 -norelay __libm_sse2_acos() msvcr120.__libm_sse2_acos

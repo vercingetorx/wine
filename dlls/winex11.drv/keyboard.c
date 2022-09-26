@@ -23,6 +23,10 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
+#if 0
+#pragma makedep unix
+#endif
+
 #include "config.h"
 
 #include <X11/Xatom.h>
@@ -40,16 +44,14 @@
 
 #define NONAMELESSUNION
 
-#include "windef.h"
-#include "winbase.h"
+#include "x11drv.h"
+
 #include "wingdi.h"
 #include "winuser.h"
 #include "winreg.h"
 #include "winnls.h"
 #include "ime.h"
-#include "x11drv.h"
 #include "wine/server.h"
-#include "wine/unicode.h"
 #include "wine/debug.h"
 
 /* log format (add 0-padding as appropriate):
@@ -61,20 +63,15 @@
 WINE_DEFAULT_DEBUG_CHANNEL(keyboard);
 WINE_DECLARE_DEBUG_CHANNEL(key);
 
+static const unsigned int ControlMask = 1 << 2;
+
 static int min_keycode, max_keycode, keysyms_per_keycode;
 static KeySym *key_mapping;
 static WORD keyc2vkey[256], keyc2scan[256];
 
 static int NumLockMask, ScrollLockMask, AltGrMask; /* mask in the XKeyEvent state */
 
-static CRITICAL_SECTION kbd_section;
-static CRITICAL_SECTION_DEBUG critsect_debug =
-{
-    0, 0, &kbd_section,
-    { &critsect_debug.ProcessLocksList, &critsect_debug.ProcessLocksList },
-      0, 0, { (DWORD_PTR)(__FILE__ ": kbd_section") }
-};
-static CRITICAL_SECTION kbd_section = { &critsect_debug, -1, 0, 0, 0, 0 };
+static pthread_mutex_t kbd_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 static char KEYBOARD_MapDeadKeysym(KeySym keysym);
 
@@ -1218,7 +1215,7 @@ BOOL X11DRV_KeymapNotify( HWND hwnd, XEvent *event )
 
     memset(keys, 0, sizeof(keys));
 
-    EnterCriticalSection( &kbd_section );
+    pthread_mutex_lock( &kbd_mutex );
 
     /* the minimum keycode is always greater or equal to 8, so we can
      * skip the first 8 values, hence start at 1
@@ -1248,7 +1245,7 @@ BOOL X11DRV_KeymapNotify( HWND hwnd, XEvent *event )
         }
     }
 
-    LeaveCriticalSection( &kbd_section );
+    pthread_mutex_unlock( &kbd_mutex );
     if (!changed) return FALSE;
 
     update_key_state( keystate, VK_CONTROL, (keystate[VK_LCONTROL] | keystate[VK_RCONTROL]) & 0x80 );
@@ -1345,7 +1342,7 @@ BOOL X11DRV_KeyEvent( HWND hwnd, XEvent *xev )
         TRACE_(key)("XmbLookupString needs %i byte(s)\n", ascii_chars);
         if (status == XBufferOverflow)
         {
-            Str = HeapAlloc(GetProcessHeap(), 0, ascii_chars);
+            Str = malloc( ascii_chars );
             if (Str == NULL)
             {
                 ERR_(key)("Failed to allocate memory!\n");
@@ -1363,11 +1360,11 @@ BOOL X11DRV_KeyEvent( HWND hwnd, XEvent *xev )
     {
         X11DRV_XIMLookupChars( Str, ascii_chars );
         if (buf != Str)
-            HeapFree(GetProcessHeap(), 0, Str);
+            free( Str );
         return TRUE;
     }
 
-    EnterCriticalSection( &kbd_section );
+    pthread_mutex_lock( &kbd_mutex );
 
     /* If XKB extensions are used, the state mask for AltGr will use the group
        index instead of the modifier mask. The group index is set in bits
@@ -1392,7 +1389,7 @@ BOOL X11DRV_KeyEvent( HWND hwnd, XEvent *xev )
                     keysym, ksname, ascii_chars, debugstr_an(Str, ascii_chars));
     }
     if (buf != Str)
-        HeapFree(GetProcessHeap(), 0, Str);
+        free( Str );
 
     vkey = EVENT_event_to_vkey(xic,event);
     /* X returns keycode 0 for composed characters */
@@ -1402,7 +1399,7 @@ BOOL X11DRV_KeyEvent( HWND hwnd, XEvent *xev )
     TRACE_(key)("keycode %u converted to vkey 0x%X scan %02x\n",
                 event->keycode, vkey, bScan);
 
-    LeaveCriticalSection( &kbd_section );
+    pthread_mutex_unlock( &kbd_mutex );
 
     if (!vkey) return FALSE;
 
@@ -1532,7 +1529,7 @@ X11DRV_KEYBOARD_DetectLayout( Display *display )
 
 static HKL get_locale_kbd_layout(void)
 {
-    ULONG_PTR layout;
+    LCID layout;
     LANGID langid;
 
     /* FIXME:
@@ -1546,7 +1543,7 @@ static HKL get_locale_kbd_layout(void)
      * locale id we return the US one.
      */
 
-    layout = GetUserDefaultLCID();
+    NtQueryDefaultLocale( TRUE, &layout );
 
     /*
      * Microsoft Office expects this value to be something specific
@@ -1560,7 +1557,7 @@ static HKL get_locale_kbd_layout(void)
     else
         layout |= layout << 16;
 
-    return (HKL)layout;
+    return (HKL)(UINT_PTR)layout;
 }
 
 
@@ -1586,7 +1583,8 @@ void X11DRV_InitKeyboard( Display *display )
         WORD first, last;
     } vkey_ranges[] = {
         { VK_OEM_1, VK_OEM_3 },
-        { VK_OEM_4, VK_ICO_00 },
+        { VK_OEM_4, VK_OEM_8 },
+        { VK_OEM_AX, VK_ICO_00 },
         { 0xe6, 0xe6 },
         { 0xe9, 0xf5 },
         { VK_OEM_NEC_EQUAL, VK_OEM_NEC_EQUAL },
@@ -1597,7 +1595,7 @@ void X11DRV_InitKeyboard( Display *display )
     };
     int vkey_range;
 
-    EnterCriticalSection( &kbd_section );
+    pthread_mutex_lock( &kbd_mutex );
     XDisplayKeycodes(display, &min_keycode, &max_keycode);
     if (key_mapping) XFree( key_mapping );
     key_mapping = XGetKeyboardMapping(display, min_keycode,
@@ -1834,7 +1832,7 @@ void X11DRV_InitKeyboard( Display *display )
 	keyc2scan[keyc]=scan++;
       }
 
-    LeaveCriticalSection( &kbd_section );
+    pthread_mutex_unlock( &kbd_mutex );
 }
 
 static BOOL match_x11_keyboard_layout(HKL hkl)
@@ -1853,20 +1851,20 @@ static BOOL match_x11_keyboard_layout(HKL hkl)
 /***********************************************************************
  *		ActivateKeyboardLayout (X11DRV.@)
  */
-BOOL CDECL X11DRV_ActivateKeyboardLayout(HKL hkl, UINT flags)
+BOOL X11DRV_ActivateKeyboardLayout(HKL hkl, UINT flags)
 {
     FIXME("%p, %04x: semi-stub!\n", hkl, flags);
 
     if (flags & KLF_SETFORPROCESS)
     {
-        SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
+        RtlSetLastWin32Error( ERROR_CALL_NOT_IMPLEMENTED );
         FIXME("KLF_SETFORPROCESS not supported\n");
         return FALSE;
     }
 
     if (!match_x11_keyboard_layout(hkl))
     {
-        SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
+        RtlSetLastWin32Error( ERROR_CALL_NOT_IMPLEMENTED );
         FIXME("setting keyboard of different locales not supported\n");
         return FALSE;
     }
@@ -1885,10 +1883,10 @@ BOOL X11DRV_MappingNotify( HWND dummy, XEvent *event )
     XRefreshKeyboardMapping(&event->xmapping);
     X11DRV_InitKeyboard( event->xmapping.display );
 
-    hwnd = GetFocus();
-    if (!hwnd) hwnd = GetActiveWindow();
-    PostMessageW(hwnd, WM_INPUTLANGCHANGEREQUEST,
-                 0 /*FIXME*/, (LPARAM)GetKeyboardLayout(0));
+    hwnd = get_focus();
+    if (!hwnd) hwnd = get_active_window();
+    NtUserPostMessage( hwnd, WM_INPUTLANGCHANGEREQUEST,
+                       0 /*FIXME*/, (LPARAM)NtUserGetKeyboardLayout(0) );
     return TRUE;
 }
 
@@ -1898,7 +1896,7 @@ BOOL X11DRV_MappingNotify( HWND dummy, XEvent *event )
  *
  * Note: Windows ignores HKL parameter and uses current active layout instead
  */
-SHORT CDECL X11DRV_VkKeyScanEx(WCHAR wChar, HKL hkl)
+SHORT X11DRV_VkKeyScanEx( WCHAR wChar, HKL hkl )
 {
     Display *display = thread_init_display();
     KeyCode keycode;
@@ -1910,7 +1908,7 @@ SHORT CDECL X11DRV_VkKeyScanEx(WCHAR wChar, HKL hkl)
     /* FIXME: what happens if wChar is not a Latin1 character and CP_UNIXCP
      * is UTF-8 (multibyte encoding)?
      */
-    if (!WideCharToMultiByte(CP_UNIXCP, 0, &wChar, 1, &cChar, 1, NULL, NULL))
+    if (!ntdll_wcstoumbs( &wChar, 1, &cChar, 1, FALSE ))
     {
         WARN("no translation from unicode to CP_UNIXCP for 0x%02x\n", wChar);
         return -1;
@@ -1939,13 +1937,13 @@ SHORT CDECL X11DRV_VkKeyScanEx(WCHAR wChar, HKL hkl)
     TRACE("'%c'(%lx): got keycode %u\n", cChar, keysym, keycode);
     if (!keycode) return -1;
 
-    EnterCriticalSection( &kbd_section );
+    pthread_mutex_lock( &kbd_mutex );
 
     /* keycode -> (keyc2vkey) vkey */
     ret = keyc2vkey[keycode];
     if (!ret)
     {
-        LeaveCriticalSection( &kbd_section );
+        pthread_mutex_unlock( &kbd_mutex );
         TRACE("keycode for '%c' not found, returning -1\n", cChar);
         return -1;
     }
@@ -1953,7 +1951,7 @@ SHORT CDECL X11DRV_VkKeyScanEx(WCHAR wChar, HKL hkl)
     for (index = 0; index < 4; index++) /* find shift state */
         if (keycode_to_keysym(display, keycode, index) == keysym) break;
 
-    LeaveCriticalSection( &kbd_section );
+    pthread_mutex_unlock( &kbd_mutex );
 
     switch (index)
     {
@@ -1980,7 +1978,7 @@ SHORT CDECL X11DRV_VkKeyScanEx(WCHAR wChar, HKL hkl)
 /***********************************************************************
  *		MapVirtualKeyEx (X11DRV.@)
  */
-UINT CDECL X11DRV_MapVirtualKeyEx(UINT wCode, UINT wMapType, HKL hkl)
+UINT X11DRV_MapVirtualKeyEx( UINT wCode, UINT wMapType, HKL hkl )
 {
     UINT ret = 0;
     int keyc;
@@ -1990,7 +1988,7 @@ UINT CDECL X11DRV_MapVirtualKeyEx(UINT wCode, UINT wMapType, HKL hkl)
     if (!match_x11_keyboard_layout(hkl))
         FIXME("keyboard layout %p is not supported\n", hkl);
 
-    EnterCriticalSection( &kbd_section );
+    pthread_mutex_lock( &kbd_mutex );
 
     switch(wMapType)
     {
@@ -2106,7 +2104,7 @@ UINT CDECL X11DRV_MapVirtualKeyEx(UINT wCode, UINT wMapType, HKL hkl)
             if (len)
             {
                 WCHAR wch;
-                if (MultiByteToWideChar(CP_UNIXCP, 0, s, len, &wch, 1)) ret = toupperW(wch);
+                if (ntdll_umbstowcs( s, len, &wch, 1 )) ret = RtlUpcaseUnicodeChar( wch );
             }
             break;
         }
@@ -2116,7 +2114,7 @@ UINT CDECL X11DRV_MapVirtualKeyEx(UINT wCode, UINT wMapType, HKL hkl)
             break;
     }
 
-    LeaveCriticalSection( &kbd_section );
+    pthread_mutex_unlock( &kbd_mutex );
     TRACE( "returning 0x%x.\n", ret );
     return ret;
 }
@@ -2124,7 +2122,7 @@ UINT CDECL X11DRV_MapVirtualKeyEx(UINT wCode, UINT wMapType, HKL hkl)
 /***********************************************************************
  *		GetKeyNameText (X11DRV.@)
  */
-INT CDECL X11DRV_GetKeyNameText(LONG lParam, LPWSTR lpBuffer, INT nSize)
+INT X11DRV_GetKeyNameText( LONG lParam, LPWSTR lpBuffer, INT nSize )
 {
   Display *display = thread_init_display();
   int vkey, ansi, scanCode;
@@ -2136,7 +2134,7 @@ INT CDECL X11DRV_GetKeyNameText(LONG lParam, LPWSTR lpBuffer, INT nSize)
   scanCode = lParam >> 16;
   scanCode &= 0x1ff;  /* keep "extended-key" flag with code */
 
-  vkey = X11DRV_MapVirtualKeyEx(scanCode, MAPVK_VSC_TO_VK_EX, GetKeyboardLayout(0));
+  vkey = X11DRV_MapVirtualKeyEx( scanCode, MAPVK_VSC_TO_VK_EX, NtUserGetKeyboardLayout(0) );
 
   /*  handle "don't care" bit (0x02000000) */
   if (!(lParam & 0x02000000)) {
@@ -2159,7 +2157,7 @@ INT CDECL X11DRV_GetKeyNameText(LONG lParam, LPWSTR lpBuffer, INT nSize)
     }
   }
 
-  ansi = X11DRV_MapVirtualKeyEx(vkey, MAPVK_VK_TO_CHAR, GetKeyboardLayout(0));
+  ansi = X11DRV_MapVirtualKeyEx( vkey, MAPVK_VK_TO_CHAR, NtUserGetKeyboardLayout(0) );
   TRACE("scan 0x%04x, vkey 0x%04X, ANSI 0x%04x\n", scanCode, vkey, ansi);
 
   /* first get the name of the "regular" keys which is the Upper case
@@ -2173,7 +2171,7 @@ INT CDECL X11DRV_GetKeyNameText(LONG lParam, LPWSTR lpBuffer, INT nSize)
       {
         if (nSize >= 2)
 	{
-          *lpBuffer = toupperW((WCHAR)ansi);
+          *lpBuffer = RtlUpcaseUnicodeChar( ansi );
           *(lpBuffer+1) = 0;
           return 1;
         }
@@ -2193,7 +2191,7 @@ INT CDECL X11DRV_GetKeyNameText(LONG lParam, LPWSTR lpBuffer, INT nSize)
 
   /* let's do scancode -> keycode -> keysym -> String */
 
-  EnterCriticalSection( &kbd_section );
+  pthread_mutex_lock( &kbd_mutex );
 
   for (keyi=min_keycode; keyi<=max_keycode; keyi++)
       if ((keyc2scan[keyi]) == scanCode)
@@ -2209,12 +2207,12 @@ INT CDECL X11DRV_GetKeyNameText(LONG lParam, LPWSTR lpBuffer, INT nSize)
       if (name && (vkey == VK_SHIFT || vkey == VK_CONTROL || vkey == VK_MENU))
       {
           char* idx = strrchr(name, '_');
-          if (idx && (_strnicmp(idx, "_r", -1) == 0 || _strnicmp(idx, "_l", -1) == 0))
+          if (idx && (idx[1] == 'r' || idx[1] == 'R' || idx[1] == 'l' || idx[1] == 'L') && !idx[2])
           {
-              LeaveCriticalSection( &kbd_section );
+              pthread_mutex_unlock( &kbd_mutex );
               TRACE("found scan=%04x keyc=%u keysym=%lx modified_string=%s\n",
                     scanCode, keyc, keys, debugstr_an(name,idx-name));
-              rc = MultiByteToWideChar(CP_UNIXCP, 0, name, idx-name+1, lpBuffer, nSize);
+              rc = ntdll_umbstowcs( name, idx - name + 1, lpBuffer, nSize );
               if (!rc) rc = nSize;
               lpBuffer[--rc] = 0;
               return rc;
@@ -2223,10 +2221,10 @@ INT CDECL X11DRV_GetKeyNameText(LONG lParam, LPWSTR lpBuffer, INT nSize)
 
       if (name)
       {
-          LeaveCriticalSection( &kbd_section );
+          pthread_mutex_unlock( &kbd_mutex );
           TRACE("found scan=%04x keyc=%u keysym=%04x vkey=%04x string=%s\n",
                 scanCode, keyc, (int)keys, vkey, debugstr_a(name));
-          rc = MultiByteToWideChar(CP_UNIXCP, 0, name, -1, lpBuffer, nSize);
+          rc = ntdll_umbstowcs( name, strlen(name) + 1, lpBuffer, nSize );
           if (!rc) rc = nSize;
           lpBuffer[--rc] = 0;
           return rc;
@@ -2235,7 +2233,7 @@ INT CDECL X11DRV_GetKeyNameText(LONG lParam, LPWSTR lpBuffer, INT nSize)
 
   /* Finally issue WARN for unknown keys   */
 
-  LeaveCriticalSection( &kbd_section );
+  pthread_mutex_unlock( &kbd_mutex );
   WARN("(%08x,%p,%d): unsupported key, vkey=%04X, ansi=%04x\n",lParam,lpBuffer,nSize,vkey,ansi);
   *lpBuffer = 0;
   return 0;
@@ -2337,8 +2335,8 @@ static char KEYBOARD_MapDeadKeysym(KeySym keysym)
  * FIXME : should do the above (return 2 for non matching deadchar+char combinations)
  *
  */
-INT CDECL X11DRV_ToUnicodeEx(UINT virtKey, UINT scanCode, const BYTE *lpKeyState,
-                             LPWSTR bufW, int bufW_size, UINT flags, HKL hkl)
+INT X11DRV_ToUnicodeEx( UINT virtKey, UINT scanCode, const BYTE *lpKeyState,
+                        LPWSTR bufW, int bufW_size, UINT flags, HKL hkl )
 {
     Display *display = thread_init_display();
     XKeyEvent e;
@@ -2374,14 +2372,14 @@ INT CDECL X11DRV_ToUnicodeEx(UINT virtKey, UINT scanCode, const BYTE *lpKeyState
     focus = x11drv_thread_data()->last_xic_hwnd;
     if (!focus)
     {
-        focus = GetFocus();
-        if (focus) focus = GetAncestor( focus, GA_ROOT );
-        if (!focus) focus = GetActiveWindow();
+        focus = get_focus();
+        if (focus) focus = NtUserGetAncestor( focus, GA_ROOT );
+        if (!focus) focus = get_active_window();
     }
     e.window = X11DRV_get_whole_window( focus );
     xic = X11DRV_get_ic( focus );
 
-    EnterCriticalSection( &kbd_section );
+    pthread_mutex_lock( &kbd_mutex );
 
     if (lpKeyState[VK_SHIFT] & 0x80)
     {
@@ -2452,7 +2450,7 @@ INT CDECL X11DRV_ToUnicodeEx(UINT virtKey, UINT scanCode, const BYTE *lpKeyState
     if (!e.keycode && virtKey != VK_NONAME)
       {
 	WARN_(key)("Unknown virtual key %X !!!\n", virtKey);
-        LeaveCriticalSection( &kbd_section );
+        pthread_mutex_unlock( &kbd_mutex );
 	return 0;
       }
     else TRACE_(key)("Found keycode %u\n",e.keycode);
@@ -2469,11 +2467,11 @@ INT CDECL X11DRV_ToUnicodeEx(UINT virtKey, UINT scanCode, const BYTE *lpKeyState
         TRACE_(key)("XmbLookupString needs %d byte(s)\n", ret);
         if (status == XBufferOverflow)
         {
-            lpChar = HeapAlloc(GetProcessHeap(), 0, ret);
+            lpChar = malloc( ret );
             if (lpChar == NULL)
             {
                 ERR_(key)("Failed to allocate memory!\n");
-                LeaveCriticalSection( &kbd_section );
+                pthread_mutex_unlock( &kbd_mutex );
                 return 0;
             }
             ret = XmbLookupString(xic, &e, lpChar, ret, &keysym, &status);
@@ -2521,7 +2519,7 @@ INT CDECL X11DRV_ToUnicodeEx(UINT virtKey, UINT scanCode, const BYTE *lpKeyState
 	dead_char = KEYBOARD_MapDeadKeysym(keysym);
 	if (dead_char)
         {
-	    MultiByteToWideChar(CP_UNIXCP, 0, &dead_char, 1, bufW, bufW_size);
+	    ntdll_umbstowcs( &dead_char, 1, bufW, bufW_size );
 	    ret = -1;
             goto found;
         }
@@ -2617,15 +2615,15 @@ INT CDECL X11DRV_ToUnicodeEx(UINT virtKey, UINT scanCode, const BYTE *lpKeyState
 	if(ret)
 	{
 	    TRACE_(key)("Translating char 0x%02x to unicode\n", *(BYTE *)lpChar);
-	    ret = MultiByteToWideChar(CP_UNIXCP, 0, lpChar, ret, bufW, bufW_size);
+            ret = ntdll_umbstowcs( lpChar, ret, bufW, bufW_size );
 	}
     }
 
 found:
     if (buf != lpChar)
-        HeapFree(GetProcessHeap(), 0, lpChar);
+        free( lpChar );
 
-    LeaveCriticalSection( &kbd_section );
+    pthread_mutex_unlock( &kbd_mutex );
 
     /* Null-terminate the buffer, if there's room.  MSDN clearly states that the
        caller must not assume this is done, but some programs (e.g. Audiosurf) do. */
@@ -2639,7 +2637,7 @@ found:
 /***********************************************************************
  *		Beep (X11DRV.@)
  */
-void CDECL X11DRV_Beep(void)
+void X11DRV_Beep(void)
 {
     XBell(gdi_display, 0);
 }

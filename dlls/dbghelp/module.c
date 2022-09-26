@@ -489,7 +489,7 @@ static BOOL image_check_debug_link_crc(const WCHAR* file, struct image_file_map*
     crc = calc_crc32(handle);
     if (crc != link_crc)
     {
-        WARN("Bad CRC for file %s (got %08x while expecting %08x)\n",  debugstr_w(file), crc, link_crc);
+        WARN("Bad CRC for file %s (got %08lx while expecting %08lx)\n",  debugstr_w(file), crc, link_crc);
         CloseHandle(handle);
         return FALSE;
     }
@@ -858,7 +858,7 @@ DWORD64 WINAPI  SymLoadModuleEx(HANDLE hProcess, HANDLE hFile, PCSTR ImageName,
     unsigned    len;
     DWORD64     ret;
 
-    TRACE("(%p %p %s %s %s %08x %p %08x)\n",
+    TRACE("(%p %p %s %s %s %08lx %p %08lx)\n",
           hProcess, hFile, debugstr_a(ImageName), debugstr_a(ModuleName),
           wine_dbgstr_longlong(BaseOfDll), DllSize, Data, Flags);
 
@@ -895,7 +895,7 @@ DWORD64 WINAPI  SymLoadModuleExW(HANDLE hProcess, HANDLE hFile, PCWSTR wImageNam
     struct module*      module = NULL;
     struct module*      altmodule;
 
-    TRACE("(%p %p %s %s %s %08x %p %08x)\n",
+    TRACE("(%p %p %s %s %s %08lx %p %08lx)\n",
           hProcess, hFile, debugstr_w(wImageName), debugstr_w(wModuleName),
           wine_dbgstr_longlong(BaseOfDll), SizeOfDll, Data, Flags);
 
@@ -906,7 +906,7 @@ DWORD64 WINAPI  SymLoadModuleExW(HANDLE hProcess, HANDLE hFile, PCWSTR wImageNam
     if (!(pcs = process_find_by_handle(hProcess))) return 0;
 
     if (Flags & ~(SLMFLAG_VIRTUAL))
-        FIXME("Unsupported Flags %08x for %s\n", Flags, debugstr_w(wImageName));
+        FIXME("Unsupported Flags %08lx for %s\n", Flags, debugstr_w(wImageName));
 
     pcs->loader->synchronize_module_list(pcs);
 
@@ -1009,6 +1009,23 @@ BOOL module_remove(struct process* pcs, struct module* module)
 
     TRACE("%s (%p)\n", debugstr_w(module->modulename), module);
 
+    /* remove local scope if symbol is from this module */
+    if (pcs->localscope_symt)
+    {
+        struct symt* locsym = pcs->localscope_symt;
+        if (symt_check_tag(locsym, SymTagInlineSite))
+            locsym = &symt_get_function_from_inlined((struct symt_inlinesite*)locsym)->symt;
+        if (symt_check_tag(locsym, SymTagFunction))
+        {
+            locsym = ((struct symt_function*)locsym)->container;
+            if (symt_check_tag(locsym, SymTagCompiland) &&
+                module == ((struct symt_compiland*)locsym)->container->module)
+            {
+                pcs->localscope_pc = 0;
+                pcs->localscope_symt = NULL;
+            }
+        }
+    }
     for (i = 0; i < DFI_LAST; i++)
     {
         if ((modfmt = module->format_info[i]) && modfmt->remove)
@@ -1058,13 +1075,6 @@ BOOL WINAPI SymUnloadModule64(HANDLE hProcess, DWORD64 BaseOfDll)
     if (!pcs) return FALSE;
     module = module_find_by_addr(pcs, BaseOfDll, DMT_UNKNOWN);
     if (!module) return FALSE;
-    /* remove local scope if defined inside this module */
-    if (pcs->localscope_pc >= module->module.BaseOfImage &&
-        pcs->localscope_pc < module->module.BaseOfImage + module->module.ImageSize)
-    {
-        pcs->localscope_pc = 0;
-        pcs->localscope_symt = NULL;
-    }
     module_remove(pcs, module);
     return TRUE;
 }
@@ -1342,7 +1352,7 @@ BOOL  WINAPI SymGetModuleInfo64(HANDLE hProcess, DWORD64 dwAddr,
     if (sizeof(mi64) < ModuleInfo->SizeOfStruct)
     {
         SetLastError(ERROR_MOD_NOT_FOUND); /* NOTE: native returns this error */
-        WARN("Wrong size %u\n", ModuleInfo->SizeOfStruct);
+        WARN("Wrong size %lu\n", ModuleInfo->SizeOfStruct);
         return FALSE;
     }
 
