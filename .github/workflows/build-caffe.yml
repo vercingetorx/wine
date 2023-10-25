@@ -20,8 +20,8 @@ jobs:
       - name: download environment and install dependencies
         working-directory: /home/runner/work/
         run: |
-          curl -o environment.sh https://raw.githubusercontent.com/bottlesdevs/build-tools/main/runners/vaniglia/environment.sh
-          bash environment.sh
+          curl -o environment-tkg.sh https://raw.githubusercontent.com/bottlesdevs/build-tools/main/runners/vaniglia/environment-tkg.sh
+          bash environment-tkg.sh
 
       - name: clone wine-tkg-git repo
         working-directory: /home/runner/work/
