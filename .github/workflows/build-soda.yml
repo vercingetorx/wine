@@ -6,7 +6,7 @@ on:
     branches: [ soda ]
   workflow_dispatch:
 env:
-  WINE_VERSION: proton_8.0
+  WINE_VERSION: experimental_8.0
 jobs:
   build:
     runs-on: ubuntu-latest
