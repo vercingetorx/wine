@@ -37,7 +37,7 @@ jobs:
 
       - name: start build
         working-directory: /home/runner/work/wine-tkg-git/wine-tkg-git/
-        run: bash non-makepkg-build.sh
+        run: yes|./non-makepkg-build.sh
       
       - name: package
         working-directory: /home/runner/work/wine-tkg-git/wine-tkg-git/non-makepkg-builds/
