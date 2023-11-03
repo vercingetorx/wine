@@ -17,7 +17,7 @@ jobs:
       - name: setup
         working-directory: /home/runner/work/
         run: |
-          mkdir /home/runner/.config/frogminer/
+          mkdir -p /home/runner/.config/frogminer/
           sudo apt purge -y ubuntu-advantage-tools
           sudo dpkg --add-architecture i386 && sudo apt update
           sudo apt install aptitude
