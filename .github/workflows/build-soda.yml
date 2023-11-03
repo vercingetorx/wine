@@ -32,7 +32,6 @@ jobs:
         run: |
           curl https://raw.githubusercontent.com/bottlesdevs/build-tools/main/runners/vaniglia/wine-tkg-valve.cfg > /home/runner/.config/frogminer/wine-tkg.cfg
           sed -i "s/_plain_version=\"\"/_plain_version=\"$WINE_VERSION\"/g" /home/runner/.config/frogminer/wine-tkg.cfg
-          sed -i "s/_proton_branch=\"\"/_proton_branch=\"$WINE_VERSION\"/g" /home/runner/.config/frogminer/wine-tkg.cfg
 
       - name: start build
         working-directory: /home/runner/work/wine-tkg-git/wine-tkg-git/
