@@ -22,7 +22,6 @@ jobs:
           sudo dpkg --add-architecture i386 && sudo apt update
           sudo apt install aptitude
           sudo aptitude remove -y '?narrow(?installed,?version(deb.sury.org))'
-          sudo mv /usr/lib/pkgconfig /usr/lib/pkgconfig-skipme
 
       - name: clone wine-tkg-git repo
         working-directory: /home/runner/work/
