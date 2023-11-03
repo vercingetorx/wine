@@ -14,15 +14,15 @@ jobs:
     steps:        
       - uses: actions/checkout@v2
 
-      - name: remove conflicting dependencies
-        working-directory: /home/runner/work/
-        run: sudo apt purge -y ubuntu-advantage-tools
-
-      - name: download environment and install dependencies
+      - name: setup
         working-directory: /home/runner/work/
         run: |
-          curl -o environment-tkg.sh https://raw.githubusercontent.com/bottlesdevs/build-tools/main/runners/vaniglia/environment-tkg.sh
-          bash environment-tkg.sh
+          mkdir /home/runner/.config/frogminer/
+          sudo apt purge -y ubuntu-advantage-tools
+          sudo dpkg --add-architecture i386 && sudo apt update
+          sudo apt install aptitude
+          sudo aptitude remove -y '?narrow(?installed,?version(deb.sury.org))'
+          sudo mv /usr/lib/pkgconfig /usr/lib/pkgconfig-skipme
 
       - name: clone wine-tkg-git repo
         working-directory: /home/runner/work/
