@@ -1,5 +1,8 @@
 name: build-soda
 on:
+  push:
+    branches:
+      - 'soda'
   workflow_dispatch:
 env:
   WINE_VERSION: 8.0
