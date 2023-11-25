@@ -5,9 +5,8 @@ on:
       - 'soda'
   workflow_dispatch:
 env:
-  WINE_VERSION: 8.0
+  VERSION: 8.0-2
   BRANCH: experimental_8.0
-  REVISION: 2
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -41,9 +40,9 @@ jobs:
       - name: package
         working-directory: /home/runner/work/wine-tkg-git/wine-tkg-git/non-makepkg-builds/
         run: |
-          mv wine-tkg-* soda-$WINE_VERSION-$REVISION-x86_64
-          tar cJvf soda-$WINE_VERSION-$REVISION-x86_64.tar.xz soda-$WINE_VERSION-$REVISION-x86_64
-          mv soda-$WINE_VERSION-$REVISION-x86_64.tar.xz /tmp/soda-$WINE_VERSION-$REVISION-x86_64.tar.xz
+          mv wine-tkg-* soda-$VERSION-x86_64
+          tar cJvf soda-$VERSION-x86_64.tar.xz soda-$VERSION-x86_64
+          mv soda-$VERSION-x86_64.tar.xz /tmp/soda-$VERSION-x86_64.tar.xz
 
       - name: release
         uses: "marvinpinto/action-automatic-releases@latest"
@@ -51,6 +50,6 @@ jobs:
           repo_token: "${{ secrets.GITHUB_TOKEN }}"
           draft: false
           prerelease: false
-          automatic_release_tag: "soda-${{ env.WINE_VERSION }}-${{ env.REVISION }}"
-          title: "Soda ${{ env.WINE_VERSION }}-${{ env.REVISION }}"
-          files: "/tmp/soda-${{ env.WINE_VERSION }}-${{ env.REVISION }}-x86_64.tar.xz"
+          automatic_release_tag: "soda-${{ env.VERSION }}"
+          title: "Soda ${{ env.VERSION }}"
+          files: "/tmp/soda-${{ env.VERSION }}-x86_64.tar.xz"
