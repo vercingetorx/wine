@@ -18,7 +18,6 @@ jobs:
       - name: setup
         working-directory: /home/runner/work/
         run: |
-          echo $BRANCH
           mkdir -p /home/runner/.config/frogminer/
           sudo apt purge -y ubuntu-advantage-tools
           sudo dpkg --add-architecture i386 && sudo apt update
