@@ -1,12 +1,13 @@
 name: build-soda
 on:
   push:
-    branches: [ soda ]
-  pull_request:
-    branches: [ soda ]
+    branches:
+      - 'soda'
   workflow_dispatch:
 env:
-  WINE_VERSION: experimental_8.0
+  WINE_VERSION: 8.0
+  BRANCH: experimental_8.0
+  REVISION: 2
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -17,6 +18,7 @@ jobs:
       - name: setup
         working-directory: /home/runner/work/
         run: |
+          echo $BRANCH
           mkdir -p /home/runner/.config/frogminer/
           sudo apt purge -y ubuntu-advantage-tools
           sudo dpkg --add-architecture i386 && sudo apt update
@@ -28,27 +30,28 @@ jobs:
         run: git clone https://github.com/Frogging-Family/wine-tkg-git.git
 
       - name: get/set the soda recipe
-        working-directory: /home/runner/work/wine-tkg-git/wine-tkg-git/
+        working-directory: /home/runner/.config/frogminer/
         run: |
-          curl https://raw.githubusercontent.com/bottlesdevs/build-tools/main/runners/vaniglia/wine-tkg-valve.cfg > /home/runner/.config/frogminer/wine-tkg.cfg
-          sed -i "s/_plain_version=\"\"/_plain_version=\"$WINE_VERSION\"/g" /home/runner/.config/frogminer/wine-tkg.cfg
+          curl https://raw.githubusercontent.com/bottlesdevs/build-tools/main/runners/vaniglia/wine-tkg-valve.cfg > wine-tkg.cfg
+          sed -i "s/_plain_version=\"\"/_plain_version=\"$BRANCH\"/g" wine-tkg.cfg
 
       - name: start build
         working-directory: /home/runner/work/wine-tkg-git/wine-tkg-git/
         run: yes|./non-makepkg-build.sh
-      
+
       - name: package
         working-directory: /home/runner/work/wine-tkg-git/wine-tkg-git/non-makepkg-builds/
         run: |
-          mv wine-tkg-* soda-$WINE_VERSION-x86_64
-          tar cJvf soda-$WINE_VERSION-x86_64.tar.xz soda-$WINE_VERSION-x86_64
-          mv soda-$WINE_VERSION-x86_64.tar.xz /tmp/soda-$WINE_VERSION-x86_64.tar.xz
-          
-      - uses: "marvinpinto/action-automatic-releases@latest"
+          mv wine-tkg-* soda-$WINE_VERSION-$REVISION-x86_64
+          tar cJvf soda-$WINE_VERSION-$REVISION-x86_64.tar.xz soda-$WINE_VERSION-$REVISION-x86_64
+          mv soda-$WINE_VERSION-$REVISION-x86_64.tar.xz /tmp/soda-$WINE_VERSION-$REVISION-x86_64.tar.xz
+
+      - name: release
+        uses: "marvinpinto/action-automatic-releases@latest"
         with:
           repo_token: "${{ secrets.GITHUB_TOKEN }}"
           draft: false
           prerelease: false
-          automatic_release_tag: "soda-${{ env.WINE_VERSION }}"
-          title: "Soda ${{ env.WINE_VERSION }}"
-          files: "/tmp/soda-${{ env.WINE_VERSION }}-x86_64.tar.xz"
+          automatic_release_tag: "soda-${{ env.WINE_VERSION }}-${{ env.REVISION }}"
+          title: "Soda ${{ env.WINE_VERSION }}-${{ env.REVISION }}"
+          files: "/tmp/soda-${{ env.WINE_VERSION }}-${{ env.REVISION }}-x86_64.tar.xz"
