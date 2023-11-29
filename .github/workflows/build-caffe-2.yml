@@ -1,19 +1,17 @@
 name: build-caffe-2
 on:
   push:
-    branches: [ caffe ]
-  pull_request:
-    branches: [ caffe ]
+    branches:
+      - 'caffe'
   workflow_dispatch:
 env:
-  WINE_VERSION: 8.18
+  WINE_VERSION: 8.21
 jobs:
   build:
     runs-on: ubuntu-latest
-    
-    steps:        
+    steps:
       - uses: actions/checkout@v2
-      
+
       - name: setup
         working-directory: /home/runner/work/
         run: |
@@ -25,7 +23,7 @@ jobs:
       - name: clone wine-tkg-git repo
         working-directory: /home/runner/work/
         run: git clone https://github.com/Frogging-Family/wine-tkg-git.git
-          
+
       - name: get/set the caffe recipe
         working-directory: /home/runner/work/wine-tkg-git/wine-tkg-git/
         run: |
@@ -36,15 +34,16 @@ jobs:
       - name: start build
         working-directory: /home/runner/work/wine-tkg-git/wine-tkg-git/
         run: yes|./non-makepkg-build.sh
-        
+
       - name: package
         working-directory: /home/runner/work/wine-tkg-git/wine-tkg-git/non-makepkg-builds/
         run: |
           mv wine-tkg-staging-* caffe-$WINE_VERSION-x86_64
           tar cJvf caffe-$WINE_VERSION-x86_64.tar.xz caffe-$WINE_VERSION-x86_64
           mv caffe-$WINE_VERSION-x86_64.tar.xz /tmp/caffe-$WINE_VERSION-x86_64.tar.xz
-        
-      - uses: "marvinpinto/action-automatic-releases@latest"
+
+      - name: release
+        uses: "marvinpinto/action-automatic-releases@latest"
         with:
           repo_token: "${{ secrets.GITHUB_TOKEN }}"
           draft: false
@@ -52,4 +51,3 @@ jobs:
           automatic_release_tag: "caffe-${{ env.WINE_VERSION }}"
           title: "Caffe ${{ env.WINE_VERSION }}"
           files: "/tmp/caffe-${{ env.WINE_VERSION }}-x86_64.tar.xz"
-          
