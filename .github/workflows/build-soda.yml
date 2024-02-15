@@ -49,7 +49,7 @@ jobs:
       - name: release
         uses: "marvinpinto/action-automatic-releases@latest"
         with:
-          repo_token: "${{ secrets.XIOREN_PAT }}"
+          repo_token: "${{ secrets.GITHUB_TOKEN }}"
           draft: false
           prerelease: false
           automatic_release_tag: "soda-${{ env.WINE_VERSION }}-${{ env.REVISION }}"
