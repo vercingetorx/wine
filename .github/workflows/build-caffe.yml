@@ -5,7 +5,7 @@ on:
       - 'caffe'
   workflow_dispatch:
 env:
-  WINE_VERSION: 9.1
+  WINE_VERSION: 9.2
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -45,6 +45,7 @@ jobs:
       - name: release
         uses: "marvinpinto/action-automatic-releases@latest"
         with:
+          repo_token: "${{ secrets.XIOREN_PAT }}"
           draft: false
           prerelease: false
           automatic_release_tag: "caffe-${{ env.WINE_VERSION }}"
