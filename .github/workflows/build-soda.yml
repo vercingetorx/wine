@@ -5,9 +5,9 @@ on:
       - 'soda'
   workflow_dispatch:
 env:
-  WINE_VERSION: 8.0
-  BRANCH: experimental_8.0
-  REVISION: 2
+  WINE_VERSION: 9.0
+  BRANCH: experimental_9.0
+  REVISION: 0
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -20,7 +20,7 @@ jobs:
         run: |
           echo $BRANCH
           mkdir -p /home/runner/.config/frogminer/
-          sudo apt purge -y ubuntu-advantage-tools
+          sudo apt purge -y ubuntu-advantage-tools python3-update-manager
           sudo dpkg --add-architecture i386 && sudo apt update
           sudo apt install aptitude
           sudo aptitude remove -y '?narrow(?installed,?version(deb.sury.org))'
