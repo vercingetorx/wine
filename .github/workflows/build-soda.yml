@@ -18,7 +18,6 @@ jobs:
       - name: setup
         working-directory: /home/runner/work/
         run: |
-          echo $BRANCH
           mkdir -p /home/runner/.config/frogminer/
           sudo apt purge -y ubuntu-advantage-tools python3-update-manager
           sudo dpkg --add-architecture i386 && sudo apt update
@@ -31,9 +30,7 @@ jobs:
 
       - name: get/set the soda recipe
         working-directory: /home/runner/.config/frogminer/
-        run: |
-          curl https://raw.githubusercontent.com/bottlesdevs/build-tools/main/runners/vaniglia/wine-tkg-valve.cfg > wine-tkg.cfg
-          sed -i "s/_plain_version=\"\"/_plain_version=\"$BRANCH\"/g" wine-tkg.cfg
+        run: curl https://raw.githubusercontent.com/xioren/build-tools/main/runners/vaniglia/wine-tkg-valve.cfg > wine-tkg.cfg
 
       - name: start build
         working-directory: /home/runner/work/wine-tkg-git/wine-tkg-git/
@@ -42,6 +39,7 @@ jobs:
       - name: package
         working-directory: /home/runner/work/wine-tkg-git/wine-tkg-git/non-makepkg-builds/
         run: |
+          ls
           mv wine-tkg-* soda-$WINE_VERSION-$REVISION-x86_64
           tar cJvf soda-$WINE_VERSION-$REVISION-x86_64.tar.xz soda-$WINE_VERSION-$REVISION-x86_64
           mv soda-$WINE_VERSION-$REVISION-x86_64.tar.xz /tmp/soda-$WINE_VERSION-$REVISION-x86_64.tar.xz
