@@ -1,4 +1,4 @@
-name: build-soda
+name: testing-soda
 on:
   push:
     branches:
