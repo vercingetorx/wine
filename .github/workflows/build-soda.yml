@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:        
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
 
       - name: setup
         working-directory: /home/runner/work/
@@ -30,7 +30,10 @@ jobs:
 
       - name: get/set the soda recipe
         working-directory: /home/runner/.config/frogminer/
-        run: curl https://raw.githubusercontent.com/xioren/build-tools/main/runners/vaniglia/wine-tkg-valve.cfg > wine-tkg.cfg
+        run: |
+          curl https://raw.githubusercontent.com/xioren/build-tools/main/runners/vaniglia/wine-tkg-valve.cfg > wine-tkg.cfg
+          sed -i "s/_plain_version=\"\"/_plain_version=\"$BRANCH\"/g" wine-tkg.cfg
+          sed -i "s/_proton_branch=\"\"/_plain_version=\"$BRANCH\"/g" wine-tkg.cfg
 
       - name: start build
         working-directory: /home/runner/work/wine-tkg-git/wine-tkg-git/
