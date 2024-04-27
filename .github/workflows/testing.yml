@@ -1,0 +1,45 @@
+name: build-soda
+on:
+  push:
+    branches:
+      - 'soda'
+  workflow_dispatch:
+env:
+  WINE_VERSION: 9.0
+  BRANCH: experimental_9.0
+  REVISION: 0
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:        
+      - uses: actions/checkout@v2
+
+      - name: setup
+        working-directory: /home/runner/work/
+        run: |
+          mkdir -p /home/runner/.config/frogminer/
+          sudo apt purge -y ubuntu-advantage-tools python3-update-manager
+          sudo dpkg --add-architecture i386 && sudo apt update
+          sudo apt install aptitude
+          sudo aptitude remove -y '?narrow(?installed,?version(deb.sury.org))'
+
+      - name: clone wine-tkg-git repo
+        working-directory: /home/runner/work/
+        run: git clone https://github.com/Frogging-Family/wine-tkg-git.git
+
+      - name: get/set the soda recipe
+        working-directory: /home/runner/.config/frogminer/
+        run: curl https://raw.githubusercontent.com/xioren/build-tools/main/runners/vaniglia/wine-tkg-valve.cfg > wine-tkg.cfg
+
+      - name: start build
+        working-directory: /home/runner/work/wine-tkg-git/wine-tkg-git/
+        run: |
+          touch tarplz
+          yes|./non-makepkg-build.sh
+
+      - name: Archive the artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: wine-tkg-build
+          path: wine-tkg-git/non-makepkg-builds
