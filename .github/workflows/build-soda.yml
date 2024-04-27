@@ -26,7 +26,10 @@ jobs:
 
       - name: clone wine-tkg-git repo
         working-directory: /home/runner/work/
-        run: git clone https://github.com/Frogging-Family/wine-tkg-git.git
+        run: |
+          git clone https://github.com/Frogging-Family/wine-tkg-git.git
+          cd wine-tkg-git/wine-tkg-git
+          sed -i 's/_NOLIB32="false"/_NOLIB32="wow64"/' wine-tkg-profiles/advanced-customization.cfg
 
       - name: get/set the soda recipe
         working-directory: /home/runner/.config/frogminer/
