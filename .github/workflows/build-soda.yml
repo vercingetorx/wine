@@ -28,7 +28,7 @@ jobs:
         working-directory: /home/runner/work/
         run: git clone https://github.com/Frogging-Family/wine-tkg-git.git
 
-      #- name: get/set the soda recipe
+      - name: get/set the soda recipe
        working-directory: /home/runner/.config/frogminer/
        run: |
          curl https://raw.githubusercontent.com/xioren/build-tools/main/runners/vaniglia/wine-tkg-valve.cfg > wine-tkg.cfg
