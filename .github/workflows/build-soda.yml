@@ -30,8 +30,7 @@ jobs:
           git clone https://github.com/Frogging-Family/wine-tkg-git.git
           cd wine-tkg-git/wine-tkg-git
           sed -i "s/_LOCAL_PRESET=\"\"/_LOCAL_PRESET=\"valve-exp-bleeding\"/g" customization.cfg
-          curl https://raw.githubusercontent.com/xioren/build-tools/main/runners/vaniglia/wine-tkg-valve.cfg > wine-tkg-valve.cfg
-          cat wine-tkg-valve.cfg >> wine-tkg-profiles/wine-tkg-valve-exp-bleeding.cfg
+          curl https://raw.githubusercontent.com/xioren/build-tools/main/runners/vaniglia/wine-tkg-valve.cfg >> wine-tkg-profiles/wine-tkg-valve-exp-bleeding.cfg
   
       - name: start build
         working-directory: /home/runner/work/wine-tkg-git/wine-tkg-git/
