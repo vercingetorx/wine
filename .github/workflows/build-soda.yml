@@ -5,15 +5,15 @@ on:
       - 'soda'
   workflow_dispatch:
 env:
-  WINE_VERSION: 9.0
+  WINE_VERSION: '9.0'
   BRANCH: experimental_9.0
-  REVISION: 0
+  REVISION: '1'
 jobs:
   build:
     runs-on: ubuntu-latest
 
     steps:        
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
 
       - name: setup
         working-directory: /home/runner/work/
@@ -26,14 +26,15 @@ jobs:
 
       - name: clone wine-tkg-git repo
         working-directory: /home/runner/work/
-        run: git clone https://github.com/Frogging-Family/wine-tkg-git.git
+        run: |
+          git clone https://github.com/Frogging-Family/wine-tkg-git.git
+          cd wine-tkg-git/wine-tkg-git
+          sed -i "s/_LOCAL_PRESET=\"\"/_LOCAL_PRESET=\"valve-exp-bleeding\"/g" customization.cfg
 
       - name: get/set the soda recipe
         working-directory: /home/runner/.config/frogminer/
-        run: |
-          curl https://raw.githubusercontent.com/bottlesdevs/build-tools/main/runners/vaniglia/wine-tkg-valve.cfg > wine-tkg.cfg
-          sed -i "s/_plain_version=\"\"/_plain_version=\"$BRANCH\"/g" wine-tkg.cfg
-
+        run: curl https://raw.githubusercontent.com/bottlesdevs/build-tools/main/runners/vaniglia/wine-tkg-valve.cfg > wine-tkg.cfg
+      
       - name: start build
         working-directory: /home/runner/work/wine-tkg-git/wine-tkg-git/
         run: yes|./non-makepkg-build.sh
