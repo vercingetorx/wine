@@ -24,7 +24,7 @@ jobs:
           sudo apt install aptitude
           sudo aptitude remove -y '?narrow(?installed,?version(deb.sury.org))'
 
-      - name: clone wine-tkg-git repo and configure
+      - name: clone wine-tkg-git repo
         working-directory: /home/runner/work/
         run: |
           git clone https://github.com/Frogging-Family/wine-tkg-git.git
@@ -32,8 +32,8 @@ jobs:
           sed -i "s/_LOCAL_PRESET=\"\"/_LOCAL_PRESET=\"valve-exp-bleeding\"/g" customization.cfg
 
       - name: get/set the soda recipe
-       working-directory: /home/runner/.config/frogminer/
-       run: curl https://raw.githubusercontent.com/xioren/build-tools/main/runners/vaniglia/wine-tkg-valve.cfg > wine-tkg.cfg
+        working-directory: /home/runner/.config/frogminer/
+        run: curl https://raw.githubusercontent.com/xioren/build-tools/main/runners/vaniglia/wine-tkg-valve.cfg > wine-tkg.cfg
       
       - name: start build
         working-directory: /home/runner/work/wine-tkg-git/wine-tkg-git/
