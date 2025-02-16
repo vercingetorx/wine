@@ -17,6 +17,7 @@ jobs:
         run: |
           sudo apt purge -y ubuntu-advantage-tools
           sudo dpkg --add-architecture i386 && sudo apt update
+          sudo apt --purge remove -y libpcap0.8-dev:i386 libicu-dev:i386
           sudo apt install aptitude
           sudo aptitude remove -y '?narrow(?installed,?version(deb.sury.org))'
 
