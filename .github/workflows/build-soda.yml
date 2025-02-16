@@ -34,14 +34,14 @@ jobs:
       - name: get/set the soda recipe
         working-directory: /home/runner/.config/frogminer/
         run: curl https://raw.githubusercontent.com/bottlesdevs/build-tools/main/runners/vaniglia/wine-tkg-valve.cfg > wine-tkg.cfg
-      
+
+      - name: select user patches
+        working-directory: /home/runner/work/wine-tkg-git/wine-tkg-git/
+        run: cp wine-tkg-patches/hotfixes/valve/de-steamify-90.mypatch wine-tkg-userpatches/
+
       - name: start build
         working-directory: /home/runner/work/wine-tkg-git/wine-tkg-git/
         run: yes|./non-makepkg-build.sh
-
-      - name: get user patches
-        working-directory: /home/runner/work/wine-tkg-git/wine-tkg-git/
-        run: cp wine-tkg-patches/hotfixes/valve/de-steamify-90.mypatch wine-tkg-userpatches
 
       - name: package
         working-directory: /home/runner/work/wine-tkg-git/wine-tkg-git/non-makepkg-builds/
