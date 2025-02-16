@@ -7,7 +7,7 @@ on:
 env:
   WINE_VERSION: '9.0'
   BRANCH: experimental_9.0
-  REVISION: '1'
+  REVISION: '2'
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -33,11 +33,15 @@ jobs:
 
       - name: get/set the soda recipe
         working-directory: /home/runner/.config/frogminer/
-        run: curl https://raw.githubusercontent.com/vercingetorx/build-tools/refs/heads/main/runners/vaniglia/wine-tkg-valve.cfg > wine-tkg.cfg
+        run: curl https://raw.githubusercontent.com/bottlesdevs/build-tools/main/runners/vaniglia/wine-tkg-valve.cfg > wine-tkg.cfg
       
       - name: start build
         working-directory: /home/runner/work/wine-tkg-git/wine-tkg-git/
         run: yes|./non-makepkg-build.sh
+
+      - name: get user patches
+        working-directory: /home/runner/work/wine-tkg-git/wine-tkg-git/
+        run: cp wine-tkg-patches/hotfixes/valve/de-steamify-90.mypatch wine-tkg-userpatches
 
       - name: package
         working-directory: /home/runner/work/wine-tkg-git/wine-tkg-git/non-makepkg-builds/
